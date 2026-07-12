@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Kingshade Scout for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.5.0
-// @description  Lightweight FF Scouter companion for Torn PDA. Adds clear green/yellow/red target markers and estimated battle stats to faction and war lists.
+// @version      0.6.1
+// @description  FF Scouter overlay for Torn PDA faction lists with manual FF and compact K/M/B battle-stat overrides.
 // @author       Kingshade
 // @match        https://www.torn.com/*
 // @connect      ffscouter.com
@@ -13,45 +13,38 @@
 (() => {
     "use strict";
 
+    const INSTANCE_KEY = "__kingshadeScoutActive";
+    if (window[INSTANCE_KEY]) {
+        try { window[INSTANCE_KEY].destroy?.(); } catch {}
+    }
+
     const NAME = "Kingshade Scout";
-    const VERSION = "0.5.0";
+    const VERSION = "0.6.1";
     const API_BASE = "https://ffscouter.com/api/v1";
-    const CACHE_TTL_MS = 60 * 60 * 1000;
-    const STORAGE_PREFIX = "kingshade-scout:";
-    const FF_KEY_STORAGE = `${STORAGE_PREFIX}ff-api-key`;
-    const BATCH_SIZE = 100;
-    const SETTINGS_KEY = `${STORAGE_PREFIX}settings`;
-    const MANUAL_PREFIX = `${STORAGE_PREFIX}manual:`;
-    const DEFAULT_SETTINGS = {
-        ownBattleScore: 0,
-        easyRatio: 0.75,
-        cautionRatio: 1.05,
+    const PREFIX = "kingshade-scout:";
+    const SETTINGS_KEY = `${PREFIX}settings`;
+    const API_KEY_STORAGE = `${PREFIX}ff-api-key`;
+    const MANUAL_PREFIX = `${PREFIX}manual:`;
+    const CACHE_PREFIX = `${PREFIX}cache:`;
+    const CACHE_MS = 60 * 60 * 1000;
+
+    const DEFAULTS = {
         showUnknown: true,
-        markRows: true,
+        showStripe: true,
         buttonX: null,
         buttonY: null
     };
-    let settings = loadSettings();
 
-    const memoryCache = new Map();
+    let settings = loadSettings();
     let scanTimer = null;
     let observer = null;
-
-    const log = (...args) => console.log(`[${NAME} ${VERSION}]`, ...args);
-    const warn = (...args) => console.warn(`[${NAME} ${VERSION}]`, ...args);
+    const memoryCache = new Map();
 
     function loadSettings() {
         try {
-            const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
-
-            // Migrate older FF-threshold settings to player-relative comparison.
-            if (!Number(saved.ownBattleScore)) saved.ownBattleScore = 0;
-            if (!Number(saved.easyRatio)) saved.easyRatio = 0.75;
-            if (!Number(saved.cautionRatio)) saved.cautionRatio = 1.05;
-
-            return { ...DEFAULT_SETTINGS, ...saved };
+            return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}") };
         } catch {
-            return { ...DEFAULT_SETTINGS };
+            return { ...DEFAULTS };
         }
     }
 
@@ -61,7 +54,23 @@
         } catch {}
     }
 
-    function getManualOverride(playerId) {
+    function getApiKey() {
+        try {
+            return localStorage.getItem(API_KEY_STORAGE) || "";
+        } catch {
+            return "";
+        }
+    }
+
+    function setApiKey(value) {
+        try {
+            const clean = String(value || "").trim();
+            if (clean) localStorage.setItem(API_KEY_STORAGE, clean);
+            else localStorage.removeItem(API_KEY_STORAGE);
+        } catch {}
+    }
+
+    function getManual(playerId) {
         try {
             return JSON.parse(localStorage.getItem(`${MANUAL_PREFIX}${playerId}`) || "null");
         } catch {
@@ -69,118 +78,39 @@
         }
     }
 
-    function setManualOverride(playerId, value) {
+    function setManual(playerId, value) {
         try {
             if (!value) localStorage.removeItem(`${MANUAL_PREFIX}${playerId}`);
             else localStorage.setItem(`${MANUAL_PREFIX}${playerId}`, JSON.stringify(value));
         } catch {}
     }
 
-    function parseCompactBattleStats(value, unit) {
-        const n = Number(String(value).replace(",", "."));
-        if (!Number.isFinite(n) || n <= 0) return null;
-        const multiplier = unit === "B" ? 1e9 : unit === "M" ? 1e6 : 1e3;
-        return n * multiplier;
-    }
-
-    function compactBattleStats(value) {
-        const n = Number(value);
+    function compactParts(total) {
+        const n = Number(total);
         if (!Number.isFinite(n) || n <= 0) return { value: "", unit: "K" };
         if (n >= 1e9) return { value: +(n / 1e9).toFixed(2), unit: "B" };
         if (n >= 1e6) return { value: +(n / 1e6).toFixed(2), unit: "M" };
         return { value: +(n / 1e3).toFixed(2), unit: "K" };
     }
 
-    function hasOwnBattleScore() {
-        return Number(settings.ownBattleScore) > 0;
+    function parseCompact(value, unit) {
+        const n = Number(String(value || "").replace(",", "."));
+        if (!Number.isFinite(n) || n <= 0) return null;
+        return n * (unit === "B" ? 1e9 : unit === "M" ? 1e6 : 1e3);
     }
 
-    function saveButtonPosition(x, y) {
-        settings.buttonX = Math.max(8, Math.min(window.innerWidth - 56, x));
-        settings.buttonY = Math.max(70, Math.min(window.innerHeight - 140, y));
-        saveSettings();
+    function formatCompact(total) {
+        const parts = compactParts(total);
+        return parts.value ? `${parts.value}${parts.unit}` : "?";
     }
 
-    function getDefaultButtonPosition() {
-        return {
-            x: Math.max(8, window.innerWidth - 62),
-            y: Math.max(70, window.innerHeight - 190)
-        };
-    }
-
-    function clampButtonPosition(x, y) {
-        const maxX = Math.max(8, window.innerWidth - 56);
-        const maxY = Math.max(70, window.innerHeight - 140);
-        return {
-            x: Math.max(8, Math.min(maxX, Number(x))),
-            y: Math.max(70, Math.min(maxY, Number(y)))
-        };
-    }
-
-    function normalizeSavedButtonPosition() {
-        const fallback = getDefaultButtonPosition();
-        const x = Number(settings.buttonX);
-        const y = Number(settings.buttonY);
-
-        if (!Number.isFinite(x) || !Number.isFinite(y)) {
-            settings.buttonX = fallback.x;
-            settings.buttonY = fallback.y;
-            saveSettings();
-            return fallback;
-        }
-
-        const safe = clampButtonPosition(x, y);
-        if (safe.x !== x || safe.y !== y) {
-            settings.buttonX = safe.x;
-            settings.buttonY = safe.y;
-            saveSettings();
-        }
-        return safe;
-    }
-
-    function resetButtonPosition(button) {
-        const pos = getDefaultButtonPosition();
-        settings.buttonX = pos.x;
-        settings.buttonY = pos.y;
-        saveSettings();
-
-        if (button) {
-            button.style.left = `${pos.x}px`;
-            button.style.top = `${pos.y}px`;
-            button.style.right = "auto";
-            button.style.bottom = "auto";
-        }
-    }
-
-    function readWrappedStorage(key) {
-        try {
-            const raw = localStorage.getItem(key);
-            if (!raw) return null;
-            const parsed = JSON.parse(raw);
-            if (parsed && Object.prototype.hasOwnProperty.call(parsed, "value")) {
-                if (parsed.expiration && Date.now() > parsed.expiration) return null;
-                return parsed.value;
-            }
-            return parsed;
-        } catch {
-            return null;
-        }
-    }
-
-    function getFFKey() {
-        try {
-            return localStorage.getItem(FF_KEY_STORAGE) || "";
-        } catch {
-            return "";
-        }
-    }
-
-    function setFFKey(value) {
-        try {
-            const clean = String(value || "").trim();
-            if (clean) localStorage.setItem(FF_KEY_STORAGE, clean);
-            else localStorage.removeItem(FF_KEY_STORAGE);
-        } catch {}
+    function escapeHtml(value) {
+        return String(value ?? "")
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;")
+            .replaceAll('"', "&quot;")
+            .replaceAll("'", "&#039;");
     }
 
     function normalizeResponse(resp) {
@@ -192,9 +122,9 @@
         };
     }
 
-    function httpGet(url) {
+    async function httpGet(url) {
         if (typeof window.PDA_httpGet === "function") {
-            return window.PDA_httpGet(url, {}).then(normalizeResponse);
+            return normalizeResponse(await window.PDA_httpGet(url, {}));
         }
 
         if (typeof GM_xmlhttpRequest === "function") {
@@ -203,108 +133,44 @@
                     method: "GET",
                     url,
                     timeout: 30000,
-                    onload: resolve,
+                    onload: response => resolve(normalizeResponse(response)),
                     onerror: reject,
                     ontimeout: () => reject(new Error("Request timed out"))
                 });
-            }).then(normalizeResponse);
+            });
         }
 
-        return fetch(url, { credentials: "omit" }).then(async response => ({
-            status: response.status,
-            responseText: await response.text()
-        }));
+        const response = await fetch(url, { credentials: "omit" });
+        return { status: response.status, responseText: await response.text() };
     }
 
-    function cacheKey(id) {
-        return `${STORAGE_PREFIX}player:${id}`;
-    }
-
-    function getCached(id) {
-        if (memoryCache.has(id)) return memoryCache.get(id);
+    function getCached(playerId) {
+        if (memoryCache.has(playerId)) return memoryCache.get(playerId);
         try {
-            const raw = localStorage.getItem(cacheKey(id));
-            if (!raw) return null;
-            const item = JSON.parse(raw);
-            if (!item || item.expires <= Date.now()) {
-                localStorage.removeItem(cacheKey(id));
+            const key = `${CACHE_PREFIX}${playerId}`;
+            const parsed = JSON.parse(localStorage.getItem(key) || "null");
+            if (!parsed || parsed.expires <= Date.now()) {
+                localStorage.removeItem(key);
                 return null;
             }
-            memoryCache.set(id, item.value);
-            return item.value;
+            memoryCache.set(playerId, parsed.value);
+            return parsed.value;
         } catch {
             return null;
         }
     }
 
-    function setCached(id, value) {
-        memoryCache.set(id, value);
+    function setCached(playerId, value) {
+        memoryCache.set(playerId, value);
         try {
-            localStorage.setItem(cacheKey(id), JSON.stringify({
-                expires: Date.now() + CACHE_TTL_MS,
+            localStorage.setItem(`${CACHE_PREFIX}${playerId}`, JSON.stringify({
+                expires: Date.now() + CACHE_MS,
                 value
             }));
         } catch {}
     }
 
-    async function fetchBatch(ids) {
-        const key = getFFKey();
-        if (!key) {
-            throw new Error("No FF Scouter API key saved. Tap KSP, paste the key, then press Apply and refresh.");
-        }
-
-        const query = new URLSearchParams({
-            key,
-            targets: ids.join(",")
-        });
-
-        const response = await httpGet(`${API_BASE}/get-stats?${query}`);
-        if (response.status !== 200) {
-            throw new Error(`FF Scouter API returned HTTP ${response.status}`);
-        }
-
-        let data;
-        try {
-            data = JSON.parse(response.responseText);
-        } catch {
-            throw new Error("FF Scouter API returned invalid JSON");
-        }
-
-        if (!Array.isArray(data)) {
-            throw new Error(data?.error || "Unexpected FF Scouter response");
-        }
-
-        const map = new Map();
-        for (const row of data) {
-            if (!row?.player_id) continue;
-
-            const value = (!row.fair_fight || !row.bs_estimate)
-                ? { player_id: Number(row.player_id), no_data: true }
-                : {
-                    player_id: Number(row.player_id),
-                    no_data: false,
-                    fair_fight: Number(row.fair_fight),
-                    bs_estimate: Number(row.bs_estimate),
-                    bs_estimate_human: String(row.bs_estimate_human || formatNumber(row.bs_estimate)),
-                    last_updated: Number(row.last_updated || 0),
-                    source: String(row.source || "bss")
-                };
-
-            map.set(value.player_id, value);
-            setCached(value.player_id, value);
-        }
-
-        for (const id of ids) {
-            if (!map.has(id)) {
-                const value = { player_id: id, no_data: true };
-                map.set(id, value);
-                setCached(id, value);
-            }
-        }
-        return map;
-    }
-
-    async function getPlayers(ids) {
+    async function fetchPlayers(ids) {
         const result = new Map();
         const missing = [];
 
@@ -314,21 +180,60 @@
             else missing.push(id);
         }
 
-        for (let i = 0; i < missing.length; i += BATCH_SIZE) {
-            const fetched = await fetchBatch(missing.slice(i, i + BATCH_SIZE));
-            for (const [id, value] of fetched) result.set(id, value);
-        }
-        return result;
-    }
+        if (!missing.length) return result;
 
-    function formatNumber(value) {
-        const n = Number(value);
-        if (!Number.isFinite(n)) return "?";
-        if (n >= 1e12) return `${(n / 1e12).toFixed(2)}t`;
-        if (n >= 1e9) return `${(n / 1e9).toFixed(2)}b`;
-        if (n >= 1e6) return `${(n / 1e6).toFixed(2)}m`;
-        if (n >= 1e3) return `${(n / 1e3).toFixed(1)}k`;
-        return Math.round(n).toLocaleString();
+        const key = getApiKey();
+        if (!key) throw new Error("Ingen FF Scouter API-nyckel är sparad. Tryck KSP och klistra in nyckeln.");
+
+        for (let i = 0; i < missing.length; i += 100) {
+            const batch = missing.slice(i, i + 100);
+            const query = new URLSearchParams({ key, targets: batch.join(",") });
+            const response = await httpGet(`${API_BASE}/get-stats?${query}`);
+
+            if (response.status !== 200) {
+                throw new Error(`FF Scouter svarade med HTTP ${response.status}`);
+            }
+
+            let rows;
+            try {
+                rows = JSON.parse(response.responseText);
+            } catch {
+                throw new Error("FF Scouter skickade ogiltig data.");
+            }
+
+            if (!Array.isArray(rows)) {
+                throw new Error(rows?.error || "Oväntat svar från FF Scouter.");
+            }
+
+            const returned = new Set();
+
+            for (const row of rows) {
+                const playerId = Number(row?.player_id);
+                if (!playerId) continue;
+
+                const value = {
+                    player_id: playerId,
+                    fair_fight: Number(row.fair_fight),
+                    bs_estimate: Number(row.bs_estimate),
+                    bs_estimate_human: String(row.bs_estimate_human || ""),
+                    source: String(row.source || "FFS")
+                };
+
+                returned.add(playerId);
+                result.set(playerId, value);
+                setCached(playerId, value);
+            }
+
+            for (const id of batch) {
+                if (!returned.has(id)) {
+                    const value = { player_id: id, fair_fight: null, bs_estimate: null, bs_estimate_human: "" };
+                    result.set(id, value);
+                    setCached(id, value);
+                }
+            }
+        }
+
+        return result;
     }
 
     function extractPlayerId(anchor) {
@@ -338,52 +243,60 @@
                 const value = url.searchParams.get(key);
                 if (/^\d+$/.test(value || "")) return Number(value);
             }
-        } catch {
-            const match = (anchor.getAttribute("href") || "").match(/[?&](?:XID|user2ID|userId|ID)=(\d+)/i);
-            if (match) return Number(match[1]);
-        }
-        return null;
+        } catch {}
+
+        const match = (anchor.getAttribute("href") || "").match(/[?&](?:XID|user2ID|userId|ID)=(\d+)/i);
+        return match ? Number(match[1]) : null;
     }
 
-    function findTargetRows(root = document) {
-        if (!/\/factions\.php$/i.test(location.pathname)) return new Map();
+    function findMemberRow(anchor) {
+        let node = anchor;
 
-        const anchors = root.querySelectorAll(
+        for (let depth = 0; depth < 10 && node && node !== document.body; depth++, node = node.parentElement) {
+            const text = String(node.textContent || "").trim();
+            const hasStatus = /\b(?:okay|hospital|jail|traveling|travelling|abroad|fallen)\b/i.test(text);
+            const hasSeveralCells =
+                node.children?.length >= 2 ||
+                !!node.querySelector?.(".status, [class*='status___'], [class*='level___'], [class*='member___']");
+
+            if (hasStatus && hasSeveralCells) return node;
+        }
+
+        return anchor.closest("li, .table-row, [class*='row___'], [class*='member___']");
+    }
+
+    function findRows() {
+        const map = new Map();
+        if (!/\/factions\.php\/?$/i.test(location.pathname)) return map;
+
+        const anchors = document.querySelectorAll(
             'a[href*="profiles.php?XID="], a[href*="user2ID="], a[href*="userId="]'
         );
 
-        const rows = new Map();
-        const statusWords = /\b(?:okay|hospital|jail|traveling|travelling|abroad)\b/i;
-
         for (const anchor of anchors) {
             const id = extractPlayerId(anchor);
-            if (!id) continue;
+            if (!id || map.has(id)) continue;
 
-            const row =
-                anchor.closest(".table-row, li, [class*='row___'], [class*='member___']") ||
-                anchor.parentElement;
-
+            const row = findMemberRow(anchor);
             if (!row) continue;
 
-            const text = row.textContent || "";
-            if (!statusWords.test(text)) continue;
+            const text = String(row.textContent || "");
+            if (!/\b(?:okay|hospital|jail|traveling|travelling|abroad)\b/i.test(text)) continue;
 
-            if (!rows.has(id)) rows.set(id, { id, row, anchor });
+            map.set(id, { id, row, anchor });
         }
 
-        return rows;
+        return map;
     }
 
-    const FF_CLASSIC_PALETTE = [
+    const FF_PALETTE = [
         "#1734e8", "#1788e8", "#17dbe8", "#17e8a1", "#17e84e",
         "#34e817", "#88e817", "#dbe817", "#e8a117", "#e84e17", "#e81734"
     ];
 
-    function classify(ff) {
+    function ffStyle(ff) {
         const value = Number(ff);
-        if (!Number.isFinite(value) || value <= 0) {
-            return { label: "UNKNOWN", color: "#666" };
-        }
+        if (!Number.isFinite(value) || value <= 0) return { color: "#666", label: "UNKNOWN" };
 
         const clamped = Math.max(1, Math.min(5, value));
         const index = Math.floor(((clamped - 1) / 4) * 10);
@@ -395,602 +308,354 @@
         else if (value <= 4.5) label = "DIFFICULT";
         else label = "MAY BE IMPOSSIBLE";
 
-        return { label, color: FF_CLASSIC_PALETTE[index] || "#666" };
+        return { color: FF_PALETTE[index] || "#666", label };
     }
 
     function ensureStyles() {
-        if (document.getElementById("ks-scout-styles")) return;
+        document.getElementById("ks6-styles")?.remove();
         const style = document.createElement("style");
-        style.id = "ks-scout-styles";
+        style.id = "ks6-styles";
         style.textContent = `
-            .ks-scout-badge{display:flex!important;align-items:center;justify-content:center;gap:4px;margin:3px 0 0;padding:4px 7px;border-radius:5px;font:800 11px/1.15 Arial,sans-serif;color:#fff!important;white-space:nowrap;box-shadow:0 0 0 1px rgba(0,0,0,.45);z-index:2;max-width:100%;overflow:hidden;text-overflow:ellipsis}
-            .ks-scout-badge[data-state="loading"]{background:#555;opacity:.8}
-            .ks-scout-badge .ks-scout-stats{font-weight:700;opacity:.98}
-            .ks-scout-row-easy{background:linear-gradient(90deg,rgba(46,157,82,.34),rgba(46,157,82,.08) 48%,transparent 78%)!important;box-shadow:inset 6px 0 0 #2e9d52!important}
-            .ks-scout-row-risky{background:linear-gradient(90deg,rgba(214,162,11,.34),rgba(214,162,11,.08) 48%,transparent 78%)!important;box-shadow:inset 6px 0 0 #d6a20b!important}
-            .ks-scout-row-avoid{background:linear-gradient(90deg,rgba(210,68,68,.38),rgba(210,68,68,.09) 48%,transparent 78%)!important;box-shadow:inset 6px 0 0 #d24444!important}
-            .ks-scout-row-unknown{background:linear-gradient(90deg,rgba(102,102,102,.25),rgba(102,102,102,.05) 48%,transparent 78%)!important;box-shadow:inset 6px 0 0 #666!important}
-            .ks-manual-modal{position:fixed;inset:0;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;z-index:2147483647}
-            .ks-manual-card{width:min(90vw,340px);background:#202124;color:#fff;border-radius:10px;padding:14px;font:13px Arial;box-shadow:0 5px 25px rgba(0,0,0,.65)}
-            .ks-manual-card label{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:10px 0}
-            .ks-manual-card input,.ks-manual-card select{min-height:30px}
-            .ks-manual-actions{display:flex;gap:8px;margin-top:12px}
-            .ks-manual-actions button{flex:1;padding:9px;border:0;border-radius:6px;font-weight:700}
-            .ks-scout-error{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);max-width:min(92vw,520px);padding:9px 12px;border-radius:7px;background:#b3261e;color:#fff;font:600 12px/1.35 Arial,sans-serif;z-index:2147483647;box-shadow:0 3px 12px rgba(0,0,0,.35)}
-            .ks-scout-fab{position:fixed;right:14px;bottom:92px;width:50px;height:50px;border:0;border-radius:50%;background:#263238;color:#fff;font:800 12px Arial;z-index:2147483646;box-shadow:0 3px 12px rgba(0,0,0,.45);touch-action:none;user-select:none}
-            .ks-scout-fab.ks-dragging{opacity:.85;transform:scale(1.06)}
-            .ks-scout-setup{margin:8px 0;padding:8px;border-radius:6px;background:#5b3a00;color:#ffd98a;font-weight:700}
-            .ks-status-timer{display:inline-flex!important;align-items:center;gap:3px;margin-left:5px;padding:2px 5px;border-radius:4px;background:#37474f;color:#fff!important;font:700 10px/1.15 Arial,sans-serif;white-space:nowrap;vertical-align:middle;box-shadow:0 0 0 1px rgba(0,0,0,.3)}
-            .ks-status-timer[data-state="hospital"]{background:#9c2c2c}
-            .ks-status-timer[data-state="jail"]{background:#705020}
-            .ks-status-timer[data-state="traveling"]{background:#2e5d8a}
-            .ks-status-timer[data-state="abroad"]{background:#5b4a86}
-            .ks-status-ready{background:#2e9d52!important}
-            .ks-scout-panel{position:fixed;right:12px;bottom:150px;width:min(88vw,300px);padding:12px;border-radius:10px;background:#202124;color:#fff;font:13px Arial;z-index:2147483646;box-shadow:0 4px 18px rgba(0,0,0,.55)}
-            .ks-scout-panel label{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:8px 0}
-            .ks-scout-panel input[type=number]{width:92px}.ks-scout-panel input[type=password]{width:150px;min-width:0}
-            .ks-scout-panel button{width:100%;margin-top:8px;padding:8px;border:0;border-radius:6px;font-weight:700}
+            .ks6-fab{position:fixed;width:50px;height:50px;border:0;border-radius:50%;background:#263238;color:#fff;font:800 12px Arial;z-index:2147483645;box-shadow:0 3px 12px rgba(0,0,0,.45);touch-action:none;user-select:none}
+            .ks6-panel{position:fixed;right:12px;bottom:150px;width:min(88vw,310px);padding:12px;border-radius:10px;background:#202124;color:#fff;font:13px Arial;z-index:2147483646;box-shadow:0 4px 18px rgba(0,0,0,.55)}
+            .ks6-panel label{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:9px 0}
+            .ks6-panel input[type=password]{width:155px;min-width:0}
+            .ks6-panel button{width:100%;margin-top:8px;padding:9px;border:0;border-radius:6px;font-weight:700}
+            .ks6-status{margin:5px 0 10px;padding:7px;border-radius:6px;background:#303238;font-size:11px}
+            .ks6-badge{position:absolute!important;right:3px;bottom:2px;display:inline-flex!important;align-items:center;justify-content:center;padding:3px 5px;border-radius:4px;color:#fff!important;font:800 9px/1 Arial;white-space:nowrap;z-index:5;box-shadow:0 0 0 1px rgba(0,0,0,.45);cursor:pointer}
+            .ks6-modal{position:fixed;inset:0;background:rgba(0,0,0,.74);display:flex;align-items:center;justify-content:center;z-index:2147483647}
+            .ks6-card{width:min(91vw,350px);background:#202124;color:#fff;border-radius:10px;padding:14px;font:13px Arial;box-shadow:0 5px 25px rgba(0,0,0,.65)}
+            .ks6-card label{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:11px 0}
+            .ks6-card input,.ks6-card select{min-height:31px}
+            .ks6-actions{display:flex;gap:7px;margin-top:13px}
+            .ks6-actions button{flex:1;padding:9px;border:0;border-radius:6px;font-weight:700}
+            .ks6-toast{position:fixed;left:50%;bottom:25px;transform:translateX(-50%);max-width:90vw;padding:9px 12px;border-radius:7px;background:#b3261e;color:#fff;font:600 12px Arial;z-index:2147483647}
         `;
         (document.head || document.documentElement).appendChild(style);
     }
 
-    function getBadgeHost(anchor, row) {
-        return anchor.closest(".honor-text-wrap") || row.querySelector(".member") || anchor.parentElement || row;
+    function showToast(message) {
+        document.querySelector(".ks6-toast")?.remove();
+        const toast = document.createElement("div");
+        toast.className = "ks6-toast";
+        toast.textContent = message;
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 7000);
     }
 
-    function renderLoading(entry) {
-        const host = getBadgeHost(entry.anchor, entry.row);
-        let badge = entry.row.querySelector(`.ks-scout-badge[data-player-id="${entry.id}"]`);
-        if (!badge) {
-            badge = document.createElement("span");
-            badge.className = "ks-scout-badge";
-            badge.dataset.playerId = String(entry.id);
-            badge.dataset.state = "loading";
-            badge.textContent = "SCOUT…";
-            host.appendChild(badge);
-        }
+    function badgeHost(entry) {
+        const host = entry.anchor.closest(".honor-text-wrap") || entry.anchor.parentElement || entry.row;
+        if (host && getComputedStyle(host).position === "static") host.style.position = "relative";
+        return host;
     }
 
-    function escapeHtml(value) {
-        return String(value)
-            .replaceAll("&", "&amp;")
-            .replaceAll("<", "&lt;")
-            .replaceAll(">", "&gt;")
-            .replaceAll('"', "&quot;")
-            .replaceAll("'", "&#039;");
-    }
+    function openEditor(entry, ffsData) {
+        document.querySelector(".ks6-modal")?.remove();
 
-
-    function openManualEditor(entry, data) {
-        document.querySelector(".ks-manual-modal")?.remove();
-
-        const current = getManualOverride(entry.id);
-        const compact = compactBattleStats(current?.battleStats || data?.bs_estimate);
+        const manual = getManual(entry.id);
+        const bs = compactParts(manual?.battleStats || ffsData?.bs_estimate);
+        const ffsFF = Number(ffsData?.fair_fight);
 
         const modal = document.createElement("div");
-        modal.className = "ks-manual-modal";
+        modal.className = "ks6-modal";
         modal.innerHTML = `
-            <div class="ks-manual-card">
+            <div class="ks6-card">
                 <strong>${escapeHtml(entry.anchor.textContent?.trim() || `Player ${entry.id}`)}</strong>
-                <div style="opacity:.75;margin-top:4px">FF Scouter: ${Number(data?.fair_fight) > 0 ? Number(data.fair_fight).toFixed(2) : "No data"}</div>
+                <div style="opacity:.72;margin-top:4px">FF Scouter: ${Number.isFinite(ffsFF) && ffsFF > 0 ? ffsFF.toFixed(2) : "ingen data"}</div>
 
-                <label>Use custom FF
-                    <input data-manual="enabled" type="checkbox" ${current?.ff ? "checked" : ""}>
+                <label>Använd eget FF
+                    <input data-x="use" type="checkbox" ${Number(manual?.ff) > 0 ? "checked" : ""}>
                 </label>
 
-                <label>Custom FF
-                    <input data-manual="ff" type="number" min="0.1" max="20" step="0.01" value="${current?.ff || ""}">
+                <label>Eget FF
+                    <input data-x="ff" type="number" min="0.1" max="20" step="0.01" value="${Number(manual?.ff) > 0 ? manual.ff : ""}">
                 </label>
 
                 <label>Battle stats
                     <span style="display:flex;gap:5px">
-                        <input data-manual="bs" type="number" min="0.1" step="0.1" style="width:90px" value="${compact.value}">
-                        <select data-manual="unit">
-                            <option value="K" ${compact.unit === "K" ? "selected" : ""}>K</option>
-                            <option value="M" ${compact.unit === "M" ? "selected" : ""}>M</option>
-                            <option value="B" ${compact.unit === "B" ? "selected" : ""}>B</option>
+                        <input data-x="bs" type="number" min="0.1" step="0.1" style="width:90px" value="${bs.value}">
+                        <select data-x="unit">
+                            <option value="K" ${bs.unit === "K" ? "selected" : ""}>K</option>
+                            <option value="M" ${bs.unit === "M" ? "selected" : ""}>M</option>
+                            <option value="B" ${bs.unit === "B" ? "selected" : ""}>B</option>
                         </select>
                     </span>
                 </label>
 
-                <label>Note
-                    <input data-manual="note" type="text" style="width:180px" value="${escapeHtml(current?.note || "")}">
+                <label>Anteckning
+                    <input data-x="note" type="text" style="width:180px" value="${escapeHtml(manual?.note || "")}">
                 </label>
 
-                <div class="ks-manual-actions">
-                    <button data-manual="clear">Clear custom</button>
-                    <button data-manual="cancel">Cancel</button>
-                    <button data-manual="save">Save</button>
+                <div class="ks6-actions">
+                    <button data-x="clear">Rensa eget</button>
+                    <button data-x="cancel">Avbryt</button>
+                    <button data-x="save">Spara</button>
                 </div>
             </div>
         `;
 
         const close = () => modal.remove();
 
-        modal.querySelector('[data-manual="cancel"]').addEventListener("click", close);
-        modal.querySelector('[data-manual="clear"]').addEventListener("click", () => {
-            setManualOverride(entry.id, null);
+        modal.querySelector('[data-x="cancel"]').onclick = close;
+        modal.querySelector('[data-x="clear"]').onclick = () => {
+            setManual(entry.id, null);
             close();
-            entry.row.removeAttribute("data-ks-scout-applied");
-            entry.row.querySelectorAll(".ks-scout-badge").forEach(el => el.remove());
-            scheduleScan(0);
-        });
+            refreshRow(entry.row);
+        };
 
-        modal.querySelector('[data-manual="save"]').addEventListener("click", () => {
-            const enabled = modal.querySelector('[data-manual="enabled"]').checked;
-            const ff = Number(modal.querySelector('[data-manual="ff"]').value);
-            const bs = parseCompactBattleStats(
-                modal.querySelector('[data-manual="bs"]').value,
-                modal.querySelector('[data-manual="unit"]').value
+        modal.querySelector('[data-x="save"]').onclick = () => {
+            const use = modal.querySelector('[data-x="use"]').checked;
+            const ff = Number(modal.querySelector('[data-x="ff"]').value);
+            const battleStats = parseCompact(
+                modal.querySelector('[data-x="bs"]').value,
+                modal.querySelector('[data-x="unit"]').value
             );
-            const note = modal.querySelector('[data-manual="note"]').value.trim();
+            const note = modal.querySelector('[data-x="note"]').value.trim();
 
-            setManualOverride(entry.id, {
-                ff: enabled && Number.isFinite(ff) && ff > 0 ? ff : null,
-                battleStats: bs,
+            setManual(entry.id, {
+                ff: use && Number.isFinite(ff) && ff > 0 ? ff : null,
+                battleStats,
                 note
             });
 
             close();
-            entry.row.removeAttribute("data-ks-scout-applied");
-            entry.row.querySelectorAll(".ks-scout-badge").forEach(el => el.remove());
-            scheduleScan(0);
-        });
+            refreshRow(entry.row);
+        };
 
-        modal.addEventListener("click", event => {
+        modal.onclick = event => {
             if (event.target === modal) close();
-        });
+        };
 
         document.body.appendChild(modal);
     }
 
-    function renderResult(entry, data) {
-        const host = getBadgeHost(entry.anchor, entry.row);
-        let badge = entry.row.querySelector(`.ks-scout-badge[data-player-id="${entry.id}"]`);
+    function refreshRow(row) {
+        row.removeAttribute("data-ks6-applied");
+        row.querySelectorAll(".ks6-badge").forEach(el => el.remove());
+        row.style.removeProperty("box-shadow");
+        scheduleScan(0);
+    }
 
+    function render(entry, data) {
+        const host = badgeHost(entry);
+        if (!host) return;
+
+        let badge = entry.row.querySelector(`.ks6-badge[data-player-id="${entry.id}"]`);
         if (!badge) {
             badge = document.createElement("span");
-            badge.className = "ks-scout-badge";
+            badge.className = "ks6-badge";
             badge.dataset.playerId = String(entry.id);
             host.appendChild(badge);
         }
 
-        const manual = getManualOverride(entry.id);
+        const manual = getManual(entry.id);
         const ffsFF = Number(data?.fair_fight);
-        const activeFF = Number(manual?.ff) > 0 ? Number(manual.ff) : ffsFF;
-        const source = Number(manual?.ff) > 0 ? "MAN" : "FFS";
+        const manualFF = Number(manual?.ff);
+        const activeFF = Number.isFinite(manualFF) && manualFF > 0 ? manualFF : ffsFF;
+        const source = Number.isFinite(manualFF) && manualFF > 0 ? "MAN" : "FFS";
 
         if (!Number.isFinite(activeFF) || activeFF <= 0) {
             if (!settings.showUnknown) {
                 badge.remove();
                 return;
             }
-
             badge.style.background = "#666";
             badge.textContent = "FF ?";
-            badge.title = "No Fair Fight value available.";
-            badge.onclick = () => openManualEditor(entry, data);
-            return;
+        } else {
+            const style = ffStyle(activeFF);
+            badge.style.background = style.color;
+            badge.textContent = `${source} ${activeFF.toFixed(2)}`;
+
+            entry.row.style.removeProperty("box-shadow");
+            if (settings.showStripe) entry.row.style.boxShadow = `inset 5px 0 0 ${style.color}`;
         }
 
-        const rating = classify(activeFF);
-        badge.style.background = rating.color;
-        badge.textContent = `${source} ${activeFF.toFixed(2)}`;
-
-        const bsText = manual?.battleStats
-            ? formatNumber(manual.battleStats)
-            : data?.bs_estimate_human || "?";
-
-        badge.title = `${rating.label} | ${source} FF ${activeFF.toFixed(2)} | FFS FF ${Number.isFinite(ffsFF) ? ffsFF.toFixed(2) : "?"} | Battle stats ${bsText}${manual?.note ? ` | ${manual.note}` : ""}`;
+        const battleStats = manual?.battleStats || data?.bs_estimate;
+        badge.title = `${source} FF ${Number.isFinite(activeFF) ? activeFF.toFixed(2) : "?"} | FFS ${Number.isFinite(ffsFF) ? ffsFF.toFixed(2) : "?"} | BS ${formatCompact(battleStats)}${manual?.note ? ` | ${manual.note}` : ""}`;
         badge.onclick = event => {
             event.preventDefault();
             event.stopPropagation();
-            openManualEditor(entry, data);
+            openEditor(entry, data);
         };
-
-        entry.row.style.removeProperty("background");
-        entry.row.style.removeProperty("box-shadow");
-
-        if (settings.markRows) {
-            entry.row.style.boxShadow = `inset 5px 0 0 ${rating.color}`;
-        }
     }
 
-    function showError(message) {
-        warn(message);
-        document.querySelector(".ks-scout-error")?.remove();
-        const box = document.createElement("div");
-        box.className = "ks-scout-error";
-        box.textContent = `${NAME}: ${message}`;
-        document.body.appendChild(box);
-        setTimeout(() => box.remove(), 8000);
+    function buttonPosition() {
+        const fallback = { x: Math.max(8, innerWidth - 62), y: Math.max(70, innerHeight - 190) };
+        const x = Number(settings.buttonX);
+        const y = Number(settings.buttonY);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return fallback;
+        return {
+            x: Math.max(8, Math.min(innerWidth - 58, x)),
+            y: Math.max(70, Math.min(innerHeight - 145, y))
+        };
     }
 
-
-    function ensureControlPanel() {
-        if (document.querySelector(".ks-scout-fab")) return;
+    function ensurePanel() {
+        if (document.querySelector(".ks6-fab")) return;
 
         const button = document.createElement("button");
-        button.className = "ks-scout-fab";
+        button.className = "ks6-fab";
         button.textContent = "KSP";
-        button.title = "Kingshade Scout settings";
 
-        const safePosition = normalizeSavedButtonPosition();
-        button.style.left = `${safePosition.x}px`;
-        button.style.top = `${safePosition.y}px`;
-        button.style.right = "auto";
-        button.style.bottom = "auto";
+        const pos = buttonPosition();
+        button.style.left = `${pos.x}px`;
+        button.style.top = `${pos.y}px`;
 
         const panel = document.createElement("div");
-        panel.className = "ks-scout-panel";
+        panel.className = "ks6-panel";
         panel.hidden = true;
         panel.innerHTML = `
             <strong>Kingshade Scout ${VERSION}</strong>
-            ${hasOwnBattleScore() ? "" : '<div class="ks-scout-setup">Enter your own battle score before using target colors.</div>'}
-            <label>FF Scouter API key <input data-ksp="key" type="password" autocomplete="off" value="${getFFKey()}"></label>
-            <label>Your battle score <input data-ksp="ownbs" type="number" min="1" step="1000" value="${settings.ownBattleScore || ""}"></label>
-            <label>Green up to <input data-ksp="easy" type="number" min="0.1" max="2" step="0.05" value="${settings.easyRatio}"></label>
-            <label>Yellow up to <input data-ksp="risky" type="number" min="0.1" max="3" step="0.05" value="${settings.cautionRatio}"></label>
-            <div style="font-size:11px;opacity:.75;margin:4px 0 8px">Green/yellow/red is based on target battle score compared with yours. 0.75 = 75%.</div>
-            <label>Show unknown <input data-ksp="unknown" type="checkbox" ${settings.showUnknown ? "checked" : ""}></label>
-            <label>Show FF color stripe <input data-ksp="rows" type="checkbox" ${settings.markRows ? "checked" : ""}></label>
-            <button data-ksp="resetpos" type="button">Reset KSP button position</button>
-            <button data-ksp="apply" type="button">Apply and refresh</button>
+            <div class="ks6-status" data-ksp="status">Väntar på scanning…</div>
+            <label>FF Scouter API key
+                <input data-ksp="key" type="password" value="${escapeHtml(getApiKey())}">
+            </label>
+            <label>Visa okända
+                <input data-ksp="unknown" type="checkbox" ${settings.showUnknown ? "checked" : ""}>
+            </label>
+            <label>Visa färgrand
+                <input data-ksp="stripe" type="checkbox" ${settings.showStripe ? "checked" : ""}>
+            </label>
+            <div style="font-size:11px;opacity:.75;margin-top:8px">Tryck på en FFS/MAN-ruta vid en spelare för att ange eget FF och battle stats som K, M eller B.</div>
+            <button data-ksp="rescan">Scanna om factionlistan</button>
+            <button data-ksp="reset">Återställ KSP-position</button>
+            <button data-ksp="save">Spara inställningar</button>
         `;
 
         let dragging = false;
         let moved = false;
-        let startX = 0;
-        let startY = 0;
-        let startLeft = 0;
-        let startTop = 0;
+        let sx = 0, sy = 0, sl = 0, st = 0;
 
-        button.addEventListener("pointerdown", event => {
+        button.onpointerdown = event => {
             dragging = true;
             moved = false;
-            button.setPointerCapture?.(event.pointerId);
-
             const rect = button.getBoundingClientRect();
-            startX = event.clientX;
-            startY = event.clientY;
-            startLeft = rect.left;
-            startTop = rect.top;
-
-            button.classList.add("ks-dragging");
+            sx = event.clientX;
+            sy = event.clientY;
+            sl = rect.left;
+            st = rect.top;
+            button.setPointerCapture?.(event.pointerId);
             event.preventDefault();
-        });
+        };
 
-        button.addEventListener("pointermove", event => {
+        button.onpointermove = event => {
             if (!dragging) return;
-
-            const dx = event.clientX - startX;
-            const dy = event.clientY - startY;
+            const dx = event.clientX - sx;
+            const dy = event.clientY - sy;
             if (Math.abs(dx) > 4 || Math.abs(dy) > 4) moved = true;
+            const x = Math.max(8, Math.min(innerWidth - 58, sl + dx));
+            const y = Math.max(70, Math.min(innerHeight - 145, st + dy));
+            button.style.left = `${x}px`;
+            button.style.top = `${y}px`;
+        };
 
-            const safe = clampButtonPosition(startLeft + dx, startTop + dy);
-            button.style.left = `${safe.x}px`;
-            button.style.top = `${safe.y}px`;
-        });
-
-        const finishDrag = event => {
+        const finishPointer = event => {
             if (!dragging) return;
             dragging = false;
-            button.classList.remove("ks-dragging");
 
             if (moved) {
                 const rect = button.getBoundingClientRect();
-                const safe = clampButtonPosition(rect.left, rect.top);
-                saveButtonPosition(safe.x, safe.y);
-                button.style.left = `${safe.x}px`;
-                button.style.top = `${safe.y}px`;
+                settings.buttonX = rect.left;
+                settings.buttonY = rect.top;
+                saveSettings();
             } else {
                 panel.hidden = !panel.hidden;
             }
 
-            try {
-                button.releasePointerCapture?.(event.pointerId);
-            } catch {}
+            try { button.releasePointerCapture?.(event.pointerId); } catch {}
         };
 
-        button.addEventListener("pointerup", finishDrag);
-        button.addEventListener("pointercancel", finishDrag);
+        button.onpointerup = finishPointer;
+        button.onpointercancel = finishPointer;
+        button.onlostpointercapture = () => { dragging = false; };
 
-        panel.querySelector('[data-ksp="resetpos"]').addEventListener("click", () => {
-            resetButtonPosition(button);
-            panel.hidden = true;
-        });
-
-        panel.querySelector('[data-ksp="apply"]').addEventListener("click", () => {
-            setFFKey(panel.querySelector('[data-ksp="key"]').value);
-
-            const ownbs = Number(panel.querySelector('[data-ksp="ownbs"]').value);
-            const easy = Number(panel.querySelector('[data-ksp="easy"]').value);
-            const risky = Number(panel.querySelector('[data-ksp="risky"]').value);
-
-            settings.ownBattleScore = Number.isFinite(ownbs) && ownbs > 0 ? ownbs : 0;
-            settings.easyRatio = Number.isFinite(easy) ? easy : DEFAULT_SETTINGS.easyRatio;
-            settings.cautionRatio = Number.isFinite(risky) ? Math.max(risky, settings.easyRatio) : DEFAULT_SETTINGS.cautionRatio;
+        panel.querySelector('[data-ksp="save"]').onclick = () => {
+            setApiKey(panel.querySelector('[data-ksp="key"]').value);
             settings.showUnknown = panel.querySelector('[data-ksp="unknown"]').checked;
-            settings.markRows = panel.querySelector('[data-ksp="rows"]').checked;
+            settings.showStripe = panel.querySelector('[data-ksp="stripe"]').checked;
             saveSettings();
-
-            document.querySelectorAll("[data-ks-scout-applied]").forEach(el => {
-                el.removeAttribute("data-ks-scout-applied");
-                el.classList.remove("ks-scout-row-easy", "ks-scout-row-risky", "ks-scout-row-avoid", "ks-scout-row-unknown");
-                el.querySelectorAll(".ks-scout-badge").forEach(b => b.remove());
-            });
-
             panel.hidden = true;
+            clearRendered();
             scheduleScan(0);
-        });
-
-        const keepVisible = () => {
-            const rect = button.getBoundingClientRect();
-            const safe = clampButtonPosition(rect.left, rect.top);
-            if (safe.x !== rect.left || safe.y !== rect.top) {
-                button.style.left = `${safe.x}px`;
-                button.style.top = `${safe.y}px`;
-                saveButtonPosition(safe.x, safe.y);
-            }
         };
 
-        window.addEventListener("resize", keepVisible);
-        window.addEventListener("orientationchange", () => setTimeout(keepVisible, 150));
+        panel.querySelector('[data-ksp="rescan"]').onclick = () => {
+            clearRendered();
+            scheduleScan(0);
+        };
+
+        panel.querySelector('[data-ksp="reset"]').onclick = () => {
+            settings.buttonX = null;
+            settings.buttonY = null;
+            saveSettings();
+            const reset = buttonPosition();
+            button.style.left = `${reset.x}px`;
+            button.style.top = `${reset.y}px`;
+            panel.hidden = true;
+        };
 
         document.body.append(button, panel);
-
-        if (!hasOwnBattleScore()) {
-            setTimeout(() => {
-                panel.hidden = false;
-            }, 600);
-        }
     }
 
-    const statusTimers = new Map();
-    let timerInterval = null;
-
-    function parseAbsoluteTimestamp(value) {
-        if (value === null || value === undefined || value === "") return null;
-
-        const numeric = Number(value);
-        if (Number.isFinite(numeric)) {
-            if (numeric > 1e12) return Math.floor(numeric / 1000);
-            if (numeric > 1e9) return Math.floor(numeric);
-        }
-
-        const parsed = Date.parse(String(value));
-        if (Number.isFinite(parsed)) return Math.floor(parsed / 1000);
-        return null;
+    function updatePanelStatus(text) {
+        const el = document.querySelector('[data-ksp="status"]');
+        if (el) el.textContent = text;
     }
 
-    function parseDurationSeconds(text) {
-        if (!text) return null;
-        const normalized = String(text).toLowerCase();
-
-        const clock = normalized.match(/\b(?:(\d+):)?(\d{1,2}):(\d{2})\b/);
-        if (clock) {
-            const hours = Number(clock[1] || 0);
-            const minutes = Number(clock[2] || 0);
-            const seconds = Number(clock[3] || 0);
-            return hours * 3600 + minutes * 60 + seconds;
-        }
-
-        let total = 0;
-        let matched = false;
-        const parts = [
-            [/(\d+)\s*(?:d|day|days)\b/, 86400],
-            [/(\d+)\s*(?:h|hr|hrs|hour|hours)\b/, 3600],
-            [/(\d+)\s*(?:m|min|mins|minute|minutes)\b/, 60],
-            [/(\d+)\s*(?:s|sec|secs|second|seconds)\b/, 1]
-        ];
-
-        for (const [regex, multiplier] of parts) {
-            const match = normalized.match(regex);
-            if (match) {
-                total += Number(match[1]) * multiplier;
-                matched = true;
-            }
-        }
-
-        return matched ? total : null;
-    }
-
-    function inferStatus(row) {
-        const statusEl =
-            row.querySelector(".status") ||
-            row.querySelector('[class*="status___"]') ||
-            row.querySelector('[class*="statusWrap"]') ||
-            row.querySelector('[aria-label*="Hospital"], [aria-label*="Jail"], [aria-label*="Travel"], [aria-label*="Abroad"]');
-
-        if (!statusEl) return null;
-
-        const text = [
-            statusEl.textContent,
-            statusEl.getAttribute("aria-label"),
-            statusEl.getAttribute("title"),
-            statusEl.dataset?.status,
-            statusEl.dataset?.state
-        ].filter(Boolean).join(" ").toLowerCase();
-
-        if (text.includes("hospital")) return { state: "hospital", label: "Hospital", element: statusEl };
-        if (text.includes("jail")) return { state: "jail", label: "Jail", element: statusEl };
-        if (text.includes("travel")) return { state: "traveling", label: "Traveling", element: statusEl };
-        if (text.includes("abroad") || text.includes("in ")) return { state: "abroad", label: "Abroad", element: statusEl };
-        return null;
-    }
-
-    function findStatusUntil(row, statusEl) {
-        const candidates = [
-            statusEl?.dataset?.until,
-            statusEl?.dataset?.timestamp,
-            statusEl?.dataset?.time,
-            statusEl?.getAttribute("data-until"),
-            statusEl?.getAttribute("data-timestamp"),
-            row.dataset?.until,
-            row.dataset?.timestamp,
-            row.dataset?.statusUntil,
-            row.getAttribute("data-until"),
-            row.getAttribute("data-status-until")
-        ];
-
-        const timeEl = statusEl?.querySelector?.("time") || row.querySelector("time");
-        if (timeEl) {
-            candidates.push(
-                timeEl.getAttribute("datetime"),
-                timeEl.getAttribute("data-until"),
-                timeEl.getAttribute("data-timestamp")
-            );
-        }
-
-        for (const candidate of candidates) {
-            const ts = parseAbsoluteTimestamp(candidate);
-            if (ts && ts > Date.now() / 1000 - 5) return ts;
-        }
-
-        const sourceText = [
-            statusEl?.textContent,
-            statusEl?.getAttribute?.("aria-label"),
-            statusEl?.getAttribute?.("title"),
-            row.getAttribute("aria-label"),
-            row.getAttribute("title")
-        ].filter(Boolean).join(" ");
-
-        const duration = parseDurationSeconds(sourceText);
-        if (duration && duration > 0) {
-            return Math.floor(Date.now() / 1000) + duration;
-        }
-
-        return null;
-    }
-
-    function formatCountdown(seconds) {
-        const s = Math.max(0, Math.floor(seconds));
-        const days = Math.floor(s / 86400);
-        const hours = Math.floor((s % 86400) / 3600);
-        const minutes = Math.floor((s % 3600) / 60);
-        const secs = s % 60;
-
-        if (days > 0) return `${days}d ${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
-        if (hours > 0) return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
-        return `${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
-    }
-
-    function ensureStatusTimer(entry) {
-        const status = inferStatus(entry.row);
-        const old = entry.row.querySelector(`.ks-status-timer[data-player-id="${entry.id}"]`);
-
-        if (!status) {
-            old?.remove();
-            statusTimers.delete(entry.id);
-            return;
-        }
-
-        let timer = old;
-        if (!timer) {
-            timer = document.createElement("span");
-            timer.className = "ks-status-timer";
-            timer.dataset.playerId = String(entry.id);
-            const host = status.element.parentElement || status.element;
-            host.appendChild(timer);
-        }
-
-        timer.dataset.state = status.state;
-        const until = findStatusUntil(entry.row, status.element);
-
-        if (until) {
-            statusTimers.set(entry.id, { timer, until, label: status.label });
-            updateOneStatusTimer(entry.id);
-        } else {
-            statusTimers.delete(entry.id);
-            timer.remove();
-        }
-    }
-
-    function updateOneStatusTimer(id) {
-        const item = statusTimers.get(id);
-        if (!item) return;
-
-        if (!item.timer.isConnected) {
-            statusTimers.delete(id);
-            return;
-        }
-
-        const remaining = item.until - Math.floor(Date.now() / 1000);
-        if (remaining <= 0) {
-            item.timer.dataset.state = "ready";
-            item.timer.classList.add("ks-status-ready");
-            item.timer.textContent = "Okay";
-            item.timer.title = "The saved timer has expired. Reload to verify current status.";
-            statusTimers.delete(id);
-            return;
-        }
-
-        item.timer.classList.remove("ks-status-ready");
-        item.timer.textContent = `${item.label} · ${formatCountdown(remaining)}`;
-        item.timer.title = `Estimated time remaining until this status ends: ${formatCountdown(remaining)}`;
-    }
-
-    function startStatusTicker() {
-        if (timerInterval) return;
-        timerInterval = setInterval(() => {
-            for (const id of Array.from(statusTimers.keys())) {
-                updateOneStatusTimer(id);
-            }
-        }, 1000);
+    function clearRendered() {
+        document.querySelectorAll(".ks6-badge").forEach(el => el.remove());
+        document.querySelectorAll("[data-ks6-applied]").forEach(row => {
+            row.removeAttribute("data-ks6-applied");
+            row.style.removeProperty("box-shadow");
+        });
     }
 
     async function scan() {
         scanTimer = null;
-        ensureStyles();
-
-        const rows = findTargetRows();
-        if (rows.size === 0) return;
-
-        const freshEntries = [];
-        for (const entry of rows.values()) {
-            ensureStatusTimer(entry);
-
-            if (entry.row.dataset.ksScoutApplied === "1" || entry.row.dataset.ksScoutApplied === "pending") continue;
-            entry.row.dataset.ksScoutApplied = "pending";
-            renderLoading(entry);
-            freshEntries.push(entry);
+        if (!/\/factions\.php\/?$/i.test(location.pathname)) {
+            updatePanelStatus("Öppna en factionlista för att scanna.");
+            return;
         }
 
-        startStatusTicker();
+        const profileLinkCount = document.querySelectorAll(
+            'a[href*="profiles.php?XID="], a[href*="user2ID="], a[href*="userId="]'
+        ).length;
+        const rows = findRows();
+        updatePanelStatus(`${rows.size} rader av ${profileLinkCount} profillänkar hittades`);
 
-        if (freshEntries.length === 0) return;
+        if (!rows.size) return;
+
+        const fresh = [];
+        for (const entry of rows.values()) {
+            if (entry.row.dataset.ks6Applied === VERSION) continue;
+            if (entry.row.dataset.ks6Pending === "1") continue;
+            entry.row.dataset.ks6Pending = "1";
+            fresh.push(entry);
+        }
+
+        if (!fresh.length) return;
 
         try {
-            const data = await getPlayers(freshEntries.map(entry => entry.id));
-            for (const entry of freshEntries) {
-                renderResult(entry, data.get(entry.id));
-                entry.row.dataset.ksScoutApplied = "1";
+            const data = await fetchPlayers(fresh.map(entry => entry.id));
+            for (const entry of fresh) {
+                render(entry, data.get(entry.id));
+                entry.row.dataset.ks6Applied = VERSION;
+                entry.row.removeAttribute("data-ks6-pending");
             }
+            updatePanelStatus(`${rows.size} rader av ${profileLinkCount} profillänkar · FF laddat`);
         } catch (error) {
-            for (const entry of freshEntries) {
-                entry.row.dataset.ksScoutApplied = "";
-                entry.row.querySelector(`.ks-scout-badge[data-player-id="${entry.id}"]`)?.remove();
+            for (const entry of fresh) {
+                entry.row.removeAttribute("data-ks6-applied");
+                entry.row.removeAttribute("data-ks6-pending");
             }
-            showError(error instanceof Error ? error.message : String(error));
+            updatePanelStatus(`${rows.size} rader av ${profileLinkCount} profillänkar · fel vid FF-hämtning`);
+            showToast(error instanceof Error ? error.message : String(error));
         }
     }
 
-    function scheduleScan(delay = 100) {
-        if (scanTimer) return;
+    function scheduleScan(delay = 120) {
+        clearTimeout(scanTimer);
         scanTimer = setTimeout(scan, delay);
-    }
-
-    function startObserver() {
-        observer?.disconnect();
-        observer = new MutationObserver(mutations => {
-            if (mutations.some(m => m.addedNodes.length > 0)) scheduleScan();
-        });
-        observer.observe(document.body, { childList: true, subtree: true });
-    }
-
-    function resetOnNavigation() {
-        document.querySelectorAll("[data-ks-scout-applied]").forEach(el => el.removeAttribute("data-ks-scout-applied"));
-        scheduleScan(250);
     }
 
     function init() {
@@ -999,15 +664,54 @@
             return;
         }
 
+        // Remove output from every previous version.
+        document.querySelectorAll(
+            ".ks6-fab,.ks6-panel,.ks6-badge,.ks6-modal,.ks6-toast,.ks-scout-fab,.ks-scout-panel,.ks-scout-badge,.ks-status-timer,.ks-scout-error"
+        ).forEach(el => el.remove());
+
+        document.querySelectorAll("[data-ks-scout-applied],[data-ks6-applied]").forEach(row => {
+            row.removeAttribute("data-ks-scout-applied");
+            row.removeAttribute("data-ks6-applied");
+            row.style.removeProperty("background");
+            row.style.removeProperty("box-shadow");
+        });
+
         ensureStyles();
-        ensureControlPanel();
-        startStatusTicker();
-        startObserver();
-        window.addEventListener("popstate", resetOnNavigation);
-        window.addEventListener("hashchange", resetOnNavigation);
-        window.navigation?.addEventListener?.("currententrychange", resetOnNavigation);
+        ensurePanel();
+
+        observer = new MutationObserver(mutations => {
+            const relevant = mutations.some(mutation =>
+                Array.from(mutation.addedNodes).some(node => {
+                    if (!(node instanceof Element)) return false;
+                    return !node.matches(".ks6-fab,.ks6-panel,.ks6-badge,.ks6-modal,.ks6-toast") &&
+                           !node.closest?.(".ks6-panel,.ks6-modal");
+                })
+            );
+
+            if (relevant) scheduleScan();
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+
+        window.addEventListener("hashchange", () => scheduleScan(200));
+        window.addEventListener("popstate", () => scheduleScan(200));
+        window.navigation?.addEventListener?.("currententrychange", () => scheduleScan(200));
+
         scheduleScan(0);
-        log("Loaded");
+
+        window[INSTANCE_KEY] = {
+            destroy() {
+                clearTimeout(scanTimer);
+                observer?.disconnect();
+                document.querySelectorAll(
+                    ".ks6-fab,.ks6-panel,.ks6-badge,.ks6-modal,.ks6-toast"
+                ).forEach(el => el.remove());
+                document.querySelectorAll("[data-ks6-applied],[data-ks6-pending]").forEach(row => {
+                    row.removeAttribute("data-ks6-applied");
+                    row.removeAttribute("data-ks6-pending");
+                    row.style.removeProperty("box-shadow");
+                });
+            }
+        };
     }
 
     init();
