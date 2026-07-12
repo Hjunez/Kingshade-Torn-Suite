@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kingshade Scout for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.4.1
+// @version      0.4.3
 // @description  Lightweight FF Scouter companion for Torn PDA. Adds clear green/yellow/red target markers and estimated battle stats to faction and war lists.
 // @author       Kingshade
 // @match        https://www.torn.com/*
@@ -14,7 +14,7 @@
     "use strict";
 
     const NAME = "Kingshade Scout";
-    const VERSION = "0.4.1";
+    const VERSION = "0.4.3";
     const API_BASE = "https://ffscouter.com/api/v1";
     const CACHE_TTL_MS = 60 * 60 * 1000;
     const STORAGE_PREFIX = "kingshade-scout:";
@@ -22,9 +22,6 @@
     const BATCH_SIZE = 100;
     const SETTINGS_KEY = `${STORAGE_PREFIX}settings`;
     const DEFAULT_SETTINGS = {
-        ownBattleScore: 0,
-        easyRatio: 0.75,
-        cautionRatio: 1.05,
         showUnknown: true,
         markRows: true,
         buttonX: null,
@@ -42,12 +39,6 @@
     function loadSettings() {
         try {
             const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
-
-            // Migrate older FF-threshold settings to player-relative comparison.
-            if (!Number(saved.ownBattleScore)) saved.ownBattleScore = 0;
-            if (!Number(saved.easyRatio)) saved.easyRatio = 0.75;
-            if (!Number(saved.cautionRatio)) saved.cautionRatio = 1.05;
-
             return { ...DEFAULT_SETTINGS, ...saved };
         } catch {
             return { ...DEFAULT_SETTINGS };
@@ -58,10 +49,6 @@
         try {
             localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
         } catch {}
-    }
-
-    function hasOwnBattleScore() {
-        return Number(settings.ownBattleScore) > 0;
     }
 
     function saveButtonPosition(x, y) {
@@ -315,44 +302,74 @@
     }
 
     function findTargetRows(root = document) {
+        if (!/\/factions\.php$/i.test(location.pathname)) return new Map();
+
         const anchors = root.querySelectorAll(
-            'a[href*="profiles.php?XID="], a[href*="user2ID="], a[href*="userId="], a[href*="step=profile"][href*="ID="]'
+            'a[href*="profiles.php?XID="], a[href*="user2ID="], a[href*="userId="]'
         );
+
         const rows = new Map();
+        const statusWords = /\b(?:okay|hospital|jail|traveling|travelling|abroad)\b/i;
 
         for (const anchor of anchors) {
             const id = extractPlayerId(anchor);
             if (!id) continue;
 
             const row =
-                anchor.closest(".enemy, .your, .table-row, li, [class*='row___'], [class*='member___']") ||
+                anchor.closest(".table-row, li, [class*='row___'], [class*='member___']") ||
                 anchor.parentElement;
 
             if (!row) continue;
+
+            const text = row.textContent || "";
+            const hasStatus = statusWords.test(text);
+            const hasLevelLikeCell =
+                !!row.querySelector(".level, [class*='level___'], [class*='lvl___']") ||
+                /\b\d{1,3}\b/.test(text);
+
+            const isProfileArea =
+                !!row.closest('[class*="profile"], .user-information, .actions-wrap, .profile-wrapper');
+
+            if (!hasStatus || !hasLevelLikeCell || isProfileArea) continue;
             if (!rows.has(id)) rows.set(id, { id, row, anchor });
         }
+
         return rows;
     }
 
+    const FF_CLASSIC_PALETTE = [
+        "#1734e8",
+        "#1788e8",
+        "#17dbe8",
+        "#17e8a1",
+        "#17e84e",
+        "#34e817",
+        "#88e817",
+        "#dbe817",
+        "#e8a117",
+        "#e84e17",
+        "#e81734"
+    ];
+
     function classify(data) {
-        const target = Number(data?.bs_estimate);
-        const own = Number(settings.ownBattleScore);
+        const ff = Number(data?.fair_fight);
 
-        if (!Number.isFinite(target) || target <= 0 || !Number.isFinite(own) || own <= 0) {
-            return { label: "UNKNOWN", color: "#666", icon: "●", ratio: null };
+        if (!Number.isFinite(ff) || ff <= 0) {
+            return { label: "UNKNOWN", color: "#666", ff: null };
         }
 
-        const ratio = target / own;
+        const clamped = Math.max(1, Math.min(5, ff));
+        const index = Math.floor(((clamped - 1) / 4) * 10);
+        const color = FF_CLASSIC_PALETTE[index] || "#666";
 
-        if (ratio <= settings.easyRatio) {
-            return { label: "LIKELY WIN", color: "#2e9d52", icon: "▼", ratio };
-        }
+        let label;
+        if (ff <= 1) label = "EXTREMELY EASY";
+        else if (ff <= 2) label = "EASY";
+        else if (ff <= 3.5) label = "MODERATE";
+        else if (ff <= 4.5) label = "DIFFICULT";
+        else label = "MAY BE IMPOSSIBLE";
 
-        if (ratio <= settings.cautionRatio) {
-            return { label: "CAUTION", color: "#d6a20b", icon: "◆", ratio };
-        }
-
-        return { label: "TOO STRONG", color: "#d24444", icon: "▲", ratio };
+        return { label, color, ff };
     }
 
     function ensureStyles() {
@@ -360,7 +377,7 @@
         const style = document.createElement("style");
         style.id = "ks-scout-styles";
         style.textContent = `
-            .ks-scout-badge{display:flex!important;align-items:center;justify-content:center;gap:4px;margin:3px 0 0;padding:4px 7px;border-radius:5px;font:800 11px/1.15 Arial,sans-serif;color:#fff!important;white-space:nowrap;box-shadow:0 0 0 1px rgba(0,0,0,.45);z-index:2;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+            .ks-scout-badge{position:absolute!important;right:3px;top:50%;transform:translateY(-50%);display:flex!important;align-items:center;justify-content:center;gap:3px;margin:0;padding:3px 5px;border-radius:4px;font:800 9px/1 Arial,sans-serif;color:#fff!important;white-space:nowrap;box-shadow:0 0 0 1px rgba(0,0,0,.45);z-index:4;max-width:72px;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
             .ks-scout-badge[data-state="loading"]{background:#555;opacity:.8}
             .ks-scout-badge .ks-scout-stats{font-weight:700;opacity:.98}
             .ks-scout-row-easy{background:linear-gradient(90deg,rgba(46,157,82,.34),rgba(46,157,82,.08) 48%,transparent 78%)!important;box-shadow:inset 6px 0 0 #2e9d52!important}
@@ -379,14 +396,19 @@
             .ks-status-ready{background:#2e9d52!important}
             .ks-scout-panel{position:fixed;right:12px;bottom:150px;width:min(88vw,300px);padding:12px;border-radius:10px;background:#202124;color:#fff;font:13px Arial;z-index:2147483646;box-shadow:0 4px 18px rgba(0,0,0,.55)}
             .ks-scout-panel label{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:8px 0}
-            .ks-scout-panel input[type=number]{width:92px}.ks-scout-panel input[type=password]{width:150px;min-width:0}
+            .ks-scout-panel input[type=number]{width:72px}.ks-scout-panel select{height:26px;min-width:48px}.ks-scout-panel input[type=password]{width:150px;min-width:0}
             .ks-scout-panel button{width:100%;margin-top:8px;padding:8px;border:0;border-radius:6px;font-weight:700}
         `;
         (document.head || document.documentElement).appendChild(style);
     }
 
     function getBadgeHost(anchor, row) {
-        return anchor.closest(".honor-text-wrap") || row.querySelector(".member") || anchor.parentElement || row;
+        const host = anchor.closest(".honor-text-wrap") || row.querySelector(".member") || anchor.parentElement || row;
+        if (host) {
+            const current = getComputedStyle(host).position;
+            if (current === "static") host.style.position = "relative";
+        }
+        return host;
     }
 
     function renderLoading(entry) {
@@ -431,9 +453,7 @@
             badge.dataset.state = "unknown";
             badge.style.background = "#666";
             badge.textContent = "● UNKNOWN";
-            badge.title = !hasOwnBattleScore()
-                ? "Enter your own battle score in KSP settings."
-                : "FF Scouter has no battle-stat estimate for this player.";
+            badge.title = "FF Scouter has no Fair Fight estimate for this player.";
             if (settings.markRows) entry.row.classList.add("ks-scout-row-unknown");
             return;
         }
@@ -441,14 +461,12 @@
         const rating = classify(data);
         badge.dataset.state = rating.label.toLowerCase();
         badge.style.background = rating.color;
-        const pct = rating.ratio === null ? "?" : `${Math.round(rating.ratio * 100)}%`;
-        badge.innerHTML = `${rating.icon} ${rating.label} <span class="ks-scout-stats">${escapeHtml(data.bs_estimate_human)} · ${pct}</span>`;
-        badge.title = `Target estimate: ${data.bs_estimate_human} | Your score: ${formatNumber(settings.ownBattleScore)} | Target is ${pct} of your score | FF: ${data.fair_fight.toFixed(2)} | Source: ${data.source}`;
+        badge.innerHTML = `<span class="ks-scout-stats">FF ${data.fair_fight.toFixed(2)}</span>`;
+        badge.title = `${rating.label} | FF Scouter Fair Fight: ${data.fair_fight.toFixed(2)} | Estimated battle stats: ${data.bs_estimate_human} | Source: ${data.source}`;
 
         if (settings.markRows) {
-            if (rating.label === "LIKELY WIN") entry.row.classList.add("ks-scout-row-easy");
-            if (rating.label === "CAUTION") entry.row.classList.add("ks-scout-row-risky");
-            if (rating.label === "TOO STRONG") entry.row.classList.add("ks-scout-row-avoid");
+            entry.row.style.boxShadow = `inset 6px 0 0 ${rating.color}`;
+            entry.row.style.background = `linear-gradient(90deg, ${rating.color}55, ${rating.color}14 48%, transparent 78%)`;
 
             const memberCell = entry.anchor.closest(".member, [class*='member___'], .table-cell") || entry.anchor.parentElement;
             if (memberCell) {
@@ -489,12 +507,8 @@
         panel.hidden = true;
         panel.innerHTML = `
             <strong>Kingshade Scout ${VERSION}</strong>
-            ${hasOwnBattleScore() ? "" : '<div class="ks-scout-setup">Enter your own battle score before using target colors.</div>'}
             <label>FF Scouter API key <input data-ksp="key" type="password" autocomplete="off" value="${getFFKey()}"></label>
-            <label>Your battle score <input data-ksp="ownbs" type="number" min="1" step="1000" value="${settings.ownBattleScore || ""}"></label>
-            <label>Green up to <input data-ksp="easy" type="number" min="0.1" max="2" step="0.05" value="${settings.easyRatio}"></label>
-            <label>Yellow up to <input data-ksp="risky" type="number" min="0.1" max="3" step="0.05" value="${settings.cautionRatio}"></label>
-            <div style="font-size:11px;opacity:.75;margin:4px 0 8px">Green/yellow/red is based on target battle score compared with yours. 0.75 = 75%.</div>
+            <div style="font-size:11px;opacity:.75;margin:4px 0 8px">Uses FF Scouter's own Fair Fight number and exact Classic color scale automatically.</div>
             <label>Show unknown <input data-ksp="unknown" type="checkbox" ${settings.showUnknown ? "checked" : ""}></label>
             <label>Highlight full rows <input data-ksp="rows" type="checkbox" ${settings.markRows ? "checked" : ""}></label>
             <button data-ksp="resetpos" type="button">Reset KSP button position</button>
@@ -566,13 +580,7 @@
         panel.querySelector('[data-ksp="apply"]').addEventListener("click", () => {
             setFFKey(panel.querySelector('[data-ksp="key"]').value);
 
-            const ownbs = Number(panel.querySelector('[data-ksp="ownbs"]').value);
-            const easy = Number(panel.querySelector('[data-ksp="easy"]').value);
-            const risky = Number(panel.querySelector('[data-ksp="risky"]').value);
 
-            settings.ownBattleScore = Number.isFinite(ownbs) && ownbs > 0 ? ownbs : 0;
-            settings.easyRatio = Number.isFinite(easy) ? easy : DEFAULT_SETTINGS.easyRatio;
-            settings.cautionRatio = Number.isFinite(risky) ? Math.max(risky, settings.easyRatio) : DEFAULT_SETTINGS.cautionRatio;
             settings.showUnknown = panel.querySelector('[data-ksp="unknown"]').checked;
             settings.markRows = panel.querySelector('[data-ksp="rows"]').checked;
             saveSettings();
@@ -602,11 +610,6 @@
 
         document.body.append(button, panel);
 
-        if (!hasOwnBattleScore()) {
-            setTimeout(() => {
-                panel.hidden = false;
-            }, 600);
-        }
     }
 
     const statusTimers = new Map();
@@ -765,8 +768,7 @@
             updateOneStatusTimer(entry.id);
         } else {
             statusTimers.delete(entry.id);
-            timer.textContent = status.label;
-            timer.title = `No exact end time was found in the page data for ${status.label.toLowerCase()}.`;
+            timer.remove();
         }
     }
 
