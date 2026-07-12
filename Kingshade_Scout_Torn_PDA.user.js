@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kingshade Scout for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.4.3
+// @version      0.4.4
 // @description  Lightweight FF Scouter companion for Torn PDA. Adds clear green/yellow/red target markers and estimated battle stats to faction and war lists.
 // @author       Kingshade
 // @match        https://www.torn.com/*
@@ -14,12 +14,13 @@
     "use strict";
 
     const NAME = "Kingshade Scout";
-    const VERSION = "0.4.3";
+    const VERSION = "0.4.4";
     const API_BASE = "https://ffscouter.com/api/v1";
     const CACHE_TTL_MS = 60 * 60 * 1000;
     const STORAGE_PREFIX = "kingshade-scout:";
     const FF_KEY_STORAGE = `${STORAGE_PREFIX}ff-api-key`;
     const BATCH_SIZE = 100;
+    const APPLIED_MARKER = `v${VERSION}`;
     const SETTINGS_KEY = `${STORAGE_PREFIX}settings`;
     const DEFAULT_SETTINGS = {
         showUnknown: true,
@@ -373,7 +374,7 @@
     }
 
     function ensureStyles() {
-        if (document.getElementById("ks-scout-styles")) return;
+        document.getElementById("ks-scout-styles")?.remove();
         const style = document.createElement("style");
         style.id = "ks-scout-styles";
         style.textContent = `
@@ -458,11 +459,20 @@
             return;
         }
 
-        const rating = classify(data);
-        badge.dataset.state = rating.label.toLowerCase();
+        const ff = Number(data.fair_fight);
+        if (!Number.isFinite(ff) || ff <= 0) {
+            badge.dataset.state = "unknown";
+            badge.style.background = "#666";
+            badge.textContent = "FF ?";
+            badge.title = "FF Scouter returned an invalid Fair Fight value.";
+            return;
+        }
+
+        const rating = classify({ ...data, fair_fight: ff });
+        badge.dataset.state = rating.label.toLowerCase().replace(/\s+/g, "-");
         badge.style.background = rating.color;
-        badge.innerHTML = `<span class="ks-scout-stats">FF ${data.fair_fight.toFixed(2)}</span>`;
-        badge.title = `${rating.label} | FF Scouter Fair Fight: ${data.fair_fight.toFixed(2)} | Estimated battle stats: ${data.bs_estimate_human} | Source: ${data.source}`;
+        badge.innerHTML = `<span class="ks-scout-stats">FF ${ff.toFixed(2)}</span>`;
+        badge.title = `${rating.label} | FF Scouter Fair Fight: ${ff.toFixed(2)} | Estimated battle stats: ${data.bs_estimate_human} | Source: ${data.source}`;
 
         if (settings.markRows) {
             entry.row.style.boxShadow = `inset 6px 0 0 ${rating.color}`;
@@ -816,7 +826,7 @@
         for (const entry of rows.values()) {
             ensureStatusTimer(entry);
 
-            if (entry.row.dataset.ksScoutApplied === "1" || entry.row.dataset.ksScoutApplied === "pending") continue;
+            if (entry.row.dataset.ksScoutApplied === APPLIED_MARKER || entry.row.dataset.ksScoutApplied === "pending") continue;
             entry.row.dataset.ksScoutApplied = "pending";
             renderLoading(entry);
             freshEntries.push(entry);
@@ -830,9 +840,10 @@
             const data = await getPlayers(freshEntries.map(entry => entry.id));
             for (const entry of freshEntries) {
                 renderResult(entry, data.get(entry.id));
-                entry.row.dataset.ksScoutApplied = "1";
+                entry.row.dataset.ksScoutApplied = APPLIED_MARKER;
             }
         } catch (error) {
+            console.error(`[${NAME}] scan failed`, error);
             for (const entry of freshEntries) {
                 entry.row.dataset.ksScoutApplied = "";
                 entry.row.querySelector(`.ks-scout-badge[data-player-id="${entry.id}"]`)?.remove();
@@ -864,6 +875,15 @@
             setTimeout(init, 100);
             return;
         }
+
+        // Remove stale output left by an older installed version.
+        document.querySelectorAll(".ks-scout-badge, .ks-status-timer, .ks-scout-error").forEach(el => el.remove());
+        document.querySelectorAll("[data-ks-scout-applied]").forEach(el => {
+            el.removeAttribute("data-ks-scout-applied");
+            el.classList.remove("ks-scout-row-easy", "ks-scout-row-risky", "ks-scout-row-avoid", "ks-scout-row-unknown");
+            el.style.removeProperty("background");
+            el.style.removeProperty("box-shadow");
+        });
 
         ensureStyles();
         ensureControlPanel();
