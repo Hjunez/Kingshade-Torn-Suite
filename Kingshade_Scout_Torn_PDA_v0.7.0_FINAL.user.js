@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Kingshade Scout for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.7.0
-// @description  Mobile FF Scouter overlay for Torn PDA faction member lists with optional manual overrides.
+// @version      0.7.1
+// @description  Mobile FF Scouter overlay for Torn PDA faction member lists with FF, estimate fallbacks, and optional manual overrides.
 // @author       Kingshade
 // @match        https://www.torn.com/*
 // @connect      ffscouter.com
@@ -20,20 +20,21 @@
     }
 
     const NAME = "Kingshade Scout";
-    const VERSION = "0.7.0";
+    const VERSION = "0.7.1";
     const API_BASE = "https://ffscouter.com/api/v1";
     const TORN_API_BASE = "https://api.torn.com";
     const PREFIX = "kingshade-scout:";
     const SETTINGS_KEY = `${PREFIX}settings`;
     const API_KEY_STORAGE = `${PREFIX}ff-api-key`;
     const MANUAL_PREFIX = `${PREFIX}manual:`;
+    const PROFILE_EST_PREFIX = `${PREFIX}profile-estimate:`;
     const CACHE_PREFIX = `${PREFIX}cache:`;
     const CACHE_MS = 60 * 60 * 1000;
     const FACTION_DIRECTORY_MS = 5 * 60 * 1000;
+    const OLD_ESTIMATE_SECONDS = 14 * 24 * 60 * 60;
 
     const DEFAULTS = {
         showUnknown: true,
-        showStripe: true,
         buttonX: null,
         buttonY: null
     };
@@ -90,6 +91,59 @@
             if (!value) localStorage.removeItem(`${MANUAL_PREFIX}${playerId}`);
             else localStorage.setItem(`${MANUAL_PREFIX}${playerId}`, JSON.stringify(value));
         } catch {}
+    }
+
+    function normalizeEstimateText(value) {
+        const text = String(value || "")
+            .replace(/\s+/g, " ")
+            .replace(/\s*-\s*/g, "–")
+            .trim();
+
+        if (!text || /^(?:unk|unknown|n\/a|none|\?)$/i.test(text)) return "";
+        return text.replace(/(\d(?:[.,]\d+)?)\s*([kmb])\b/gi, (_, number, unit) =>
+            `${number}${unit.toUpperCase()}`
+        );
+    }
+
+    function extractEstimateFragment(value) {
+        const text = String(value || "").replace(/\s+/g, " ").trim();
+        const match = text.match(/(?:<\s*)?\d+(?:[.,]\d+)?\s*[KMB](?:\s*(?:-|–|to)\s*\d+(?:[.,]\d+)?\s*[KMB])?/i);
+        return normalizeEstimateText(match?.[0] || "");
+    }
+
+    function getProfileEstimate(playerId) {
+        try {
+            const parsed = JSON.parse(localStorage.getItem(`${PROFILE_EST_PREFIX}${playerId}`) || "null");
+            return parsed?.human ? parsed : null;
+        } catch {
+            return null;
+        }
+    }
+
+    function setProfileEstimate(playerId, human, source = "profile") {
+        const clean = extractEstimateFragment(human);
+        if (!playerId || !clean) return;
+        try {
+            localStorage.setItem(`${PROFILE_EST_PREFIX}${playerId}`, JSON.stringify({
+                human: clean,
+                source,
+                capturedAt: Date.now()
+            }));
+        } catch {}
+    }
+
+    function captureProfileEstimate() {
+        if (!/\/profiles\.php\/?$/i.test(location.pathname)) return;
+
+        const playerId = playerIdFromUrl(location.href);
+        if (!playerId) return;
+
+        const text = String(document.body?.innerText || "");
+        const detailed = text.match(/(?:^|\n)\s*>?\s*Estimated stats:\s*([^\n]+)/i);
+        const header = text.match(/(?:^|\n)\s*\(EST\)\s*([^\n]+)/i);
+        const human = extractEstimateFragment(detailed?.[1] || header?.[1] || "");
+
+        if (human) setProfileEstimate(playerId, human, detailed ? "FF Scouter profile" : "profile header");
     }
 
     function compactParts(total) {
@@ -221,9 +275,17 @@
                 const value = {
                     player_id: playerId,
                     fair_fight: Number(row.fair_fight),
+                    last_updated: Number(row.last_updated),
                     bs_estimate: Number(row.bs_estimate),
                     bs_estimate_human: String(row.bs_estimate_human || ""),
-                    source: String(row.source || "FFS")
+                    bss_public: Number(row.bss_public),
+                    source: String(row.source || "bss"),
+                    available_estimates: row.available_estimates && typeof row.available_estimates === "object"
+                        ? row.available_estimates
+                        : null,
+                    premium_insights_available: Boolean(row.premium_insights_available),
+                    distribution: row.distribution || null,
+                    spies: Array.isArray(row.spies) ? row.spies : []
                 };
 
                 returned.add(playerId);
@@ -233,7 +295,19 @@
 
             for (const id of batch) {
                 if (!returned.has(id)) {
-                    const value = { player_id: id, fair_fight: null, bs_estimate: null, bs_estimate_human: "" };
+                    const value = {
+                        player_id: id,
+                        fair_fight: null,
+                        last_updated: null,
+                        bs_estimate: null,
+                        bs_estimate_human: "",
+                        bss_public: null,
+                        source: "",
+                        available_estimates: null,
+                        premium_insights_available: false,
+                        distribution: null,
+                        spies: []
+                    };
                     result.set(id, value);
                     setCached(id, value);
                 }
@@ -513,6 +587,50 @@
         return { color: FF_PALETTE[index] || "#666", label };
     }
 
+    function positiveNumber(value) {
+        const number = Number(value);
+        return Number.isFinite(number) && number > 0 ? number : null;
+    }
+
+    function resolveEstimate(data) {
+        const source = String(data?.source || "");
+        const candidate = source && data?.available_estimates
+            ? data.available_estimates[source]
+            : null;
+
+        return {
+            source: source || "bss",
+            fairFight: positiveNumber(candidate?.fair_fight) ?? positiveNumber(data?.fair_fight),
+            battleStats: positiveNumber(candidate?.bs_estimate) ?? positiveNumber(data?.bs_estimate),
+            battleStatsHuman: normalizeEstimateText(candidate?.bs_estimate_human || data?.bs_estimate_human || ""),
+            lastUpdated: positiveNumber(candidate?.last_updated) ?? positiveNumber(data?.last_updated)
+        };
+    }
+
+    function sourceLabel(source) {
+        switch (String(source || "").toLowerCase()) {
+            case "spies": return "SPY";
+            case "premium": return "PREMIUM";
+            case "bss": return "BSS";
+            case "manual": return "MANUAL";
+            case "ff scouter profile": return "PROFILE";
+            case "profile header": return "PROFILE";
+            default: return String(source || "FFS").toUpperCase();
+        }
+    }
+
+    function estimateAge(lastUpdated) {
+        const timestamp = positiveNumber(lastUpdated);
+        if (!timestamp) return { label: "", old: false };
+
+        const ageSeconds = Math.max(0, Date.now() / 1000 - timestamp);
+        const old = ageSeconds > OLD_ESTIMATE_SECONDS;
+
+        if (ageSeconds < 24 * 60 * 60) return { label: "today", old };
+        const days = Math.max(1, Math.round(ageSeconds / (24 * 60 * 60)));
+        return { label: `${days}d old`, old };
+    }
+
     function ensureStyles() {
         document.getElementById("ks6-styles")?.remove();
         const style = document.createElement("style");
@@ -560,10 +678,8 @@
             .ks6-colored-row{
                 --ks6-row-color:#666;
                 --ks6-row-tint:rgba(102,102,102,.22);
-                position:relative!important;
-                box-shadow:inset 5px 0 0 var(--ks6-row-color)!important
+                position:relative!important
             }
-            .ks6-colored-row.ks6-no-stripe{box-shadow:none!important}
             .ks6-colored-row,
             .ks6-colored-row > *,
             .ks6-colored-row [class*='table-cell'],
@@ -573,7 +689,7 @@
             .ks6-name-host{position:relative!important;overflow:visible!important}
             .ks6-badge{
                 position:absolute!important;right:2px;bottom:1px;display:inline-flex!important;
-                align-items:center;justify-content:center;max-width:64px;padding:1px 4px;
+                align-items:center;justify-content:center;max-width:82px;padding:1px 4px;
                 border:1px solid var(--ks6-row-color)!important;border-radius:3px;
                 background:rgba(0,0,0,.76)!important;color:#fff!important;
                 font:800 8px/1.15 Arial,sans-serif!important;white-space:nowrap;
@@ -655,9 +771,28 @@
         document.querySelector(".ks6-modal")?.remove();
 
         const manual = getManual(entry.id);
-        const bs = compactParts(manual?.battleStats || ffsData?.bs_estimate);
-        const ffsFF = Number(ffsData?.fair_fight);
+        const resolved = resolveEstimate(ffsData);
+        const profileEstimate = getProfileEstimate(entry.id);
+        const bs = compactParts(manual?.battleStats || resolved.battleStats);
         const playerName = getPlayerDisplayName(entry);
+        const age = estimateAge(resolved.lastUpdated);
+        const source = sourceLabel(resolved.source);
+
+        const ffSummary = resolved.fairFight
+            ? `${resolved.fairFight.toFixed(2)} · ${source}${age.label ? ` · ${age.label}` : ""}`
+            : "No FF score";
+
+        const estimateHuman =
+            resolved.battleStatsHuman ||
+            (resolved.battleStats ? formatCompact(resolved.battleStats) : "") ||
+            profileEstimate?.human ||
+            "No estimate";
+
+        const estimateSource = resolved.battleStats || resolved.battleStatsHuman
+            ? source
+            : profileEstimate
+                ? sourceLabel(profileEstimate.source)
+                : "";
 
         const modal = document.createElement("div");
         modal.className = "ks6-modal";
@@ -667,8 +802,12 @@
                     <strong>${escapeHtml(playerName)}</strong>
                     <button type="button" class="ks6-close" data-x="close" aria-label="Close">×</button>
                 </div>
-                <div style="color:#c9cbd0;margin-top:4px">
-                    FF Scouter: ${Number.isFinite(ffsFF) && ffsFF > 0 ? ffsFF.toFixed(2) : "No data"}
+
+                <div style="color:#c9cbd0;margin-top:5px">
+                    FF Scouter: ${escapeHtml(ffSummary)}
+                </div>
+                <div style="color:#c9cbd0;margin-top:3px">
+                    Estimated stats: ${escapeHtml(estimateHuman)}${estimateSource ? ` · ${escapeHtml(estimateSource)}` : ""}
                 </div>
 
                 <label>Use custom Fair Fight
@@ -744,7 +883,7 @@
     function clearRowVisuals(row) {
         row.removeAttribute("data-ks6-applied");
         row.removeAttribute("data-ks6-pending");
-        row.classList.remove("ks6-colored-row", "ks6-no-stripe");
+        row.classList.remove("ks6-colored-row");
         row.style.removeProperty("--ks6-row-color");
         row.style.removeProperty("--ks6-row-tint");
         row.style.removeProperty("box-shadow");
@@ -773,26 +912,58 @@
         }
 
         const manual = getManual(entry.id);
-        const ffsFF = Number(data?.fair_fight);
-        const manualFF = Number(manual?.ff);
-        const hasManual = Number.isFinite(manualFF) && manualFF > 0;
-        const activeFF = hasManual ? manualFF : ffsFF;
-        const source = hasManual ? "MAN" : "FFS";
+        const resolved = resolveEstimate(data);
+        const profileEstimate = getProfileEstimate(entry.id);
+        const manualFF = positiveNumber(manual?.ff);
+        const activeFF = manualFF ?? resolved.fairFight;
+        const hasManualFF = Boolean(manualFF);
+
+        const apiEstimateHuman =
+            resolved.battleStatsHuman ||
+            (resolved.battleStats ? formatCompact(resolved.battleStats) : "");
+        const manualEstimateHuman = manual?.battleStats ? formatCompact(manual.battleStats) : "";
+        const fallbackEstimate =
+            manualEstimateHuman ||
+            apiEstimateHuman ||
+            profileEstimate?.human ||
+            "";
 
         let color = "#666";
-        let tint = "rgba(102,102,102,.22)";
+        let tint = "rgba(102,102,102,.18)";
+        let title = "";
 
-        if (!Number.isFinite(activeFF) || activeFF <= 0) {
+        if (activeFF) {
+            const style = ffStyle(activeFF);
+            const age = estimateAge(hasManualFF ? null : resolved.lastUpdated);
+            color = style.color;
+            tint = hexToRgba(style.color, 0.34);
+            badge.textContent = hasManualFF
+                ? `MAN ${activeFF.toFixed(2)}`
+                : `FF ${activeFF.toFixed(2)}${age.old ? "?" : ""}`;
+
+            title = [
+                `${hasManualFF ? "Manual" : "FF Scouter"} FF ${activeFF.toFixed(2)}`,
+                hasManualFF ? "MANUAL" : sourceLabel(resolved.source),
+                age.label,
+                fallbackEstimate ? `Estimated stats ${fallbackEstimate}` : "",
+                manual?.note || ""
+            ].filter(Boolean).join(" · ");
+        } else if (fallbackEstimate) {
+            badge.textContent = `EST ${fallbackEstimate}`;
+            color = "#777";
+            tint = "rgba(119,119,119,.20)";
+            title = [
+                `Estimated stats ${fallbackEstimate}`,
+                manualEstimateHuman ? "MANUAL" : apiEstimateHuman ? sourceLabel(resolved.source) : profileEstimate ? sourceLabel(profileEstimate.source) : "",
+                manual?.note || ""
+            ].filter(Boolean).join(" · ");
+        } else {
             if (!settings.showUnknown) {
                 clearRowVisuals(entry.row);
                 return true;
             }
-            badge.textContent = "FF ?";
-        } else {
-            const style = ffStyle(activeFF);
-            color = style.color;
-            tint = hexToRgba(style.color, 0.34);
-            badge.textContent = hasManual ? `MAN ${activeFF.toFixed(2)}` : `FF ${activeFF.toFixed(2)}`;
+            badge.textContent = "N/A";
+            title = manual?.note || "No FF score or estimated stats";
         }
 
         entry.row.classList.add("ks6-colored-row");
@@ -800,9 +971,7 @@
         entry.row.style.setProperty("--ks6-row-tint", tint);
         host.style.setProperty("--ks6-row-color", color);
 
-        entry.row.classList.toggle("ks6-no-stripe", !settings.showStripe);
-
-        badge.removeAttribute("title");
+        badge.title = title;
         badge.onclick = event => {
             event.preventDefault();
             event.stopPropagation();
@@ -849,16 +1018,12 @@
                 <input data-ksp="key" type="password" value="${escapeHtml(getApiKey())}">
             </label>
 
-            <label>Show players without FF data
+            <label>Show players with no FF or estimate
                 <input data-ksp="unknown" type="checkbox" ${settings.showUnknown ? "checked" : ""}>
             </label>
 
-            <label>Show left color bar
-                <input data-ksp="stripe" type="checkbox" ${settings.showStripe ? "checked" : ""}>
-            </label>
-
             <div class="ks6-help">
-                Changes are saved automatically when this panel is closed. Tap a player's small FF label to add a custom value or note.
+                FF Scouter scores are used first. When no FF score exists, the label shows available estimated stats instead. A question mark marks FF data older than 14 days. Tap a label for details or manual values.
             </div>
 
             <button type="button" data-ksp="rescan">Rescan faction member list</button>
@@ -924,19 +1089,16 @@
         const persistPanelSettings = () => {
             const previousKey = getApiKey();
             const previousUnknown = settings.showUnknown;
-            const previousStripe = settings.showStripe;
 
             const nextKey = panel.querySelector('[data-ksp="key"]').value.trim();
             const nextUnknown = panel.querySelector('[data-ksp="unknown"]').checked;
-            const nextStripe = panel.querySelector('[data-ksp="stripe"]').checked;
 
             setApiKey(nextKey);
             if (previousKey !== nextKey) factionDirectoryCache.clear();
             settings.showUnknown = nextUnknown;
-            settings.showStripe = nextStripe;
             saveSettings();
 
-            return previousKey !== nextKey || previousUnknown !== nextUnknown || previousStripe !== nextStripe;
+            return previousKey !== nextKey || previousUnknown !== nextUnknown;
         };
 
         const closePanel = () => {
@@ -994,6 +1156,8 @@
         scanRunning = true;
 
         try {
+        captureProfileEstimate();
+
         if (!/\/factions\.php\/?$/i.test(location.pathname)) {
             clearRendered();
             removePanel();
