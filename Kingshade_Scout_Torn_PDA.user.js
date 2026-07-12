@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kingshade Scout for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.6.5
+// @version      0.6.7
 // @description  Mobile FF Scouter overlay for Torn PDA faction member lists with optional manual overrides.
 // @author       Kingshade
 // @match        https://www.torn.com/*
@@ -19,7 +19,7 @@
     }
 
     const NAME = "Kingshade Scout";
-    const VERSION = "0.6.5";
+    const VERSION = "0.6.7";
     const API_BASE = "https://ffscouter.com/api/v1";
     const PREFIX = "kingshade-scout:";
     const SETTINGS_KEY = `${PREFIX}settings`;
@@ -39,6 +39,7 @@
     let scanTimer = null;
     let observer = null;
     const memoryCache = new Map();
+    const onRouteChange = () => scheduleScan(200);
 
     function loadSettings() {
         try {
@@ -260,54 +261,74 @@
         return String(element?.textContent || "").replace(/\s+/g, " ").trim();
     }
 
-    function findMemberListRoot() {
-        const candidates = Array.from(document.querySelectorAll("div, span, li, strong"))
-            .filter(element => /^\d+\s*\/\s*\d+\s+Members$/i.test(normalizedText(element)));
+    const MEMBER_STATUS_PATTERN = /\b(?:okay|hospital|jail|federal|traveling|travelling|abroad|fallen)\b/i;
 
-        for (const header of candidates) {
-            let node = header;
+    function profileIdsInside(element) {
+        const ids = new Set();
+        element?.querySelectorAll?.(PROFILE_SELECTOR).forEach(anchor => {
+            const id = extractPlayerId(anchor);
+            if (id) ids.add(id);
+        });
+        return ids;
+    }
 
-            for (let depth = 0; depth < 7 && node && node !== document.body; depth++, node = node.parentElement) {
-                const text = normalizedText(node);
-                const links = node.querySelectorAll?.(PROFILE_SELECTOR).length || 0;
-                const looksLikeMemberTable = /\bLvl\b/i.test(text) && /\bDays\b/i.test(text) && /\bStatus\b/i.test(text);
+    function findMemberCell(element, kind) {
+        return element?.querySelector?.(
+            `.table-cell.${kind}, [class~="${kind}"][class*="table-cell"], [class*="${kind}___"]`
+        ) || null;
+    }
 
-                if (links >= 3 && looksLikeMemberTable) return node;
-            }
+    function looksLikeMemberRow(element, playerId) {
+        if (!element || element === document.body) return false;
+
+        // Validate the actual Torn member-table structure. Requiring dedicated
+        // Days and Status cells prevents faction News, Leader and Co-leader
+        // links from ever being treated as member rows.
+        const daysCell = findMemberCell(element, "days");
+        const statusCell = findMemberCell(element, "status");
+        if (!daysCell || !statusCell) return false;
+
+        if (!/^\d{1,5}$/.test(normalizedText(daysCell))) return false;
+        if (!MEMBER_STATUS_PATTERN.test(normalizedText(statusCell))) return false;
+
+        const ids = profileIdsInside(element);
+        if (ids.size !== 1 || !ids.has(playerId)) return false;
+
+        return true;
+    }
+
+    function findMemberRow(anchor, playerId) {
+        let node = anchor.parentElement;
+
+        // Return the smallest ancestor containing this player's complete
+        // member-row cells. Torn PDA currently renders each member as an <li>,
+        // but the structural cell check also survives wrapper-class changes.
+        for (let depth = 0; depth < 12 && node && node !== document.body; depth++, node = node.parentElement) {
+            if (looksLikeMemberRow(node, playerId)) return node;
         }
 
         return null;
     }
 
-    function findMemberRow(anchor, root) {
-        const row = anchor.closest(
-            ".enemy, .your, .table-row, li, [class*='row___'], [class*='member___']"
-        );
-
-        if (!row || row === root || !root.contains(row)) return null;
-        return row;
-    }
-
     function findRows() {
         const map = new Map();
-        if (!/\/factions\.php\/?$/i.test(location.pathname)) return { root: null, rows: map, profileLinks: 0 };
+        if (!/\/factions\.php\/?$/i.test(location.pathname)) {
+            return { rows: map, profileLinks: 0 };
+        }
 
-        const root = findMemberListRoot();
-        if (!root) return { root: null, rows: map, profileLinks: 0 };
-
-        const anchors = root.querySelectorAll(PROFILE_SELECTOR);
+        const anchors = document.querySelectorAll(PROFILE_SELECTOR);
 
         for (const anchor of anchors) {
             const id = extractPlayerId(anchor);
             if (!id || map.has(id)) continue;
 
-            const row = findMemberRow(anchor, root);
+            const row = findMemberRow(anchor, id);
             if (!row) continue;
 
             map.set(id, { id, row, anchor });
         }
 
-        return { root, rows: map, profileLinks: anchors.length };
+        return { rows: map, profileLinks: anchors.length };
     }
 
     const FF_PALETTE = [
@@ -395,6 +416,7 @@
                 position:relative!important;
                 box-shadow:inset 5px 0 0 var(--ks6-row-color)!important
             }
+            .ks6-colored-row.ks6-no-stripe{box-shadow:none!important}
             .ks6-colored-row,
             .ks6-colored-row > *,
             .ks6-colored-row [class*='table-cell'],
@@ -465,13 +487,30 @@
         return host;
     }
 
+    function getPlayerDisplayName(entry) {
+        const candidates = [
+            normalizedText(entry.anchor),
+            entry.anchor.getAttribute("title"),
+            entry.anchor.getAttribute("aria-label"),
+            entry.anchor.querySelector?.("img[alt]")?.getAttribute("alt"),
+            entry.anchor.querySelector?.("img[title]")?.getAttribute("title")
+        ];
+
+        for (const candidate of candidates) {
+            const clean = String(candidate || "").replace(/\s+/g, " ").trim();
+            if (clean && !/^(profile|view profile)$/i.test(clean)) return clean;
+        }
+
+        return `Player ${entry.id}`;
+    }
+
     function openEditor(entry, ffsData) {
         document.querySelector(".ks6-modal")?.remove();
 
         const manual = getManual(entry.id);
         const bs = compactParts(manual?.battleStats || ffsData?.bs_estimate);
         const ffsFF = Number(ffsData?.fair_fight);
-        const playerName = entry.anchor.textContent?.trim() || `Player ${entry.id}`;
+        const playerName = getPlayerDisplayName(entry);
 
         const modal = document.createElement("div");
         modal.className = "ks6-modal";
@@ -558,12 +597,15 @@
     function clearRowVisuals(row) {
         row.removeAttribute("data-ks6-applied");
         row.removeAttribute("data-ks6-pending");
-        row.classList.remove("ks6-colored-row");
+        row.classList.remove("ks6-colored-row", "ks6-no-stripe");
         row.style.removeProperty("--ks6-row-color");
         row.style.removeProperty("--ks6-row-tint");
         row.style.removeProperty("box-shadow");
         row.querySelectorAll(".ks6-badge").forEach(element => element.remove());
-        row.querySelectorAll(".ks6-name-host").forEach(host => host.classList.remove("ks6-name-host"));
+        row.querySelectorAll(".ks6-name-host").forEach(host => {
+            host.classList.remove("ks6-name-host");
+            host.style.removeProperty("--ks6-row-color");
+        });
     }
 
     function refreshRow(row) {
@@ -573,7 +615,7 @@
 
     function render(entry, data) {
         const host = badgeHost(entry);
-        if (!host) return;
+        if (!host) return false;
 
         let badge = entry.row.querySelector(`.ks6-badge[data-player-id="${entry.id}"]`);
         if (!badge) {
@@ -596,13 +638,13 @@
         if (!Number.isFinite(activeFF) || activeFF <= 0) {
             if (!settings.showUnknown) {
                 clearRowVisuals(entry.row);
-                return;
+                return true;
             }
             badge.textContent = "FF ?";
         } else {
             const style = ffStyle(activeFF);
             color = style.color;
-            tint = hexToRgba(style.color, 0.24);
+            tint = hexToRgba(style.color, 0.34);
             badge.textContent = hasManual ? `MAN ${activeFF.toFixed(2)}` : `FF ${activeFF.toFixed(2)}`;
         }
 
@@ -611,7 +653,7 @@
         entry.row.style.setProperty("--ks6-row-tint", tint);
         host.style.setProperty("--ks6-row-color", color);
 
-        if (!settings.showStripe) entry.row.style.boxShadow = "none";
+        entry.row.classList.toggle("ks6-no-stripe", !settings.showStripe);
 
         const battleStats = manual?.battleStats || data?.bs_estimate;
         badge.title = `${source} FF ${Number.isFinite(activeFF) ? activeFF.toFixed(2) : "?"} | FFS ${Number.isFinite(ffsFF) ? ffsFF.toFixed(2) : "?"} | BS ${formatCompact(battleStats)}${manual?.note ? ` | ${manual.note}` : ""}`;
@@ -620,6 +662,8 @@
             event.stopPropagation();
             openEditor(entry, data);
         };
+
+        return true;
     }
 
     function buttonPosition() {
@@ -634,6 +678,7 @@
     }
 
     function ensurePanel() {
+        if (!/\/factions\.php\/?$/i.test(location.pathname)) return;
         if (document.querySelector(".ks6-fab")) return;
 
         const button = document.createElement("button");
@@ -720,8 +765,15 @@
         };
 
         button.onpointerup = finishPointer;
-        button.onpointercancel = finishPointer;
-        button.onlostpointercapture = () => { dragging = false; };
+        button.onpointercancel = event => {
+            dragging = false;
+            moved = false;
+            try { button.releasePointerCapture?.(event.pointerId); } catch {}
+        };
+        button.onlostpointercapture = () => {
+            dragging = false;
+            moved = false;
+        };
 
         const persistPanelSettings = () => {
             const previousKey = getApiKey();
@@ -771,6 +823,10 @@
         document.body.append(button, panel);
     }
 
+    function removePanel() {
+        document.querySelectorAll(".ks6-fab,.ks6-panel,.ks6-modal").forEach(element => element.remove());
+    }
+
     function updatePanelStatus(text) {
         const el = document.querySelector('[data-ksp="status"]');
         if (el) el.textContent = text;
@@ -785,22 +841,23 @@
     async function scan() {
         scanTimer = null;
         if (!/\/factions\.php\/?$/i.test(location.pathname)) {
-            updatePanelStatus("Open a faction member list to scan.");
+            clearRendered();
+            removePanel();
             return;
         }
+
+        ensurePanel();
 
         const result = findRows();
         const rows = result.rows;
 
-        if (!result.root) {
-            clearRendered();
-            updatePanelStatus("Open the faction member list to load FF data.");
+        updatePanelStatus(`${rows.size} member rows found · ${result.profileLinks} profile links detected`);
+
+        if (!rows.size) {
+            // Torn sometimes rebuilds the member table in stages. Leave the
+            // page untouched and allow the MutationObserver to retry.
             return;
         }
-
-        updatePanelStatus(`${rows.size} member rows found · ${result.profileLinks} member profile links detected`);
-
-        if (!rows.size) return;
 
         const fresh = [];
         for (const entry of rows.values()) {
@@ -815,8 +872,9 @@
         try {
             const data = await fetchPlayers(fresh.map(entry => entry.id));
             for (const entry of fresh) {
-                render(entry, data.get(entry.id));
-                entry.row.dataset.ks6Applied = VERSION;
+                const rendered = render(entry, data.get(entry.id));
+                if (rendered) entry.row.dataset.ks6Applied = VERSION;
+                else entry.row.removeAttribute("data-ks6-applied");
                 entry.row.removeAttribute("data-ks6-pending");
             }
             updatePanelStatus(`${rows.size} member rows · FF data loaded`);
@@ -872,9 +930,9 @@
         });
         observer.observe(document.body, { childList: true, subtree: true });
 
-        window.addEventListener("hashchange", () => scheduleScan(200));
-        window.addEventListener("popstate", () => scheduleScan(200));
-        window.navigation?.addEventListener?.("currententrychange", () => scheduleScan(200));
+        window.addEventListener("hashchange", onRouteChange);
+        window.addEventListener("popstate", onRouteChange);
+        window.navigation?.addEventListener?.("currententrychange", onRouteChange);
 
         scheduleScan(0);
 
@@ -882,6 +940,9 @@
             destroy() {
                 clearTimeout(scanTimer);
                 observer?.disconnect();
+                window.removeEventListener("hashchange", onRouteChange);
+                window.removeEventListener("popstate", onRouteChange);
+                window.navigation?.removeEventListener?.("currententrychange", onRouteChange);
                 document.querySelectorAll(
                     ".ks6-fab,.ks6-panel,.ks6-badge,.ks6-modal,.ks6-toast"
                 ).forEach(el => el.remove());
