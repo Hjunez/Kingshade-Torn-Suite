@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kingshade Scout for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.4.0
+// @version      0.4.1
 // @description  Lightweight FF Scouter companion for Torn PDA. Adds clear green/yellow/red target markers and estimated battle stats to faction and war lists.
 // @author       Kingshade
 // @match        https://www.torn.com/*
@@ -14,7 +14,7 @@
     "use strict";
 
     const NAME = "Kingshade Scout";
-    const VERSION = "0.4.0";
+    const VERSION = "0.4.1";
     const API_BASE = "https://ffscouter.com/api/v1";
     const CACHE_TTL_MS = 60 * 60 * 1000;
     const STORAGE_PREFIX = "kingshade-scout:";
@@ -68,6 +68,57 @@
         settings.buttonX = Math.max(8, Math.min(window.innerWidth - 56, x));
         settings.buttonY = Math.max(70, Math.min(window.innerHeight - 140, y));
         saveSettings();
+    }
+
+    function getDefaultButtonPosition() {
+        return {
+            x: Math.max(8, window.innerWidth - 62),
+            y: Math.max(70, window.innerHeight - 190)
+        };
+    }
+
+    function clampButtonPosition(x, y) {
+        const maxX = Math.max(8, window.innerWidth - 56);
+        const maxY = Math.max(70, window.innerHeight - 140);
+        return {
+            x: Math.max(8, Math.min(maxX, Number(x))),
+            y: Math.max(70, Math.min(maxY, Number(y)))
+        };
+    }
+
+    function normalizeSavedButtonPosition() {
+        const fallback = getDefaultButtonPosition();
+        const x = Number(settings.buttonX);
+        const y = Number(settings.buttonY);
+
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+            settings.buttonX = fallback.x;
+            settings.buttonY = fallback.y;
+            saveSettings();
+            return fallback;
+        }
+
+        const safe = clampButtonPosition(x, y);
+        if (safe.x !== x || safe.y !== y) {
+            settings.buttonX = safe.x;
+            settings.buttonY = safe.y;
+            saveSettings();
+        }
+        return safe;
+    }
+
+    function resetButtonPosition(button) {
+        const pos = getDefaultButtonPosition();
+        settings.buttonX = pos.x;
+        settings.buttonY = pos.y;
+        saveSettings();
+
+        if (button) {
+            button.style.left = `${pos.x}px`;
+            button.style.top = `${pos.y}px`;
+            button.style.right = "auto";
+            button.style.bottom = "auto";
+        }
     }
 
     function readWrappedStorage(key) {
@@ -317,7 +368,7 @@
             .ks-scout-row-avoid{background:linear-gradient(90deg,rgba(210,68,68,.38),rgba(210,68,68,.09) 48%,transparent 78%)!important;box-shadow:inset 6px 0 0 #d24444!important}
             .ks-scout-row-unknown{background:linear-gradient(90deg,rgba(102,102,102,.25),rgba(102,102,102,.05) 48%,transparent 78%)!important;box-shadow:inset 6px 0 0 #666!important}
             .ks-scout-error{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);max-width:min(92vw,520px);padding:9px 12px;border-radius:7px;background:#b3261e;color:#fff;font:600 12px/1.35 Arial,sans-serif;z-index:2147483647;box-shadow:0 3px 12px rgba(0,0,0,.35)}
-            .ks-scout-fab{position:fixed;right:14px;bottom:92px;width:48px;height:48px;border:0;border-radius:50%;background:#263238;color:#fff;font:800 12px Arial;z-index:2147483646;box-shadow:0 3px 12px rgba(0,0,0,.45);touch-action:none;user-select:none}
+            .ks-scout-fab{position:fixed;right:14px;bottom:92px;width:50px;height:50px;border:0;border-radius:50%;background:#263238;color:#fff;font:800 12px Arial;z-index:2147483646;box-shadow:0 3px 12px rgba(0,0,0,.45);touch-action:none;user-select:none}
             .ks-scout-fab.ks-dragging{opacity:.85;transform:scale(1.06)}
             .ks-scout-setup{margin:8px 0;padding:8px;border-radius:6px;background:#5b3a00;color:#ffd98a;font-weight:700}
             .ks-status-timer{display:inline-flex!important;align-items:center;gap:3px;margin-left:5px;padding:2px 5px;border-radius:4px;background:#37474f;color:#fff!important;font:700 10px/1.15 Arial,sans-serif;white-space:nowrap;vertical-align:middle;box-shadow:0 0 0 1px rgba(0,0,0,.3)}
@@ -427,12 +478,11 @@
         button.textContent = "KSP";
         button.title = "Kingshade Scout settings";
 
-        if (Number.isFinite(Number(settings.buttonX)) && Number.isFinite(Number(settings.buttonY))) {
-            button.style.left = `${settings.buttonX}px`;
-            button.style.top = `${settings.buttonY}px`;
-            button.style.right = "auto";
-            button.style.bottom = "auto";
-        }
+        const safePosition = normalizeSavedButtonPosition();
+        button.style.left = `${safePosition.x}px`;
+        button.style.top = `${safePosition.y}px`;
+        button.style.right = "auto";
+        button.style.bottom = "auto";
 
         const panel = document.createElement("div");
         panel.className = "ks-scout-panel";
@@ -447,7 +497,8 @@
             <div style="font-size:11px;opacity:.75;margin:4px 0 8px">Green/yellow/red is based on target battle score compared with yours. 0.75 = 75%.</div>
             <label>Show unknown <input data-ksp="unknown" type="checkbox" ${settings.showUnknown ? "checked" : ""}></label>
             <label>Highlight full rows <input data-ksp="rows" type="checkbox" ${settings.markRows ? "checked" : ""}></label>
-            <button data-ksp="apply">Apply and refresh</button>
+            <button data-ksp="resetpos" type="button">Reset KSP button position</button>
+            <button data-ksp="apply" type="button">Apply and refresh</button>
         `;
 
         let dragging = false;
@@ -468,11 +519,8 @@
             startLeft = rect.left;
             startTop = rect.top;
 
-            button.style.left = `${rect.left}px`;
-            button.style.top = `${rect.top}px`;
-            button.style.right = "auto";
-            button.style.bottom = "auto";
             button.classList.add("ks-dragging");
+            event.preventDefault();
         });
 
         button.addEventListener("pointermove", event => {
@@ -482,11 +530,9 @@
             const dy = event.clientY - startY;
             if (Math.abs(dx) > 4 || Math.abs(dy) > 4) moved = true;
 
-            const x = Math.max(8, Math.min(window.innerWidth - 56, startLeft + dx));
-            const y = Math.max(70, Math.min(window.innerHeight - 140, startTop + dy));
-
-            button.style.left = `${x}px`;
-            button.style.top = `${y}px`;
+            const safe = clampButtonPosition(startLeft + dx, startTop + dy);
+            button.style.left = `${safe.x}px`;
+            button.style.top = `${safe.y}px`;
         });
 
         const finishDrag = event => {
@@ -496,7 +542,10 @@
 
             if (moved) {
                 const rect = button.getBoundingClientRect();
-                saveButtonPosition(rect.left, rect.top);
+                const safe = clampButtonPosition(rect.left, rect.top);
+                saveButtonPosition(safe.x, safe.y);
+                button.style.left = `${safe.x}px`;
+                button.style.top = `${safe.y}px`;
             } else {
                 panel.hidden = !panel.hidden;
             }
@@ -508,6 +557,11 @@
 
         button.addEventListener("pointerup", finishDrag);
         button.addEventListener("pointercancel", finishDrag);
+
+        panel.querySelector('[data-ksp="resetpos"]').addEventListener("click", () => {
+            resetButtonPosition(button);
+            panel.hidden = true;
+        });
 
         panel.querySelector('[data-ksp="apply"]').addEventListener("click", () => {
             setFFKey(panel.querySelector('[data-ksp="key"]').value);
@@ -533,6 +587,19 @@
             scheduleScan(0);
         });
 
+        const keepVisible = () => {
+            const rect = button.getBoundingClientRect();
+            const safe = clampButtonPosition(rect.left, rect.top);
+            if (safe.x !== rect.left || safe.y !== rect.top) {
+                button.style.left = `${safe.x}px`;
+                button.style.top = `${safe.y}px`;
+                saveButtonPosition(safe.x, safe.y);
+            }
+        };
+
+        window.addEventListener("resize", keepVisible);
+        window.addEventListener("orientationchange", () => setTimeout(keepVisible, 150));
+
         document.body.append(button, panel);
 
         if (!hasOwnBattleScore()) {
@@ -541,7 +608,6 @@
             }, 600);
         }
     }
-
 
     const statusTimers = new Map();
     let timerInterval = null;
