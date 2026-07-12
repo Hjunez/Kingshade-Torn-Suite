@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kingshade Scout for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.2.2
+// @version      0.2.3
 // @description  Lightweight FF Scouter companion for Torn PDA. Adds clear green/yellow/red target markers and estimated battle stats to faction and war lists.
 // @author       Kingshade
 // @match        https://www.torn.com/*
@@ -14,7 +14,7 @@
     "use strict";
 
     const NAME = "Kingshade Scout";
-    const VERSION = "0.2.2";
+    const VERSION = "0.2.3";
     const API_BASE = "https://ffscouter.com/api/v1";
     const CACHE_TTL_MS = 60 * 60 * 1000;
     const STORAGE_PREFIX = "kingshade-scout:";
@@ -22,8 +22,8 @@
     const BATCH_SIZE = 100;
     const SETTINGS_KEY = `${STORAGE_PREFIX}settings`;
     const DEFAULT_SETTINGS = {
-        easyMax: 2.0,
-        riskyMax: 3.5,
+        easyMax: 4.0,
+        riskyMax: 5.0,
         showUnknown: true,
         markRows: true
     };
@@ -38,7 +38,16 @@
 
     function loadSettings() {
         try {
-            return { ...DEFAULT_SETTINGS, ...(JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}")) };
+            const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
+
+            // Migrate the incorrect v0.2.1/v0.2.2 defaults.
+            if (Number(saved.easyMax) === 2 && Number(saved.riskyMax) === 3.5) {
+                saved.easyMax = 4.0;
+                saved.riskyMax = 5.0;
+                localStorage.setItem(SETTINGS_KEY, JSON.stringify(saved));
+            }
+
+            return { ...DEFAULT_SETTINGS, ...saved };
         } catch {
             return { ...DEFAULT_SETTINGS };
         }
@@ -265,9 +274,9 @@
 
     function classify(ff) {
         if (!Number.isFinite(ff)) return { label: "UNKNOWN", color: "#666", icon: "●" };
-        if (ff <= settings.easyMax) return { label: "EASY", color: "#2e9d52", icon: "▼" };
-        if (ff <= settings.riskyMax) return { label: "RISKY", color: "#d6a20b", icon: "◆" };
-        return { label: "AVOID", color: "#d24444", icon: "▲" };
+        if (ff <= settings.easyMax) return { label: "LIKELY WIN", color: "#2e9d52", icon: "▼" };
+        if (ff <= settings.riskyMax) return { label: "CAUTION", color: "#d6a20b", icon: "◆" };
+        return { label: "TOO STRONG", color: "#d24444", icon: "▲" };
     }
 
     function ensureStyles() {
@@ -350,9 +359,9 @@
         badge.title = `Fair Fight: ${data.fair_fight.toFixed(2)} | Estimated battle stats: ${data.bs_estimate_human} | Source: ${data.source}`;
 
         if (settings.markRows) {
-            if (rating.label === "EASY") entry.row.classList.add("ks-scout-row-easy");
-            if (rating.label === "RISKY") entry.row.classList.add("ks-scout-row-risky");
-            if (rating.label === "AVOID") entry.row.classList.add("ks-scout-row-avoid");
+            if (rating.label === "LIKELY WIN") entry.row.classList.add("ks-scout-row-easy");
+            if (rating.label === "CAUTION") entry.row.classList.add("ks-scout-row-risky");
+            if (rating.label === "TOO STRONG") entry.row.classList.add("ks-scout-row-avoid");
 
             const memberCell = entry.anchor.closest(".member, [class*='member___'], .table-cell") || entry.anchor.parentElement;
             if (memberCell) {
@@ -388,8 +397,8 @@
         panel.innerHTML = `
             <strong>Kingshade Scout ${VERSION}</strong>
             <label>FF Scouter API key <input data-ksp="key" type="password" autocomplete="off" value="${getFFKey()}"></label>
-            <label>Easy max FF <input data-ksp="easy" type="number" min="1" max="5" step="0.1" value="${settings.easyMax}"></label>
-            <label>Risky max FF <input data-ksp="risky" type="number" min="1" max="8" step="0.1" value="${settings.riskyMax}"></label>
+            <label>Likely win max FF <input data-ksp="easy" type="number" min="1" max="5" step="0.1" value="${settings.easyMax}"></label>
+            <label>Caution max FF <input data-ksp="risky" type="number" min="1" max="8" step="0.1" value="${settings.riskyMax}"></label>
             <label>Show unknown <input data-ksp="unknown" type="checkbox" ${settings.showUnknown ? "checked" : ""}></label>
             <label>Highlight full rows <input data-ksp="rows" type="checkbox" ${settings.markRows ? "checked" : ""}></label>
             <button data-ksp="apply">Apply and refresh</button>
