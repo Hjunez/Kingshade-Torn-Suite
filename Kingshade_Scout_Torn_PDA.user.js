@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kingshade Scout for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.6.8
+// @version      0.6.9
 // @description  Mobile FF Scouter overlay for Torn PDA faction member lists with optional manual overrides.
 // @author       Kingshade
 // @match        https://www.torn.com/*
@@ -19,7 +19,7 @@
     }
 
     const NAME = "Kingshade Scout";
-    const VERSION = "0.6.8";
+    const VERSION = "0.6.9";
     const API_BASE = "https://ffscouter.com/api/v1";
     const PREFIX = "kingshade-scout:";
     const SETTINGS_KEY = `${PREFIX}settings`;
@@ -257,107 +257,58 @@
         'a[href*="step=profile"][href*="ID="]'
     ].join(", ");
 
-    function normalizedText(element) {
-        return String(element?.textContent || "").replace(/\s+/g, " ").trim();
-    }
-
-    const MEMBER_STATUS_PATTERN = /\b(?:okay|hospital|jail|federal|traveling|travelling|abroad|fallen)\b/i;
-
-    function profileIdsInside(element) {
-        const ids = new Set();
-        element?.querySelectorAll?.(PROFILE_SELECTOR).forEach(anchor => {
-            const id = extractPlayerId(anchor);
-            if (id) ids.add(id);
-        });
-        return ids;
-    }
-
-    function findMembersHeader() {
-        const candidates = document.querySelectorAll(
-            "div, span, li, strong, h1, h2, h3, h4"
-        );
-
-        const matches = [];
-
-        for (const element of candidates) {
-            const text = normalizedText(element);
-            if (!/^\d{1,4}\s*\/\s*\d{1,4}\s+members$/i.test(text)) continue;
-
-            const rect = element.getBoundingClientRect();
-            matches.push({
-                element,
-                area: Math.max(1, rect.width * rect.height),
-                depth: (() => {
-                    let value = 0;
-                    for (let node = element; node; node = node.parentElement) value++;
-                    return value;
-                })()
-            });
-        }
-
-        // Prefer the smallest/deepest exact text node instead of a large page wrapper.
-        matches.sort((a, b) => a.area - b.area || b.depth - a.depth);
-        return matches[0]?.element || null;
-    }
-
-    function findMemberRow(anchor) {
-        return (
-            anchor.closest(".enemy, .your, .table-row, li, [class*='row___'], [class*='member___']") ||
-            anchor.parentElement
-        );
-    }
-
-    function looksLikeMemberRow(element, playerId, headerBottom) {
-        if (!element || element === document.body) return false;
-
-        const rect = element.getBoundingClientRect();
-
-        // Leader, co-leader and faction news are above the member-table header.
-        if (Number.isFinite(headerBottom) && rect.top < headerBottom - 2) return false;
-
-        const text = normalizedText(element);
-        if (!MEMBER_STATUS_PATTERN.test(text)) return false;
-
-        // A faction member row shows level and days, so it must contain at
-        // least two ordinary numeric values.
-        const numericTokens = text.match(/\b\d{1,5}\b/g) || [];
-        if (numericTokens.length < 2) return false;
-
-        // The smallest row wrapper must belong to one unique player.
-        const ids = profileIdsInside(element);
-        if (ids.size !== 1 || !ids.has(playerId)) return false;
-
-        return true;
-    }
-
+    /*
+     * Faction-row discovery deliberately follows FF Scouter's own selectors.
+     * Torn renders the real member table inside .members-list. News entries,
+     * leader/co-leader links and other profile links live outside this scope.
+     */
     function findRows() {
         const map = new Map();
         if (!/\/factions\.php\/?$/i.test(location.pathname)) {
-            return { rows: map, profileLinks: 0, headerFound: false };
+            return { rows: map, memberLists: 0, candidateRows: 0, profileLinks: 0 };
         }
 
-        const header = findMembersHeader();
-        const headerBottom = header?.getBoundingClientRect().bottom;
-        const anchors = document.querySelectorAll(PROFILE_SELECTOR);
+        const memberLists = Array.from(document.querySelectorAll(".members-list"));
+        let candidateRows = 0;
+        let profileLinks = 0;
 
-        for (const anchor of anchors) {
-            const id = extractPlayerId(anchor);
-            if (!id || map.has(id)) continue;
+        for (const membersList of memberLists) {
+            const rowElements = Array.from(
+                membersList.querySelectorAll(".table-body > .table-row, .enemy, .your")
+            );
 
-            // Do not even inspect links located above the member-list header.
-            const anchorRect = anchor.getBoundingClientRect();
-            if (header && anchorRect.top < headerBottom - 2) continue;
+            candidateRows += rowElements.length;
 
-            const row = findMemberRow(anchor);
-            if (!looksLikeMemberRow(row, id, headerBottom)) continue;
+            for (const row of rowElements) {
+                const memberDiv = row.querySelector(".member");
+                const anchors = memberDiv
+                    ? Array.from(memberDiv.querySelectorAll(PROFILE_SELECTOR))
+                    : Array.from(row.querySelectorAll(PROFILE_SELECTOR));
 
-            map.set(id, { id, row, anchor });
+                profileLinks += anchors.length;
+
+                let anchor = null;
+                let id = null;
+
+                for (const candidate of anchors) {
+                    const candidateId = extractPlayerId(candidate);
+                    if (candidateId) {
+                        anchor = candidate;
+                        id = candidateId;
+                        break;
+                    }
+                }
+
+                if (!anchor || !id || map.has(id)) continue;
+                map.set(id, { id, row, anchor });
+            }
         }
 
         return {
             rows: map,
-            profileLinks: anchors.length,
-            headerFound: Boolean(header)
+            memberLists: memberLists.length,
+            candidateRows,
+            profileLinks
         };
     }
 
@@ -881,7 +832,11 @@
         const result = findRows();
         const rows = result.rows;
 
-        updatePanelStatus(`${rows.size} member rows found · ${result.profileLinks} profile links · member header ${result.headerFound ? "found" : "not found"}`);
+        if (!result.memberLists) {
+            updatePanelStatus("Torn member-list container not loaded yet.");
+        } else {
+            updatePanelStatus(`${rows.size} member rows found · ${result.candidateRows} row candidates`);
+        }
 
         if (!rows.size) {
             // Torn sometimes rebuilds the member table in stages. Leave the
@@ -907,7 +862,7 @@
                 else entry.row.removeAttribute("data-ks6-applied");
                 entry.row.removeAttribute("data-ks6-pending");
             }
-            updatePanelStatus(`${rows.size} member rows · FF data loaded`);
+            updatePanelStatus(`${rows.size} member rows · FF data loaded from FF Scouter`);
         } catch (error) {
             for (const entry of fresh) {
                 entry.row.removeAttribute("data-ks6-applied");
