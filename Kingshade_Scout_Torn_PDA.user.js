@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kingshade Scout for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.4.5
+// @version      0.5.0
 // @description  Lightweight FF Scouter companion for Torn PDA. Adds clear green/yellow/red target markers and estimated battle stats to faction and war lists.
 // @author       Kingshade
 // @match        https://www.torn.com/*
@@ -14,15 +14,18 @@
     "use strict";
 
     const NAME = "Kingshade Scout";
-    const VERSION = "0.4.5";
+    const VERSION = "0.5.0";
     const API_BASE = "https://ffscouter.com/api/v1";
     const CACHE_TTL_MS = 60 * 60 * 1000;
     const STORAGE_PREFIX = "kingshade-scout:";
     const FF_KEY_STORAGE = `${STORAGE_PREFIX}ff-api-key`;
     const BATCH_SIZE = 100;
-    const APPLIED_MARKER = `v${VERSION}`;
     const SETTINGS_KEY = `${STORAGE_PREFIX}settings`;
+    const MANUAL_PREFIX = `${STORAGE_PREFIX}manual:`;
     const DEFAULT_SETTINGS = {
+        ownBattleScore: 0,
+        easyRatio: 0.75,
+        cautionRatio: 1.05,
         showUnknown: true,
         markRows: true,
         buttonX: null,
@@ -40,6 +43,12 @@
     function loadSettings() {
         try {
             const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
+
+            // Migrate older FF-threshold settings to player-relative comparison.
+            if (!Number(saved.ownBattleScore)) saved.ownBattleScore = 0;
+            if (!Number(saved.easyRatio)) saved.easyRatio = 0.75;
+            if (!Number(saved.cautionRatio)) saved.cautionRatio = 1.05;
+
             return { ...DEFAULT_SETTINGS, ...saved };
         } catch {
             return { ...DEFAULT_SETTINGS };
@@ -50,6 +59,40 @@
         try {
             localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
         } catch {}
+    }
+
+    function getManualOverride(playerId) {
+        try {
+            return JSON.parse(localStorage.getItem(`${MANUAL_PREFIX}${playerId}`) || "null");
+        } catch {
+            return null;
+        }
+    }
+
+    function setManualOverride(playerId, value) {
+        try {
+            if (!value) localStorage.removeItem(`${MANUAL_PREFIX}${playerId}`);
+            else localStorage.setItem(`${MANUAL_PREFIX}${playerId}`, JSON.stringify(value));
+        } catch {}
+    }
+
+    function parseCompactBattleStats(value, unit) {
+        const n = Number(String(value).replace(",", "."));
+        if (!Number.isFinite(n) || n <= 0) return null;
+        const multiplier = unit === "B" ? 1e9 : unit === "M" ? 1e6 : 1e3;
+        return n * multiplier;
+    }
+
+    function compactBattleStats(value) {
+        const n = Number(value);
+        if (!Number.isFinite(n) || n <= 0) return { value: "", unit: "K" };
+        if (n >= 1e9) return { value: +(n / 1e9).toFixed(2), unit: "B" };
+        if (n >= 1e6) return { value: +(n / 1e6).toFixed(2), unit: "M" };
+        return { value: +(n / 1e3).toFixed(2), unit: "K" };
+    }
+
+    function hasOwnBattleScore() {
+        return Number(settings.ownBattleScore) > 0;
     }
 
     function saveButtonPosition(x, y) {
@@ -323,18 +366,8 @@
             if (!row) continue;
 
             const text = row.textContent || "";
-            const hasStatus = statusWords.test(text);
-            const hasLevelLikeCell =
-                !!row.querySelector(".level, [class*='level___'], [class*='lvl___']") ||
-                /\b\d{1,3}\b/.test(text);
+            if (!statusWords.test(text)) continue;
 
-            // Only reject rows that are themselves part of a player profile/action panel.
-            // Do not use row.closest("[class*=profile]") here because the entire faction page
-            // can be wrapped in a container whose class contains "profile".
-            const isDirectProfileRow =
-                row.matches('.user-information, .actions-wrap, .profile-wrapper, [class*="profileRow"], [class*="profile-row"]');
-
-            if (!hasStatus || !hasLevelLikeCell || isDirectProfileRow) continue;
             if (!rows.has(id)) rows.set(id, { id, row, anchor });
         }
 
@@ -342,52 +375,47 @@
     }
 
     const FF_CLASSIC_PALETTE = [
-        "#1734e8",
-        "#1788e8",
-        "#17dbe8",
-        "#17e8a1",
-        "#17e84e",
-        "#34e817",
-        "#88e817",
-        "#dbe817",
-        "#e8a117",
-        "#e84e17",
-        "#e81734"
+        "#1734e8", "#1788e8", "#17dbe8", "#17e8a1", "#17e84e",
+        "#34e817", "#88e817", "#dbe817", "#e8a117", "#e84e17", "#e81734"
     ];
 
-    function classify(data) {
-        const ff = Number(data?.fair_fight);
-
-        if (!Number.isFinite(ff) || ff <= 0) {
-            return { label: "UNKNOWN", color: "#666", ff: null };
+    function classify(ff) {
+        const value = Number(ff);
+        if (!Number.isFinite(value) || value <= 0) {
+            return { label: "UNKNOWN", color: "#666" };
         }
 
-        const clamped = Math.max(1, Math.min(5, ff));
+        const clamped = Math.max(1, Math.min(5, value));
         const index = Math.floor(((clamped - 1) / 4) * 10);
-        const color = FF_CLASSIC_PALETTE[index] || "#666";
 
         let label;
-        if (ff <= 1) label = "EXTREMELY EASY";
-        else if (ff <= 2) label = "EASY";
-        else if (ff <= 3.5) label = "MODERATE";
-        else if (ff <= 4.5) label = "DIFFICULT";
+        if (value <= 1) label = "EXTREMELY EASY";
+        else if (value <= 2) label = "EASY";
+        else if (value <= 3.5) label = "MODERATE";
+        else if (value <= 4.5) label = "DIFFICULT";
         else label = "MAY BE IMPOSSIBLE";
 
-        return { label, color, ff };
+        return { label, color: FF_CLASSIC_PALETTE[index] || "#666" };
     }
 
     function ensureStyles() {
-        document.getElementById("ks-scout-styles")?.remove();
+        if (document.getElementById("ks-scout-styles")) return;
         const style = document.createElement("style");
         style.id = "ks-scout-styles";
         style.textContent = `
-            .ks-scout-badge{position:absolute!important;right:3px;top:50%;transform:translateY(-50%);display:flex!important;align-items:center;justify-content:center;gap:3px;margin:0;padding:3px 5px;border-radius:4px;font:800 9px/1 Arial,sans-serif;color:#fff!important;white-space:nowrap;box-shadow:0 0 0 1px rgba(0,0,0,.45);z-index:4;max-width:72px;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
+            .ks-scout-badge{display:flex!important;align-items:center;justify-content:center;gap:4px;margin:3px 0 0;padding:4px 7px;border-radius:5px;font:800 11px/1.15 Arial,sans-serif;color:#fff!important;white-space:nowrap;box-shadow:0 0 0 1px rgba(0,0,0,.45);z-index:2;max-width:100%;overflow:hidden;text-overflow:ellipsis}
             .ks-scout-badge[data-state="loading"]{background:#555;opacity:.8}
             .ks-scout-badge .ks-scout-stats{font-weight:700;opacity:.98}
             .ks-scout-row-easy{background:linear-gradient(90deg,rgba(46,157,82,.34),rgba(46,157,82,.08) 48%,transparent 78%)!important;box-shadow:inset 6px 0 0 #2e9d52!important}
             .ks-scout-row-risky{background:linear-gradient(90deg,rgba(214,162,11,.34),rgba(214,162,11,.08) 48%,transparent 78%)!important;box-shadow:inset 6px 0 0 #d6a20b!important}
             .ks-scout-row-avoid{background:linear-gradient(90deg,rgba(210,68,68,.38),rgba(210,68,68,.09) 48%,transparent 78%)!important;box-shadow:inset 6px 0 0 #d24444!important}
             .ks-scout-row-unknown{background:linear-gradient(90deg,rgba(102,102,102,.25),rgba(102,102,102,.05) 48%,transparent 78%)!important;box-shadow:inset 6px 0 0 #666!important}
+            .ks-manual-modal{position:fixed;inset:0;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;z-index:2147483647}
+            .ks-manual-card{width:min(90vw,340px);background:#202124;color:#fff;border-radius:10px;padding:14px;font:13px Arial;box-shadow:0 5px 25px rgba(0,0,0,.65)}
+            .ks-manual-card label{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:10px 0}
+            .ks-manual-card input,.ks-manual-card select{min-height:30px}
+            .ks-manual-actions{display:flex;gap:8px;margin-top:12px}
+            .ks-manual-actions button{flex:1;padding:9px;border:0;border-radius:6px;font-weight:700}
             .ks-scout-error{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);max-width:min(92vw,520px);padding:9px 12px;border-radius:7px;background:#b3261e;color:#fff;font:600 12px/1.35 Arial,sans-serif;z-index:2147483647;box-shadow:0 3px 12px rgba(0,0,0,.35)}
             .ks-scout-fab{position:fixed;right:14px;bottom:92px;width:50px;height:50px;border:0;border-radius:50%;background:#263238;color:#fff;font:800 12px Arial;z-index:2147483646;box-shadow:0 3px 12px rgba(0,0,0,.45);touch-action:none;user-select:none}
             .ks-scout-fab.ks-dragging{opacity:.85;transform:scale(1.06)}
@@ -400,19 +428,14 @@
             .ks-status-ready{background:#2e9d52!important}
             .ks-scout-panel{position:fixed;right:12px;bottom:150px;width:min(88vw,300px);padding:12px;border-radius:10px;background:#202124;color:#fff;font:13px Arial;z-index:2147483646;box-shadow:0 4px 18px rgba(0,0,0,.55)}
             .ks-scout-panel label{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:8px 0}
-            .ks-scout-panel input[type=number]{width:72px}.ks-scout-panel select{height:26px;min-width:48px}.ks-scout-panel input[type=password]{width:150px;min-width:0}
+            .ks-scout-panel input[type=number]{width:92px}.ks-scout-panel input[type=password]{width:150px;min-width:0}
             .ks-scout-panel button{width:100%;margin-top:8px;padding:8px;border:0;border-radius:6px;font-weight:700}
         `;
         (document.head || document.documentElement).appendChild(style);
     }
 
     function getBadgeHost(anchor, row) {
-        const host = anchor.closest(".honor-text-wrap") || row.querySelector(".member") || anchor.parentElement || row;
-        if (host) {
-            const current = getComputedStyle(host).position;
-            if (current === "static") host.style.position = "relative";
-        }
-        return host;
+        return anchor.closest(".honor-text-wrap") || row.querySelector(".member") || anchor.parentElement || row;
     }
 
     function renderLoading(entry) {
@@ -437,9 +460,94 @@
             .replaceAll("'", "&#039;");
     }
 
+
+    function openManualEditor(entry, data) {
+        document.querySelector(".ks-manual-modal")?.remove();
+
+        const current = getManualOverride(entry.id);
+        const compact = compactBattleStats(current?.battleStats || data?.bs_estimate);
+
+        const modal = document.createElement("div");
+        modal.className = "ks-manual-modal";
+        modal.innerHTML = `
+            <div class="ks-manual-card">
+                <strong>${escapeHtml(entry.anchor.textContent?.trim() || `Player ${entry.id}`)}</strong>
+                <div style="opacity:.75;margin-top:4px">FF Scouter: ${Number(data?.fair_fight) > 0 ? Number(data.fair_fight).toFixed(2) : "No data"}</div>
+
+                <label>Use custom FF
+                    <input data-manual="enabled" type="checkbox" ${current?.ff ? "checked" : ""}>
+                </label>
+
+                <label>Custom FF
+                    <input data-manual="ff" type="number" min="0.1" max="20" step="0.01" value="${current?.ff || ""}">
+                </label>
+
+                <label>Battle stats
+                    <span style="display:flex;gap:5px">
+                        <input data-manual="bs" type="number" min="0.1" step="0.1" style="width:90px" value="${compact.value}">
+                        <select data-manual="unit">
+                            <option value="K" ${compact.unit === "K" ? "selected" : ""}>K</option>
+                            <option value="M" ${compact.unit === "M" ? "selected" : ""}>M</option>
+                            <option value="B" ${compact.unit === "B" ? "selected" : ""}>B</option>
+                        </select>
+                    </span>
+                </label>
+
+                <label>Note
+                    <input data-manual="note" type="text" style="width:180px" value="${escapeHtml(current?.note || "")}">
+                </label>
+
+                <div class="ks-manual-actions">
+                    <button data-manual="clear">Clear custom</button>
+                    <button data-manual="cancel">Cancel</button>
+                    <button data-manual="save">Save</button>
+                </div>
+            </div>
+        `;
+
+        const close = () => modal.remove();
+
+        modal.querySelector('[data-manual="cancel"]').addEventListener("click", close);
+        modal.querySelector('[data-manual="clear"]').addEventListener("click", () => {
+            setManualOverride(entry.id, null);
+            close();
+            entry.row.removeAttribute("data-ks-scout-applied");
+            entry.row.querySelectorAll(".ks-scout-badge").forEach(el => el.remove());
+            scheduleScan(0);
+        });
+
+        modal.querySelector('[data-manual="save"]').addEventListener("click", () => {
+            const enabled = modal.querySelector('[data-manual="enabled"]').checked;
+            const ff = Number(modal.querySelector('[data-manual="ff"]').value);
+            const bs = parseCompactBattleStats(
+                modal.querySelector('[data-manual="bs"]').value,
+                modal.querySelector('[data-manual="unit"]').value
+            );
+            const note = modal.querySelector('[data-manual="note"]').value.trim();
+
+            setManualOverride(entry.id, {
+                ff: enabled && Number.isFinite(ff) && ff > 0 ? ff : null,
+                battleStats: bs,
+                note
+            });
+
+            close();
+            entry.row.removeAttribute("data-ks-scout-applied");
+            entry.row.querySelectorAll(".ks-scout-badge").forEach(el => el.remove());
+            scheduleScan(0);
+        });
+
+        modal.addEventListener("click", event => {
+            if (event.target === modal) close();
+        });
+
+        document.body.appendChild(modal);
+    }
+
     function renderResult(entry, data) {
         const host = getBadgeHost(entry.anchor, entry.row);
         let badge = entry.row.querySelector(`.ks-scout-badge[data-player-id="${entry.id}"]`);
+
         if (!badge) {
             badge = document.createElement("span");
             badge.className = "ks-scout-badge";
@@ -447,46 +555,44 @@
             host.appendChild(badge);
         }
 
-        entry.row.classList.remove("ks-scout-row-easy", "ks-scout-row-risky", "ks-scout-row-avoid", "ks-scout-row-unknown");
+        const manual = getManualOverride(entry.id);
+        const ffsFF = Number(data?.fair_fight);
+        const activeFF = Number(manual?.ff) > 0 ? Number(manual.ff) : ffsFF;
+        const source = Number(manual?.ff) > 0 ? "MAN" : "FFS";
 
-        if (!data || data.no_data) {
+        if (!Number.isFinite(activeFF) || activeFF <= 0) {
             if (!settings.showUnknown) {
                 badge.remove();
                 return;
             }
-            badge.dataset.state = "unknown";
-            badge.style.background = "#666";
-            badge.textContent = "● UNKNOWN";
-            badge.title = "FF Scouter has no Fair Fight estimate for this player.";
-            if (settings.markRows) entry.row.classList.add("ks-scout-row-unknown");
-            return;
-        }
 
-        const ff = Number(data.fair_fight);
-        if (!Number.isFinite(ff) || ff <= 0) {
-            badge.dataset.state = "unknown";
             badge.style.background = "#666";
             badge.textContent = "FF ?";
-            badge.title = "FF Scouter returned an invalid Fair Fight value.";
+            badge.title = "No Fair Fight value available.";
+            badge.onclick = () => openManualEditor(entry, data);
             return;
         }
 
-        const rating = classify({ ...data, fair_fight: ff });
-        badge.dataset.state = rating.label.toLowerCase().replace(/\s+/g, "-");
+        const rating = classify(activeFF);
         badge.style.background = rating.color;
-        badge.innerHTML = `<span class="ks-scout-stats">FF ${ff.toFixed(2)}</span>`;
-        badge.title = `${rating.label} | FF Scouter Fair Fight: ${ff.toFixed(2)} | Estimated battle stats: ${data.bs_estimate_human} | Source: ${data.source}`;
+        badge.textContent = `${source} ${activeFF.toFixed(2)}`;
+
+        const bsText = manual?.battleStats
+            ? formatNumber(manual.battleStats)
+            : data?.bs_estimate_human || "?";
+
+        badge.title = `${rating.label} | ${source} FF ${activeFF.toFixed(2)} | FFS FF ${Number.isFinite(ffsFF) ? ffsFF.toFixed(2) : "?"} | Battle stats ${bsText}${manual?.note ? ` | ${manual.note}` : ""}`;
+        badge.onclick = event => {
+            event.preventDefault();
+            event.stopPropagation();
+            openManualEditor(entry, data);
+        };
+
+        entry.row.style.removeProperty("background");
+        entry.row.style.removeProperty("box-shadow");
 
         if (settings.markRows) {
-            entry.row.style.boxShadow = `inset 6px 0 0 ${rating.color}`;
-            entry.row.style.background = `linear-gradient(90deg, ${rating.color}55, ${rating.color}14 48%, transparent 78%)`;
-
-            const memberCell = entry.anchor.closest(".member, [class*='member___'], .table-cell") || entry.anchor.parentElement;
-            if (memberCell) {
-                memberCell.style.borderRadius = "4px";
-                memberCell.style.paddingTop = "2px";
-                memberCell.style.paddingBottom = "2px";
-            }
+            entry.row.style.boxShadow = `inset 5px 0 0 ${rating.color}`;
         }
     }
 
@@ -520,11 +626,14 @@
         panel.hidden = true;
         panel.innerHTML = `
             <strong>Kingshade Scout ${VERSION}</strong>
-            <div data-ksp="scanstatus" style="font-size:11px;opacity:.8;margin:4px 0 8px">Faction scanner active</div>
+            ${hasOwnBattleScore() ? "" : '<div class="ks-scout-setup">Enter your own battle score before using target colors.</div>'}
             <label>FF Scouter API key <input data-ksp="key" type="password" autocomplete="off" value="${getFFKey()}"></label>
-            <div style="font-size:11px;opacity:.75;margin:4px 0 8px">Uses FF Scouter's own Fair Fight number and exact Classic color scale automatically.</div>
+            <label>Your battle score <input data-ksp="ownbs" type="number" min="1" step="1000" value="${settings.ownBattleScore || ""}"></label>
+            <label>Green up to <input data-ksp="easy" type="number" min="0.1" max="2" step="0.05" value="${settings.easyRatio}"></label>
+            <label>Yellow up to <input data-ksp="risky" type="number" min="0.1" max="3" step="0.05" value="${settings.cautionRatio}"></label>
+            <div style="font-size:11px;opacity:.75;margin:4px 0 8px">Green/yellow/red is based on target battle score compared with yours. 0.75 = 75%.</div>
             <label>Show unknown <input data-ksp="unknown" type="checkbox" ${settings.showUnknown ? "checked" : ""}></label>
-            <label>Highlight full rows <input data-ksp="rows" type="checkbox" ${settings.markRows ? "checked" : ""}></label>
+            <label>Show FF color stripe <input data-ksp="rows" type="checkbox" ${settings.markRows ? "checked" : ""}></label>
             <button data-ksp="resetpos" type="button">Reset KSP button position</button>
             <button data-ksp="apply" type="button">Apply and refresh</button>
         `;
@@ -594,7 +703,13 @@
         panel.querySelector('[data-ksp="apply"]').addEventListener("click", () => {
             setFFKey(panel.querySelector('[data-ksp="key"]').value);
 
+            const ownbs = Number(panel.querySelector('[data-ksp="ownbs"]').value);
+            const easy = Number(panel.querySelector('[data-ksp="easy"]').value);
+            const risky = Number(panel.querySelector('[data-ksp="risky"]').value);
 
+            settings.ownBattleScore = Number.isFinite(ownbs) && ownbs > 0 ? ownbs : 0;
+            settings.easyRatio = Number.isFinite(easy) ? easy : DEFAULT_SETTINGS.easyRatio;
+            settings.cautionRatio = Number.isFinite(risky) ? Math.max(risky, settings.easyRatio) : DEFAULT_SETTINGS.cautionRatio;
             settings.showUnknown = panel.querySelector('[data-ksp="unknown"]').checked;
             settings.markRows = panel.querySelector('[data-ksp="rows"]').checked;
             saveSettings();
@@ -624,6 +739,11 @@
 
         document.body.append(button, panel);
 
+        if (!hasOwnBattleScore()) {
+            setTimeout(() => {
+                panel.hidden = false;
+            }, 600);
+        }
     }
 
     const statusTimers = new Map();
@@ -824,15 +944,13 @@
         ensureStyles();
 
         const rows = findTargetRows();
-        const scanStatus = document.querySelector('[data-ksp="scanstatus"]');
-        if (scanStatus) scanStatus.textContent = `Faction scanner: ${rows.size} player rows found`;
         if (rows.size === 0) return;
 
         const freshEntries = [];
         for (const entry of rows.values()) {
             ensureStatusTimer(entry);
 
-            if (entry.row.dataset.ksScoutApplied === APPLIED_MARKER || entry.row.dataset.ksScoutApplied === "pending") continue;
+            if (entry.row.dataset.ksScoutApplied === "1" || entry.row.dataset.ksScoutApplied === "pending") continue;
             entry.row.dataset.ksScoutApplied = "pending";
             renderLoading(entry);
             freshEntries.push(entry);
@@ -846,10 +964,9 @@
             const data = await getPlayers(freshEntries.map(entry => entry.id));
             for (const entry of freshEntries) {
                 renderResult(entry, data.get(entry.id));
-                entry.row.dataset.ksScoutApplied = APPLIED_MARKER;
+                entry.row.dataset.ksScoutApplied = "1";
             }
         } catch (error) {
-            console.error(`[${NAME}] scan failed`, error);
             for (const entry of freshEntries) {
                 entry.row.dataset.ksScoutApplied = "";
                 entry.row.querySelector(`.ks-scout-badge[data-player-id="${entry.id}"]`)?.remove();
@@ -881,15 +998,6 @@
             setTimeout(init, 100);
             return;
         }
-
-        // Remove stale output left by an older installed version.
-        document.querySelectorAll(".ks-scout-badge, .ks-status-timer, .ks-scout-error").forEach(el => el.remove());
-        document.querySelectorAll("[data-ks-scout-applied]").forEach(el => {
-            el.removeAttribute("data-ks-scout-applied");
-            el.classList.remove("ks-scout-row-easy", "ks-scout-row-risky", "ks-scout-row-avoid", "ks-scout-row-unknown");
-            el.style.removeProperty("background");
-            el.style.removeProperty("box-shadow");
-        });
 
         ensureStyles();
         ensureControlPanel();
