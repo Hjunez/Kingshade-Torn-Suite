@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kingshade Scout for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.6.4
+// @version      0.6.5
 // @description  Mobile FF Scouter overlay for Torn PDA faction member lists with optional manual overrides.
 // @author       Kingshade
 // @match        https://www.torn.com/*
@@ -19,7 +19,7 @@
     }
 
     const NAME = "Kingshade Scout";
-    const VERSION = "0.6.4";
+    const VERSION = "0.6.5";
     const API_BASE = "https://ffscouter.com/api/v1";
     const PREFIX = "kingshade-scout:";
     const SETTINGS_KEY = `${PREFIX}settings`;
@@ -249,40 +249,65 @@
         return match ? Number(match[1]) : null;
     }
 
-    function findMemberRow(anchor) {
-        return anchor.closest(
+    const PROFILE_SELECTOR = [
+        'a[href*="profiles.php?XID="]',
+        'a[href*="user2ID="]',
+        'a[href*="userId="]',
+        'a[href*="step=profile"][href*="ID="]'
+    ].join(", ");
+
+    function normalizedText(element) {
+        return String(element?.textContent || "").replace(/\s+/g, " ").trim();
+    }
+
+    function findMemberListRoot() {
+        const candidates = Array.from(document.querySelectorAll("div, span, li, strong"))
+            .filter(element => /^\d+\s*\/\s*\d+\s+Members$/i.test(normalizedText(element)));
+
+        for (const header of candidates) {
+            let node = header;
+
+            for (let depth = 0; depth < 7 && node && node !== document.body; depth++, node = node.parentElement) {
+                const text = normalizedText(node);
+                const links = node.querySelectorAll?.(PROFILE_SELECTOR).length || 0;
+                const looksLikeMemberTable = /\bLvl\b/i.test(text) && /\bDays\b/i.test(text) && /\bStatus\b/i.test(text);
+
+                if (links >= 3 && looksLikeMemberTable) return node;
+            }
+        }
+
+        return null;
+    }
+
+    function findMemberRow(anchor, root) {
+        const row = anchor.closest(
             ".enemy, .your, .table-row, li, [class*='row___'], [class*='member___']"
         );
+
+        if (!row || row === root || !root.contains(row)) return null;
+        return row;
     }
 
     function findRows() {
         const map = new Map();
-        if (!/\/factions\.php\/?$/i.test(location.pathname)) return map;
+        if (!/\/factions\.php\/?$/i.test(location.pathname)) return { root: null, rows: map, profileLinks: 0 };
 
-        const anchors = document.querySelectorAll(
-            'a[href*="profiles.php?XID="], ' +
-            'a[href*="user2ID="], ' +
-            'a[href*="userId="], ' +
-            'a[href*="step=profile"][href*="ID="]'
-        );
+        const root = findMemberListRoot();
+        if (!root) return { root: null, rows: map, profileLinks: 0 };
+
+        const anchors = root.querySelectorAll(PROFILE_SELECTOR);
 
         for (const anchor of anchors) {
             const id = extractPlayerId(anchor);
             if (!id || map.has(id)) continue;
 
-            const row = findMemberRow(anchor);
+            const row = findMemberRow(anchor, root);
             if (!row) continue;
 
-            /*
-             * This intentionally does not require status text.
-             * Torn PDA can render the name link and the status cell in
-             * separate React wrappers, which caused v0.6.0–0.6.1 to find
-             * profile links but reject every member row.
-             */
             map.set(id, { id, row, anchor });
         }
 
-        return map;
+        return { root, rows: map, profileLinks: anchors.length };
     }
 
     const FF_PALETTE = [
@@ -338,7 +363,13 @@
                 font:13px/1.35 Arial,sans-serif;z-index:2147483646;box-shadow:0 4px 18px rgba(0,0,0,.58)
             }
             .ks6-panel *{box-sizing:border-box}
-            .ks6-panel strong{font-size:15px;color:#fff!important}
+            .ks6-panel-head,.ks6-card-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+            .ks6-panel strong,.ks6-card strong{font-size:16px;color:#fff!important}
+            .ks6-close{
+                flex:0 0 34px!important;width:34px!important;height:34px!important;margin:0!important;padding:0!important;
+                border:1px solid #686d73!important;border-radius:50%!important;background:#34383d!important;
+                color:#fff!important;font:800 22px/30px Arial!important;text-shadow:none!important
+            }
             .ks6-panel label{
                 display:flex;justify-content:space-between;align-items:center;gap:10px;
                 margin:10px 0;color:#fff!important
@@ -347,36 +378,37 @@
                 width:158px;min-width:0;height:31px;padding:4px 7px;
                 border:1px solid #777;border-radius:4px;background:#fff!important;color:#111!important
             }
-            .ks6-panel button{
+            .ks6-panel > button{
                 width:100%;margin-top:9px;padding:10px;border:1px solid #686d73;border-radius:6px;
-                background:#3b3f44!important;color:#fff!important;font-weight:800!important;
-                text-shadow:none!important
+                background:#3b3f44!important;color:#fff!important;font-weight:800!important;text-shadow:none!important
             }
-            .ks6-panel button:active{background:#50555c!important}
+            .ks6-panel > button:active{background:#50555c!important}
             .ks6-status{
                 margin:7px 0 11px;padding:8px;border-radius:6px;background:#303238!important;
                 color:#fff!important;font-size:11px
             }
             .ks6-help{font-size:11px;color:#c9cbd0!important;margin:8px 0 2px}
 
-            .ks6-name-host{
-                --ks6-color:#666;
-                --ks6-tint:rgba(102,102,102,.30);
-                position:relative!important;isolation:isolate;box-sizing:border-box!important;
-                display:block!important;border-left:5px solid var(--ks6-color)!important;
-                border-radius:4px!important;padding:2px 3px!important;overflow:hidden!important
+            .ks6-colored-row{
+                --ks6-row-color:#666;
+                --ks6-row-tint:rgba(102,102,102,.22);
+                position:relative!important;
+                box-shadow:inset 5px 0 0 var(--ks6-row-color)!important
             }
-            .ks6-name-host::before{
-                content:"";position:absolute;inset:0;background:var(--ks6-tint);
-                pointer-events:none;z-index:0
+            .ks6-colored-row,
+            .ks6-colored-row > *,
+            .ks6-colored-row [class*='table-cell'],
+            .ks6-colored-row [class*='cell___']{
+                background-color:var(--ks6-row-tint)!important
             }
-            .ks6-name-host > *{position:relative;z-index:1}
+            .ks6-name-host{position:relative!important;overflow:visible!important}
             .ks6-badge{
-                display:block!important;width:100%;box-sizing:border-box;margin-top:2px;padding:2px 5px;
-                border:1px solid var(--ks6-color)!important;border-radius:3px;
-                background:rgba(0,0,0,.58)!important;color:#fff!important;
-                font:800 9px/1.15 Arial,sans-serif!important;text-align:center;white-space:nowrap;
-                text-shadow:none!important;cursor:pointer
+                position:absolute!important;right:2px;bottom:1px;display:inline-flex!important;
+                align-items:center;justify-content:center;max-width:64px;padding:1px 4px;
+                border:1px solid var(--ks6-row-color)!important;border-radius:3px;
+                background:rgba(0,0,0,.76)!important;color:#fff!important;
+                font:800 8px/1.15 Arial,sans-serif!important;white-space:nowrap;
+                text-shadow:none!important;z-index:6;cursor:pointer
             }
 
             .ks6-modal{
@@ -389,7 +421,6 @@
                 box-shadow:0 5px 25px rgba(0,0,0,.68)
             }
             .ks6-card *{box-sizing:border-box}
-            .ks6-card strong{font-size:16px;color:#fff!important}
             .ks6-card label{
                 display:flex;justify-content:space-between;align-items:center;gap:10px;
                 margin:12px 0;color:#fff!important
@@ -402,8 +433,7 @@
             .ks6-actions{display:flex;gap:7px;margin-top:14px}
             .ks6-actions button{
                 flex:1;padding:10px 6px;border:1px solid #686d73;border-radius:6px;
-                background:#3b3f44!important;color:#fff!important;font-weight:800!important;
-                text-shadow:none!important
+                background:#3b3f44!important;color:#fff!important;font-weight:800!important;text-shadow:none!important
             }
             .ks6-actions button[data-x=save]{background:#286b3b!important}
             .ks6-actions button[data-x=clear]{background:#693232!important}
@@ -447,7 +477,10 @@
         modal.className = "ks6-modal";
         modal.innerHTML = `
             <div class="ks6-card">
-                <strong>${escapeHtml(playerName)}</strong>
+                <div class="ks6-card-head">
+                    <strong>${escapeHtml(playerName)}</strong>
+                    <button type="button" class="ks6-close" data-x="close" aria-label="Close">×</button>
+                </div>
                 <div style="color:#c9cbd0;margin-top:4px">
                     FF Scouter: ${Number.isFinite(ffsFF) && ffsFF > 0 ? ffsFF.toFixed(2) : "No data"}
                 </div>
@@ -488,6 +521,7 @@
 
         const close = () => modal.remove();
 
+        modal.querySelector('[data-x="close"]').onclick = close;
         modal.querySelector('[data-x="cancel"]').onclick = close;
         modal.querySelector('[data-x="clear"]').onclick = () => {
             setManual(entry.id, null);
@@ -521,15 +555,19 @@
         document.body.appendChild(modal);
     }
 
-    function refreshRow(row) {
+    function clearRowVisuals(row) {
         row.removeAttribute("data-ks6-applied");
-        row.querySelectorAll(".ks6-badge").forEach(el => el.remove());
-        row.querySelectorAll(".ks6-name-host").forEach(host => {
-            host.classList.remove("ks6-name-host");
-            host.style.removeProperty("--ks6-color");
-            host.style.removeProperty("--ks6-tint");
-        });
+        row.removeAttribute("data-ks6-pending");
+        row.classList.remove("ks6-colored-row");
+        row.style.removeProperty("--ks6-row-color");
+        row.style.removeProperty("--ks6-row-tint");
         row.style.removeProperty("box-shadow");
+        row.querySelectorAll(".ks6-badge").forEach(element => element.remove());
+        row.querySelectorAll(".ks6-name-host").forEach(host => host.classList.remove("ks6-name-host"));
+    }
+
+    function refreshRow(row) {
+        clearRowVisuals(row);
         scheduleScan(0);
     }
 
@@ -548,27 +586,32 @@
         const manual = getManual(entry.id);
         const ffsFF = Number(data?.fair_fight);
         const manualFF = Number(manual?.ff);
-        const activeFF = Number.isFinite(manualFF) && manualFF > 0 ? manualFF : ffsFF;
-        const source = Number.isFinite(manualFF) && manualFF > 0 ? "MAN" : "FFS";
+        const hasManual = Number.isFinite(manualFF) && manualFF > 0;
+        const activeFF = hasManual ? manualFF : ffsFF;
+        const source = hasManual ? "MAN" : "FFS";
+
+        let color = "#666";
+        let tint = "rgba(102,102,102,.22)";
 
         if (!Number.isFinite(activeFF) || activeFF <= 0) {
             if (!settings.showUnknown) {
-                badge.remove();
+                clearRowVisuals(entry.row);
                 return;
             }
             badge.textContent = "FF ?";
-            host.style.setProperty("--ks6-color", "#666");
-            host.style.setProperty("--ks6-tint", "rgba(102,102,102,.30)");
         } else {
             const style = ffStyle(activeFF);
-            host.style.setProperty("--ks6-color", style.color);
-            host.style.setProperty("--ks6-tint", hexToRgba(style.color, 0.38));
-
-            badge.textContent = `${source} FF ${activeFF.toFixed(2)}`;
-
-            entry.row.style.removeProperty("box-shadow");
-            if (settings.showStripe) entry.row.style.boxShadow = `inset 4px 0 0 ${style.color}`;
+            color = style.color;
+            tint = hexToRgba(style.color, 0.24);
+            badge.textContent = hasManual ? `MAN ${activeFF.toFixed(2)}` : `FF ${activeFF.toFixed(2)}`;
         }
+
+        entry.row.classList.add("ks6-colored-row");
+        entry.row.style.setProperty("--ks6-row-color", color);
+        entry.row.style.setProperty("--ks6-row-tint", tint);
+        host.style.setProperty("--ks6-row-color", color);
+
+        if (!settings.showStripe) entry.row.style.boxShadow = "none";
 
         const battleStats = manual?.battleStats || data?.bs_estimate;
         badge.title = `${source} FF ${Number.isFinite(activeFF) ? activeFF.toFixed(2) : "?"} | FFS ${Number.isFinite(ffsFF) ? ffsFF.toFixed(2) : "?"} | BS ${formatCompact(battleStats)}${manual?.note ? ` | ${manual.note}` : ""}`;
@@ -605,7 +648,10 @@
         panel.className = "ks6-panel";
         panel.hidden = true;
         panel.innerHTML = `
-            <strong>Kingshade Scout ${VERSION}</strong>
+            <div class="ks6-panel-head">
+                <strong>Kingshade Scout ${VERSION}</strong>
+                <button type="button" class="ks6-close" data-ksp="close" aria-label="Close">×</button>
+            </div>
             <div class="ks6-status" data-ksp="status">Waiting for faction scan…</div>
 
             <label>FF Scouter API key
@@ -621,13 +667,11 @@
             </label>
 
             <div class="ks6-help">
-                Tap a player's FF label to add a custom Fair Fight value, optional battle stats, or a note.
-                FF Scouter remains the default source until a custom FF is enabled.
+                Changes are saved automatically when this panel is closed. Tap a player's small FF label to add a custom value or note.
             </div>
 
-            <button type="button" data-ksp="rescan">Rescan faction list</button>
+            <button type="button" data-ksp="rescan">Rescan faction member list</button>
             <button type="button" data-ksp="reset">Reset KSP button position</button>
-            <button type="button" data-ksp="save">Save settings</button>
         `;
 
         let dragging = false;
@@ -666,8 +710,10 @@
                 settings.buttonX = rect.left;
                 settings.buttonY = rect.top;
                 saveSettings();
+            } else if (panel.hidden) {
+                panel.hidden = false;
             } else {
-                panel.hidden = !panel.hidden;
+                closePanel();
             }
 
             try { button.releasePointerCapture?.(event.pointerId); } catch {}
@@ -677,22 +723,42 @@
         button.onpointercancel = finishPointer;
         button.onlostpointercapture = () => { dragging = false; };
 
-        panel.querySelector('[data-ksp="save"]').onclick = () => {
-            setApiKey(panel.querySelector('[data-ksp="key"]').value);
-            settings.showUnknown = panel.querySelector('[data-ksp="unknown"]').checked;
-            settings.showStripe = panel.querySelector('[data-ksp="stripe"]').checked;
+        const persistPanelSettings = () => {
+            const previousKey = getApiKey();
+            const previousUnknown = settings.showUnknown;
+            const previousStripe = settings.showStripe;
+
+            const nextKey = panel.querySelector('[data-ksp="key"]').value.trim();
+            const nextUnknown = panel.querySelector('[data-ksp="unknown"]').checked;
+            const nextStripe = panel.querySelector('[data-ksp="stripe"]').checked;
+
+            setApiKey(nextKey);
+            settings.showUnknown = nextUnknown;
+            settings.showStripe = nextStripe;
             saveSettings();
-            panel.hidden = true;
-            clearRendered();
-            scheduleScan(0);
+
+            return previousKey !== nextKey || previousUnknown !== nextUnknown || previousStripe !== nextStripe;
         };
 
+        const closePanel = () => {
+            const changed = persistPanelSettings();
+            panel.hidden = true;
+            if (changed) {
+                clearRendered();
+                scheduleScan(0);
+            }
+        };
+
+        panel.querySelector('[data-ksp="close"]').onclick = closePanel;
+
         panel.querySelector('[data-ksp="rescan"]').onclick = () => {
+            persistPanelSettings();
             clearRendered();
             scheduleScan(0);
         };
 
         panel.querySelector('[data-ksp="reset"]').onclick = () => {
+            persistPanelSettings();
             settings.buttonX = null;
             settings.buttonY = null;
             saveSettings();
@@ -711,16 +777,9 @@
     }
 
     function clearRendered() {
-        document.querySelectorAll(".ks6-badge").forEach(el => el.remove());
-        document.querySelectorAll(".ks6-name-host").forEach(host => {
-            host.classList.remove("ks6-name-host");
-            host.style.removeProperty("--ks6-color");
-            host.style.removeProperty("--ks6-tint");
-        });
-        document.querySelectorAll("[data-ks6-applied]").forEach(row => {
-            row.removeAttribute("data-ks6-applied");
-            row.style.removeProperty("box-shadow");
-        });
+        document.querySelectorAll(".ks6-badge").forEach(element => element.remove());
+        document.querySelectorAll(".ks6-name-host").forEach(host => host.classList.remove("ks6-name-host"));
+        document.querySelectorAll(".ks6-colored-row,[data-ks6-applied],[data-ks6-pending]").forEach(clearRowVisuals);
     }
 
     async function scan() {
@@ -730,11 +789,16 @@
             return;
         }
 
-        const profileLinkCount = document.querySelectorAll(
-            'a[href*="profiles.php?XID="], a[href*="user2ID="], a[href*="userId="]'
-        ).length;
-        const rows = findRows();
-        updatePanelStatus(`${rows.size} member rows found · ${profileLinkCount} profile links detected`);
+        const result = findRows();
+        const rows = result.rows;
+
+        if (!result.root) {
+            clearRendered();
+            updatePanelStatus("Open the faction member list to load FF data.");
+            return;
+        }
+
+        updatePanelStatus(`${rows.size} member rows found · ${result.profileLinks} member profile links detected`);
 
         if (!rows.size) return;
 
@@ -782,11 +846,8 @@
             ".ks6-fab,.ks6-panel,.ks6-badge,.ks6-modal,.ks6-toast,.ks-scout-fab,.ks-scout-panel,.ks-scout-badge,.ks-status-timer,.ks-scout-error"
         ).forEach(el => el.remove());
 
-        document.querySelectorAll(".ks6-name-host").forEach(host => {
-            host.classList.remove("ks6-name-host");
-            host.style.removeProperty("--ks6-color");
-            host.style.removeProperty("--ks6-tint");
-        });
+        document.querySelectorAll(".ks6-name-host").forEach(host => host.classList.remove("ks6-name-host"));
+        document.querySelectorAll(".ks6-colored-row").forEach(clearRowVisuals);
 
         document.querySelectorAll("[data-ks-scout-applied],[data-ks6-applied]").forEach(row => {
             row.removeAttribute("data-ks-scout-applied");
@@ -824,16 +885,8 @@
                 document.querySelectorAll(
                     ".ks6-fab,.ks6-panel,.ks6-badge,.ks6-modal,.ks6-toast"
                 ).forEach(el => el.remove());
-                document.querySelectorAll(".ks6-name-host").forEach(host => {
-                    host.classList.remove("ks6-name-host");
-                    host.style.removeProperty("--ks6-color");
-                    host.style.removeProperty("--ks6-tint");
-                });
-                document.querySelectorAll("[data-ks6-applied],[data-ks6-pending]").forEach(row => {
-                    row.removeAttribute("data-ks6-applied");
-                    row.removeAttribute("data-ks6-pending");
-                    row.style.removeProperty("box-shadow");
-                });
+                document.querySelectorAll(".ks6-name-host").forEach(host => host.classList.remove("ks6-name-host"));
+                document.querySelectorAll(".ks6-colored-row,[data-ks6-applied],[data-ks6-pending]").forEach(clearRowVisuals);
             }
         };
     }
