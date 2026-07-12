@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kingshade Scout for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.7.1
+// @version      0.7.2
 // @description  Mobile FF Scouter overlay for Torn PDA faction member lists with FF, estimate fallbacks, and optional manual overrides.
 // @author       Kingshade
 // @match        https://www.torn.com/*
@@ -19,8 +19,8 @@
         try { window[INSTANCE_KEY].destroy?.(); } catch {}
     }
 
-    const NAME = "Kingshade Scout";
-    const VERSION = "0.7.1";
+    const NAME = "Kingshade Scout PDA";
+    const VERSION = "0.7.3";
     const API_BASE = "https://ffscouter.com/api/v1";
     const TORN_API_BASE = "https://api.torn.com";
     const PREFIX = "kingshade-scout:";
@@ -35,6 +35,7 @@
 
     const DEFAULTS = {
         showUnknown: true,
+        buttonStyle: "crest",
         buttonX: null,
         buttonY: null
     };
@@ -50,7 +51,10 @@
 
     function loadSettings() {
         try {
-            return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}") };
+            const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
+            // Keep old installations compatible while removing the obsolete stripe option.
+            delete saved.showStripe;
+            return { ...DEFAULTS, ...saved };
         } catch {
             return { ...DEFAULTS };
         }
@@ -96,13 +100,14 @@
     function normalizeEstimateText(value) {
         const text = String(value || "")
             .replace(/\s+/g, " ")
-            .replace(/\s*-\s*/g, "–")
+            .replace(/\s*(?:-|–|to)\s*/gi, "–")
             .trim();
 
         if (!text || /^(?:unk|unknown|n\/a|none|\?)$/i.test(text)) return "";
-        return text.replace(/(\d(?:[.,]\d+)?)\s*([kmb])\b/gi, (_, number, unit) =>
-            `${number}${unit.toUpperCase()}`
-        );
+
+        return text
+            .replace(/(\d(?:[.,]\d+)?)\s*([kmb])\b/gi, (_, number, unit) => `${number}${unit.toUpperCase()}`)
+            .replace(/^<\s+/, "<");
     }
 
     function extractEstimateFragment(value) {
@@ -172,6 +177,10 @@
             .replaceAll(">", "&gt;")
             .replaceAll('"', "&quot;")
             .replaceAll("'", "&#039;");
+    }
+
+    function normalizedText(element) {
+        return String(element?.textContent || "").replace(/\s+/g, " ").trim();
     }
 
     function normalizeResponse(resp) {
@@ -244,7 +253,7 @@
         if (!missing.length) return result;
 
         const key = getApiKey();
-        if (!key) throw new Error("No FF Scouter API key is saved. Open KSP and paste your key.");
+        if (!key) throw new Error("No FF Scouter API key is saved. Open KS and paste your key.");
 
         for (let i = 0; i < missing.length; i += 100) {
             const batch = missing.slice(i, i + 100);
@@ -349,8 +358,6 @@
             if (id) return { id, anchor };
         }
 
-        // Torn occasionally stores the profile URL in HTML/data attributes
-        // instead of exposing it as a normal anchor in the PDA DOM.
         const html = String(row.outerHTML || "");
         const match = html.match(/(?:XID|user2ID|userId)(?:=|%3D|&quot;:\s*&quot;|["']?\s*[:]\s*["']?)(\d+)/i);
         if (match) return { id: Number(match[1]), anchor: null };
@@ -396,9 +403,6 @@
         const direct = current.match(/[?&#](?:ID|factionID|factionId)=(\d+)/i);
         if (direct) return Number(direct[1]);
 
-        // When Torn changes the URL through its SPA router, the visible faction
-        // ID is still repeated in faction-profile links. The most common ID on
-        // the page is the faction currently being viewed.
         const counts = new Map();
         document.querySelectorAll('a[href*="factions.php"][href*="ID="]').forEach(anchor => {
             const href = String(anchor.getAttribute("href") || "").replaceAll("&amp;", "&");
@@ -479,8 +483,6 @@
             if (exact && !exact.ambiguous && exact.id) return exact;
         }
 
-        // Honor-bar alt/title strings can contain extra words. Use a guarded
-        // containment match only for sufficiently distinctive names.
         for (const candidate of candidates) {
             if (!candidate.normalized) continue;
             const matches = [];
@@ -494,12 +496,6 @@
         return null;
     }
 
-    /*
-     * The .members-list row selectors are stable and already give us the exact
-     * number of visible members. Player IDs are resolved in two independent
-     * ways: a real /profiles...XID link first, then the official Torn faction
-     * member directory matched against the displayed honor/name.
-     */
     async function findRows() {
         const map = new Map();
         if (!/\/factions\.php\/?$/i.test(location.pathname)) {
@@ -637,11 +633,34 @@
         style.id = "ks6-styles";
         style.textContent = `
             .ks6-fab{
-                position:fixed;width:50px;height:50px;border:1px solid #46515a;border-radius:50%;
-                background:#263238!important;color:#fff!important;font:800 12px/1 Arial!important;
-                text-shadow:none!important;z-index:2147483645;box-shadow:0 3px 12px rgba(0,0,0,.45);
-                touch-action:none;user-select:none
+                position:fixed;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:0;
+                width:52px;height:52px;padding:0;border-radius:50%;
+                z-index:2147483645;touch-action:none;user-select:none;overflow:hidden;
+                transition:transform .12s ease, box-shadow .12s ease, filter .12s ease
             }
+            .ks6-fab:active{transform:scale(.98)}
+            .ks6-fab .ks6-fab-label{display:block;line-height:1;pointer-events:none}
+            .ks6-fab .ks6-fab-crown-mark{display:none;line-height:1;pointer-events:none}
+
+            .ks6-fab[data-style='simple']{
+                border:1px solid #c89d4b;background:radial-gradient(circle at 30% 28%, #3e331e 0%, #201811 62%, #0f0c09 100%)!important;
+                color:#f5dd9b!important;font:800 14px/1 Georgia,serif!important;letter-spacing:.4px;text-shadow:0 1px 1px rgba(0,0,0,.65)!important;
+                box-shadow:0 4px 12px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,227,160,.25), 0 0 0 2px rgba(120,84,26,.34)
+            }
+            .ks6-fab[data-style='crest']{
+                border:2px solid #d4ab58;background:radial-gradient(circle at 50% 22%, #6a4f19 0%, #3d2a11 30%, #19120d 68%, #0d0907 100%)!important;
+                color:#f8e1a6!important;font:800 15px/1 Georgia,serif!important;letter-spacing:.5px;text-shadow:0 1px 1px rgba(0,0,0,.75), 0 0 8px rgba(212,171,88,.2)!important;
+                box-shadow:0 6px 14px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,235,180,.32), inset 0 -8px 14px rgba(0,0,0,.35), 0 0 0 1px rgba(92,64,20,.55)
+            }
+            .ks6-fab[data-style='royal']{
+                border:2px solid #d9b05c;background:radial-gradient(circle at 50% 18%, #7a5a1b 0%, #442f12 32%, #1a1410 70%, #0d0907 100%)!important;
+                color:#f8e8ba!important;font:800 14px/1 Georgia,serif!important;letter-spacing:.45px;text-shadow:0 1px 1px rgba(0,0,0,.75)!important;
+                box-shadow:0 6px 14px rgba(0,0,0,.52), inset 0 1px 0 rgba(255,236,192,.35), inset 0 -8px 14px rgba(0,0,0,.35), 0 0 0 1px rgba(92,64,20,.55)
+            }
+            .ks6-fab[data-style='royal'] .ks6-fab-crown-mark{
+                display:block;margin-top:2px;margin-bottom:1px;font-size:9px;color:#f4d17a;text-shadow:0 0 6px rgba(244,209,122,.3)
+            }
+            .ks6-fab[data-style='royal'] .ks6-fab-label{font-size:13px}
 
             .ks6-panel{
                 position:fixed;right:12px;bottom:150px;width:min(88vw,320px);padding:13px;
@@ -660,7 +679,7 @@
                 display:flex;justify-content:space-between;align-items:center;gap:10px;
                 margin:10px 0;color:#fff!important
             }
-            .ks6-panel input[type=password]{
+            .ks6-panel input[type=password],.ks6-panel select{
                 width:158px;min-width:0;height:31px;padding:4px 7px;
                 border:1px solid #777;border-radius:4px;background:#fff!important;color:#111!important
             }
@@ -677,7 +696,7 @@
 
             .ks6-colored-row{
                 --ks6-row-color:#666;
-                --ks6-row-tint:rgba(102,102,102,.22);
+                --ks6-row-tint:rgba(102,102,102,.18);
                 position:relative!important
             }
             .ks6-colored-row,
@@ -689,9 +708,9 @@
             .ks6-name-host{position:relative!important;overflow:visible!important}
             .ks6-badge{
                 position:absolute!important;right:2px;bottom:1px;display:inline-flex!important;
-                align-items:center;justify-content:center;max-width:82px;padding:1px 4px;
-                border:1px solid var(--ks6-row-color)!important;border-radius:3px;
-                background:rgba(0,0,0,.76)!important;color:#fff!important;
+                align-items:center;justify-content:center;max-width:98px;padding:1px 4px;
+                border:1px solid var(--ks6-row-color,#666)!important;border-radius:3px;
+                background:rgba(0,0,0,.78)!important;color:#fff!important;
                 font:800 8px/1.15 Arial,sans-serif!important;white-space:nowrap;
                 text-shadow:none!important;z-index:6;cursor:pointer
             }
@@ -743,8 +762,10 @@
 
     function badgeHost(entry) {
         const host =
-            entry.anchor.closest(".honor-text-wrap") ||
-            entry.anchor.parentElement;
+            entry.anchor?.closest?.(".honor-text-wrap") ||
+            entry.anchor?.parentElement ||
+            entry.row.querySelector(".member") ||
+            entry.row;
 
         host?.classList.add("ks6-name-host");
         return host;
@@ -752,11 +773,12 @@
 
     function getPlayerDisplayName(entry) {
         const candidates = [
+            entry.resolvedName,
             normalizedText(entry.anchor),
-            entry.anchor.getAttribute("title"),
-            entry.anchor.getAttribute("aria-label"),
-            entry.anchor.querySelector?.("img[alt]")?.getAttribute("alt"),
-            entry.anchor.querySelector?.("img[title]")?.getAttribute("title")
+            entry.anchor?.getAttribute?.("title"),
+            entry.anchor?.getAttribute?.("aria-label"),
+            entry.anchor?.querySelector?.("img[alt]")?.getAttribute("alt"),
+            entry.anchor?.querySelector?.("img[title]")?.getAttribute("title")
         ];
 
         for (const candidate of candidates) {
@@ -929,14 +951,16 @@
             "";
 
         let color = "#666";
-        let tint = "rgba(102,102,102,.18)";
+        let tint = "rgba(102,102,102,.10)";
         let title = "";
+        let colorRow = false;
 
         if (activeFF) {
             const style = ffStyle(activeFF);
             const age = estimateAge(hasManualFF ? null : resolved.lastUpdated);
             color = style.color;
             tint = hexToRgba(style.color, 0.34);
+            colorRow = true;
             badge.textContent = hasManualFF
                 ? `MAN ${activeFF.toFixed(2)}`
                 : `FF ${activeFF.toFixed(2)}${age.old ? "?" : ""}`;
@@ -949,9 +973,12 @@
                 manual?.note || ""
             ].filter(Boolean).join(" · ");
         } else if (fallbackEstimate) {
+            // A real estimate is useful, but it is not a Fair Fight score.
+            // Keep the row neutral so it cannot be mistaken for the FF color scale.
             badge.textContent = `EST ${fallbackEstimate}`;
-            color = "#777";
-            tint = "rgba(119,119,119,.20)";
+            color = "#7d8c99";
+            tint = "rgba(125,140,153,.14)";
+            colorRow = true;
             title = [
                 `Estimated stats ${fallbackEstimate}`,
                 manualEstimateHuman ? "MANUAL" : apiEstimateHuman ? sourceLabel(resolved.source) : profileEstimate ? sourceLabel(profileEstimate.source) : "",
@@ -966,11 +993,16 @@
             title = manual?.note || "No FF score or estimated stats";
         }
 
-        entry.row.classList.add("ks6-colored-row");
-        entry.row.style.setProperty("--ks6-row-color", color);
-        entry.row.style.setProperty("--ks6-row-tint", tint);
-        host.style.setProperty("--ks6-row-color", color);
+        if (colorRow) {
+            entry.row.classList.add("ks6-colored-row");
+            entry.row.style.setProperty("--ks6-row-color", color);
+            entry.row.style.setProperty("--ks6-row-tint", tint);
+        } else {
+            entry.row.classList.remove("ks6-colored-row");
+            entry.row.style.removeProperty("--ks6-row-tint");
+        }
 
+        host.style.setProperty("--ks6-row-color", color);
         badge.title = title;
         badge.onclick = event => {
             event.preventDefault();
@@ -992,13 +1024,24 @@
         };
     }
 
+    function applyButtonTheme(button, theme = settings.buttonStyle || "crest") {
+        if (!button) return;
+
+        const style = ["simple", "crest", "royal"].includes(theme) ? theme : "crest";
+        button.dataset.style = style;
+        button.innerHTML = style === "royal"
+            ? '<span class="ks6-fab-crown-mark">♛</span><span class="ks6-fab-label">KS</span>'
+            : '<span class="ks6-fab-label">KS</span>';
+    }
+
     function ensurePanel() {
         if (!/\/factions\.php\/?$/i.test(location.pathname)) return;
         if (document.querySelector(".ks6-fab")) return;
 
         const button = document.createElement("button");
         button.className = "ks6-fab";
-        button.textContent = "KSP";
+        button.title = NAME;
+        applyButtonTheme(button);
 
         const pos = buttonPosition();
         button.style.left = `${pos.x}px`;
@@ -1009,7 +1052,7 @@
         panel.hidden = true;
         panel.innerHTML = `
             <div class="ks6-panel-head">
-                <strong>Kingshade Scout ${VERSION}</strong>
+                <strong>${NAME} ${VERSION}</strong>
                 <button type="button" class="ks6-close" data-ksp="close" aria-label="Close">×</button>
             </div>
             <div class="ks6-status" data-ksp="status">Waiting for faction scan…</div>
@@ -1022,12 +1065,20 @@
                 <input data-ksp="unknown" type="checkbox" ${settings.showUnknown ? "checked" : ""}>
             </label>
 
+            <label>KS button style
+                <select data-ksp="style">
+                    <option value="simple" ${settings.buttonStyle === "simple" ? "selected" : ""}>Style A · Simple gold</option>
+                    <option value="crest" ${settings.buttonStyle === "crest" ? "selected" : ""}>Style B · Crest</option>
+                    <option value="royal" ${settings.buttonStyle === "royal" ? "selected" : ""}>Style C · Crown</option>
+                </select>
+            </label>
+
             <div class="ks6-help">
-                FF Scouter scores are used first. When no FF score exists, the label shows available estimated stats instead. A question mark marks FF data older than 14 days. Tap a label for details or manual values.
+                FF scores use the full FF color scale. When no FF score exists, a verified battle-stat estimate is shown as EST on a neutral row. Tap any label for details or manual values.
             </div>
 
             <button type="button" data-ksp="rescan">Rescan faction member list</button>
-            <button type="button" data-ksp="reset">Reset KSP button position</button>
+            <button type="button" data-ksp="reset">Reset KS button position</button>
         `;
 
         let dragging = false;
@@ -1055,6 +1106,34 @@
             const y = Math.max(70, Math.min(innerHeight - 145, st + dy));
             button.style.left = `${x}px`;
             button.style.top = `${y}px`;
+        };
+
+        const persistPanelSettings = () => {
+            const previousKey = getApiKey();
+            const previousUnknown = settings.showUnknown;
+            const previousStyle = settings.buttonStyle || "crest";
+
+            const nextKey = panel.querySelector('[data-ksp="key"]').value.trim();
+            const nextUnknown = panel.querySelector('[data-ksp="unknown"]').checked;
+            const nextStyle = panel.querySelector('[data-ksp="style"]').value || "crest";
+
+            setApiKey(nextKey);
+            if (previousKey !== nextKey) factionDirectoryCache.clear();
+            settings.showUnknown = nextUnknown;
+            settings.buttonStyle = ["simple", "crest", "royal"].includes(nextStyle) ? nextStyle : "crest";
+            saveSettings();
+            applyButtonTheme(button, settings.buttonStyle);
+
+            return previousKey !== nextKey || previousUnknown !== nextUnknown || previousStyle !== settings.buttonStyle;
+        };
+
+        const closePanel = () => {
+            const changed = persistPanelSettings();
+            panel.hidden = true;
+            if (changed) {
+                clearRendered();
+                scheduleScan(0);
+            }
         };
 
         const finishPointer = event => {
@@ -1086,34 +1165,15 @@
             moved = false;
         };
 
-        const persistPanelSettings = () => {
-            const previousKey = getApiKey();
-            const previousUnknown = settings.showUnknown;
-
-            const nextKey = panel.querySelector('[data-ksp="key"]').value.trim();
-            const nextUnknown = panel.querySelector('[data-ksp="unknown"]').checked;
-
-            setApiKey(nextKey);
-            if (previousKey !== nextKey) factionDirectoryCache.clear();
-            settings.showUnknown = nextUnknown;
-            saveSettings();
-
-            return previousKey !== nextKey || previousUnknown !== nextUnknown;
-        };
-
-        const closePanel = () => {
-            const changed = persistPanelSettings();
-            panel.hidden = true;
-            if (changed) {
-                clearRendered();
-                scheduleScan(0);
-            }
+        panel.querySelector('[data-ksp="style"]').onchange = event => {
+            applyButtonTheme(button, event.target.value || "crest");
         };
 
         panel.querySelector('[data-ksp="close"]').onclick = closePanel;
 
         panel.querySelector('[data-ksp="rescan"]').onclick = () => {
             persistPanelSettings();
+            memoryCache.clear();
             clearRendered();
             scheduleScan(0);
         };
@@ -1156,58 +1216,54 @@
         scanRunning = true;
 
         try {
-        captureProfileEstimate();
+            captureProfileEstimate();
 
-        if (!/\/factions\.php\/?$/i.test(location.pathname)) {
-            clearRendered();
-            removePanel();
-            return;
-        }
-
-        ensurePanel();
-
-        const result = await findRows();
-        const rows = result.rows;
-
-        if (!result.memberLists) {
-            updatePanelStatus("Torn member-list container not loaded yet.");
-        } else {
-            updatePanelStatus(`${rows.size}/${result.candidateRows} members mapped · ${result.directIds} XID · ${result.nameIds} name`);
-        }
-
-        if (!rows.size) {
-            // Torn sometimes rebuilds the member table in stages. Leave the
-            // page untouched and allow the MutationObserver to retry.
-            return;
-        }
-
-        const fresh = [];
-        for (const entry of rows.values()) {
-            if (entry.row.dataset.ks6Applied === VERSION) continue;
-            if (entry.row.dataset.ks6Pending === "1") continue;
-            entry.row.dataset.ks6Pending = "1";
-            fresh.push(entry);
-        }
-
-        if (!fresh.length) return;
-
-        try {
-            const data = await fetchPlayers(fresh.map(entry => entry.id));
-            for (const entry of fresh) {
-                const rendered = render(entry, data.get(entry.id));
-                if (rendered) entry.row.dataset.ks6Applied = VERSION;
-                else entry.row.removeAttribute("data-ks6-applied");
-                entry.row.removeAttribute("data-ks6-pending");
+            if (!/\/factions\.php\/?$/i.test(location.pathname)) {
+                clearRendered();
+                removePanel();
+                return;
             }
-            updatePanelStatus(`${rows.size}/${result.candidateRows} members · FF data loaded`);
-        } catch (error) {
-            for (const entry of fresh) {
-                entry.row.removeAttribute("data-ks6-applied");
-                entry.row.removeAttribute("data-ks6-pending");
+
+            ensurePanel();
+
+            const result = await findRows();
+            const rows = result.rows;
+
+            if (!result.memberLists) {
+                updatePanelStatus("Torn member-list container not loaded yet.");
+            } else {
+                updatePanelStatus(`${rows.size}/${result.candidateRows} members mapped · ${result.directIds} XID · ${result.nameIds} name`);
             }
-            updatePanelStatus(`${rows.size} member rows · FF request failed`);
-            showToast(error instanceof Error ? error.message : String(error));
-        }
+
+            if (!rows.size) return;
+
+            const fresh = [];
+            for (const entry of rows.values()) {
+                if (entry.row.dataset.ks6Applied === VERSION) continue;
+                if (entry.row.dataset.ks6Pending === "1") continue;
+                entry.row.dataset.ks6Pending = "1";
+                fresh.push(entry);
+            }
+
+            if (!fresh.length) return;
+
+            try {
+                const data = await fetchPlayers(fresh.map(entry => entry.id));
+                for (const entry of fresh) {
+                    const rendered = render(entry, data.get(entry.id));
+                    if (rendered) entry.row.dataset.ks6Applied = VERSION;
+                    else entry.row.removeAttribute("data-ks6-applied");
+                    entry.row.removeAttribute("data-ks6-pending");
+                }
+                updatePanelStatus(`${rows.size}/${result.candidateRows} members · FF/EST data loaded`);
+            } catch (error) {
+                for (const entry of fresh) {
+                    entry.row.removeAttribute("data-ks6-applied");
+                    entry.row.removeAttribute("data-ks6-pending");
+                }
+                updatePanelStatus(`${rows.size} member rows · FF request failed`);
+                showToast(error instanceof Error ? error.message : String(error));
+            }
         } finally {
             scanRunning = false;
             if (rescanRequested) {
@@ -1228,7 +1284,6 @@
             return;
         }
 
-        // Remove output from every previous version.
         document.querySelectorAll(
             ".ks6-fab,.ks6-panel,.ks6-badge,.ks6-modal,.ks6-toast,.ks-scout-fab,.ks-scout-panel,.ks-scout-badge,.ks-status-timer,.ks-scout-error"
         ).forEach(el => el.remove());
