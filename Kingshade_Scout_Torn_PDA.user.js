@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Kingshade Scout for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.6.3
-// @description  FF Scouter overlay for Torn PDA faction lists with manual FF and compact K/M/B battle-stat overrides.
+// @version      0.6.4
+// @description  Mobile FF Scouter overlay for Torn PDA faction member lists with optional manual overrides.
 // @author       Kingshade
 // @match        https://www.torn.com/*
 // @connect      ffscouter.com
@@ -19,7 +19,7 @@
     }
 
     const NAME = "Kingshade Scout";
-    const VERSION = "0.6.3";
+    const VERSION = "0.6.4";
     const API_BASE = "https://ffscouter.com/api/v1";
     const PREFIX = "kingshade-scout:";
     const SETTINGS_KEY = `${PREFIX}settings`;
@@ -183,7 +183,7 @@
         if (!missing.length) return result;
 
         const key = getApiKey();
-        if (!key) throw new Error("Ingen FF Scouter API-nyckel är sparad. Tryck KSP och klistra in nyckeln.");
+        if (!key) throw new Error("No FF Scouter API key is saved. Open KSP and paste your key.");
 
         for (let i = 0; i < missing.length; i += 100) {
             const batch = missing.slice(i, i + 100);
@@ -191,18 +191,18 @@
             const response = await httpGet(`${API_BASE}/get-stats?${query}`);
 
             if (response.status !== 200) {
-                throw new Error(`FF Scouter svarade med HTTP ${response.status}`);
+                throw new Error(`FF Scouter returned HTTP ${response.status}`);
             }
 
             let rows;
             try {
                 rows = JSON.parse(response.responseText);
             } catch {
-                throw new Error("FF Scouter skickade ogiltig data.");
+                throw new Error("FF Scouter returned invalid data.");
             }
 
             if (!Array.isArray(rows)) {
-                throw new Error(rows?.error || "Oväntat svar från FF Scouter.");
+                throw new Error(rows?.error || "Unexpected response from FF Scouter.");
             }
 
             const returned = new Set();
@@ -250,9 +250,8 @@
     }
 
     function findMemberRow(anchor) {
-        return (
-            anchor.closest(".enemy, .your, .table-row, li, [class*='row___'], [class*='member___']") ||
-            anchor.parentElement
+        return anchor.closest(
+            ".enemy, .your, .table-row, li, [class*='row___'], [class*='member___']"
         );
     }
 
@@ -326,22 +325,94 @@
         const style = document.createElement("style");
         style.id = "ks6-styles";
         style.textContent = `
-            .ks6-fab{position:fixed;width:50px;height:50px;border:0;border-radius:50%;background:#263238;color:#fff;font:800 12px Arial;z-index:2147483645;box-shadow:0 3px 12px rgba(0,0,0,.45);touch-action:none;user-select:none}
-            .ks6-panel{position:fixed;right:12px;bottom:150px;width:min(88vw,310px);padding:12px;border-radius:10px;background:#202124;color:#fff;font:13px Arial;z-index:2147483646;box-shadow:0 4px 18px rgba(0,0,0,.55)}
-            .ks6-panel label{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:9px 0}
-            .ks6-panel input[type=password]{width:155px;min-width:0}
-            .ks6-panel button{width:100%;margin-top:8px;padding:10px;border:1px solid #5b6067;border-radius:6px;background:#3a3d42!important;color:#fff!important;font-weight:800;text-shadow:none!important}
-            .ks6-panel button:active{background:#4a4f56!important}
-            .ks6-status{margin:5px 0 10px;padding:7px;border-radius:6px;background:#303238;font-size:11px}
-            .ks6-badge{display:block!important;width:100%;box-sizing:border-box;margin-top:2px;padding:2px 5px;border-radius:3px;color:#fff!important;font:800 9px/1.15 Arial;text-align:center;white-space:nowrap;z-index:5;box-shadow:0 0 0 1px rgba(0,0,0,.35);cursor:pointer}
-            .ks6-name-host{box-sizing:border-box!important;border-left:5px solid transparent!important;border-radius:4px!important;padding:2px 3px!important;overflow:visible!important}
-            .ks6-modal{position:fixed;inset:0;background:rgba(0,0,0,.74);display:flex;align-items:center;justify-content:center;z-index:2147483647}
-            .ks6-card{width:min(91vw,350px);background:#202124;color:#fff;border-radius:10px;padding:14px;font:13px Arial;box-shadow:0 5px 25px rgba(0,0,0,.65)}
-            .ks6-card label{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:11px 0}
-            .ks6-card input,.ks6-card select{min-height:31px}
-            .ks6-actions{display:flex;gap:7px;margin-top:13px}
-            .ks6-actions button{flex:1;padding:9px;border:0;border-radius:6px;font-weight:700}
-            .ks6-toast{position:fixed;left:50%;bottom:25px;transform:translateX(-50%);max-width:90vw;padding:9px 12px;border-radius:7px;background:#b3261e;color:#fff;font:600 12px Arial;z-index:2147483647}
+            .ks6-fab{
+                position:fixed;width:50px;height:50px;border:1px solid #46515a;border-radius:50%;
+                background:#263238!important;color:#fff!important;font:800 12px/1 Arial!important;
+                text-shadow:none!important;z-index:2147483645;box-shadow:0 3px 12px rgba(0,0,0,.45);
+                touch-action:none;user-select:none
+            }
+
+            .ks6-panel{
+                position:fixed;right:12px;bottom:150px;width:min(88vw,320px);padding:13px;
+                border:1px solid #40444a;border-radius:10px;background:#202124!important;color:#fff!important;
+                font:13px/1.35 Arial,sans-serif;z-index:2147483646;box-shadow:0 4px 18px rgba(0,0,0,.58)
+            }
+            .ks6-panel *{box-sizing:border-box}
+            .ks6-panel strong{font-size:15px;color:#fff!important}
+            .ks6-panel label{
+                display:flex;justify-content:space-between;align-items:center;gap:10px;
+                margin:10px 0;color:#fff!important
+            }
+            .ks6-panel input[type=password]{
+                width:158px;min-width:0;height:31px;padding:4px 7px;
+                border:1px solid #777;border-radius:4px;background:#fff!important;color:#111!important
+            }
+            .ks6-panel button{
+                width:100%;margin-top:9px;padding:10px;border:1px solid #686d73;border-radius:6px;
+                background:#3b3f44!important;color:#fff!important;font-weight:800!important;
+                text-shadow:none!important
+            }
+            .ks6-panel button:active{background:#50555c!important}
+            .ks6-status{
+                margin:7px 0 11px;padding:8px;border-radius:6px;background:#303238!important;
+                color:#fff!important;font-size:11px
+            }
+            .ks6-help{font-size:11px;color:#c9cbd0!important;margin:8px 0 2px}
+
+            .ks6-name-host{
+                --ks6-color:#666;
+                --ks6-tint:rgba(102,102,102,.30);
+                position:relative!important;isolation:isolate;box-sizing:border-box!important;
+                display:block!important;border-left:5px solid var(--ks6-color)!important;
+                border-radius:4px!important;padding:2px 3px!important;overflow:hidden!important
+            }
+            .ks6-name-host::before{
+                content:"";position:absolute;inset:0;background:var(--ks6-tint);
+                pointer-events:none;z-index:0
+            }
+            .ks6-name-host > *{position:relative;z-index:1}
+            .ks6-badge{
+                display:block!important;width:100%;box-sizing:border-box;margin-top:2px;padding:2px 5px;
+                border:1px solid var(--ks6-color)!important;border-radius:3px;
+                background:rgba(0,0,0,.58)!important;color:#fff!important;
+                font:800 9px/1.15 Arial,sans-serif!important;text-align:center;white-space:nowrap;
+                text-shadow:none!important;cursor:pointer
+            }
+
+            .ks6-modal{
+                position:fixed;inset:0;background:rgba(0,0,0,.76);display:flex;
+                align-items:center;justify-content:center;z-index:2147483647
+            }
+            .ks6-card{
+                width:min(92vw,360px);padding:15px;border:1px solid #44484e;border-radius:11px;
+                background:#202124!important;color:#fff!important;font:13px/1.35 Arial,sans-serif;
+                box-shadow:0 5px 25px rgba(0,0,0,.68)
+            }
+            .ks6-card *{box-sizing:border-box}
+            .ks6-card strong{font-size:16px;color:#fff!important}
+            .ks6-card label{
+                display:flex;justify-content:space-between;align-items:center;gap:10px;
+                margin:12px 0;color:#fff!important
+            }
+            .ks6-card input[type=number],.ks6-card input[type=text],.ks6-card select{
+                min-height:32px;padding:4px 7px;border:1px solid #777;border-radius:4px;
+                background:#fff!important;color:#111!important
+            }
+            .ks6-card input[type=checkbox]{width:22px;height:22px}
+            .ks6-actions{display:flex;gap:7px;margin-top:14px}
+            .ks6-actions button{
+                flex:1;padding:10px 6px;border:1px solid #686d73;border-radius:6px;
+                background:#3b3f44!important;color:#fff!important;font-weight:800!important;
+                text-shadow:none!important
+            }
+            .ks6-actions button[data-x=save]{background:#286b3b!important}
+            .ks6-actions button[data-x=clear]{background:#693232!important}
+
+            .ks6-toast{
+                position:fixed;left:50%;bottom:25px;transform:translateX(-50%);
+                max-width:90vw;padding:9px 12px;border-radius:7px;background:#b3261e!important;
+                color:#fff!important;font:600 12px Arial;z-index:2147483647
+            }
         `;
         (document.head || document.documentElement).appendChild(style);
     }
@@ -357,9 +428,8 @@
 
     function badgeHost(entry) {
         const host =
-            entry.anchor.closest(".honor-text-wrap, [class*='honor'], [class*='memberName'], [class*='name___']") ||
-            entry.anchor.parentElement ||
-            entry.row;
+            entry.anchor.closest(".honor-text-wrap") ||
+            entry.anchor.parentElement;
 
         host?.classList.add("ks6-name-host");
         return host;
@@ -371,25 +441,30 @@
         const manual = getManual(entry.id);
         const bs = compactParts(manual?.battleStats || ffsData?.bs_estimate);
         const ffsFF = Number(ffsData?.fair_fight);
+        const playerName = entry.anchor.textContent?.trim() || `Player ${entry.id}`;
 
         const modal = document.createElement("div");
         modal.className = "ks6-modal";
         modal.innerHTML = `
             <div class="ks6-card">
-                <strong>${escapeHtml(entry.anchor.textContent?.trim() || `Player ${entry.id}`)}</strong>
-                <div style="opacity:.72;margin-top:4px">FF Scouter: ${Number.isFinite(ffsFF) && ffsFF > 0 ? ffsFF.toFixed(2) : "ingen data"}</div>
+                <strong>${escapeHtml(playerName)}</strong>
+                <div style="color:#c9cbd0;margin-top:4px">
+                    FF Scouter: ${Number.isFinite(ffsFF) && ffsFF > 0 ? ffsFF.toFixed(2) : "No data"}
+                </div>
 
-                <label>Använd eget FF
+                <label>Use custom Fair Fight
                     <input data-x="use" type="checkbox" ${Number(manual?.ff) > 0 ? "checked" : ""}>
                 </label>
 
-                <label>Eget FF
-                    <input data-x="ff" type="number" min="0.1" max="20" step="0.01" value="${Number(manual?.ff) > 0 ? manual.ff : ""}">
+                <label>Custom Fair Fight
+                    <input data-x="ff" type="number" min="0.1" max="20" step="0.01"
+                           style="width:110px" value="${Number(manual?.ff) > 0 ? manual.ff : ""}">
                 </label>
 
-                <label>Battle stats
+                <label>Battle stats (optional)
                     <span style="display:flex;gap:5px">
-                        <input data-x="bs" type="number" min="0.1" step="0.1" style="width:90px" value="${bs.value}">
+                        <input data-x="bs" type="number" min="0.1" step="0.1"
+                               style="width:92px" value="${bs.value}">
                         <select data-x="unit">
                             <option value="K" ${bs.unit === "K" ? "selected" : ""}>K</option>
                             <option value="M" ${bs.unit === "M" ? "selected" : ""}>M</option>
@@ -398,14 +473,15 @@
                     </span>
                 </label>
 
-                <label>Anteckning
-                    <input data-x="note" type="text" style="width:180px" value="${escapeHtml(manual?.note || "")}">
+                <label>Note (optional)
+                    <input data-x="note" type="text" style="width:180px"
+                           value="${escapeHtml(manual?.note || "")}">
                 </label>
 
                 <div class="ks6-actions">
-                    <button data-x="clear">Rensa eget</button>
-                    <button data-x="cancel">Avbryt</button>
-                    <button data-x="save">Spara</button>
+                    <button type="button" data-x="clear">Clear custom</button>
+                    <button type="button" data-x="cancel">Cancel</button>
+                    <button type="button" data-x="save">Save</button>
                 </div>
             </div>
         `;
@@ -450,9 +526,8 @@
         row.querySelectorAll(".ks6-badge").forEach(el => el.remove());
         row.querySelectorAll(".ks6-name-host").forEach(host => {
             host.classList.remove("ks6-name-host");
-            host.style.removeProperty("background");
-            host.style.removeProperty("border-left-color");
-            host.style.removeProperty("padding");
+            host.style.removeProperty("--ks6-color");
+            host.style.removeProperty("--ks6-tint");
         });
         row.style.removeProperty("box-shadow");
         scheduleScan(0);
@@ -481,17 +556,18 @@
                 badge.remove();
                 return;
             }
-            badge.style.background = "#666";
             badge.textContent = "FF ?";
-            host.style.background = "rgba(102,102,102,.28)";
-            host.style.borderLeftColor = "#666";
+            host.style.setProperty("--ks6-color", "#666");
+            host.style.setProperty("--ks6-tint", "rgba(102,102,102,.30)");
         } else {
             const style = ffStyle(activeFF);
-            badge.style.background = style.color;
-            badge.textContent = `${source} ${activeFF.toFixed(2)}`;
+            host.style.setProperty("--ks6-color", style.color);
+            host.style.setProperty("--ks6-tint", hexToRgba(style.color, 0.38));
+
+            badge.textContent = `${source} FF ${activeFF.toFixed(2)}`;
 
             entry.row.style.removeProperty("box-shadow");
-            if (settings.showStripe) entry.row.style.boxShadow = `inset 5px 0 0 ${style.color}`;
+            if (settings.showStripe) entry.row.style.boxShadow = `inset 4px 0 0 ${style.color}`;
         }
 
         const battleStats = manual?.battleStats || data?.bs_estimate;
@@ -530,20 +606,28 @@
         panel.hidden = true;
         panel.innerHTML = `
             <strong>Kingshade Scout ${VERSION}</strong>
-            <div class="ks6-status" data-ksp="status">Väntar på scanning…</div>
+            <div class="ks6-status" data-ksp="status">Waiting for faction scan…</div>
+
             <label>FF Scouter API key
                 <input data-ksp="key" type="password" value="${escapeHtml(getApiKey())}">
             </label>
-            <label>Visa okända
+
+            <label>Show players without FF data
                 <input data-ksp="unknown" type="checkbox" ${settings.showUnknown ? "checked" : ""}>
             </label>
-            <label>Visa färgrand
+
+            <label>Show left color bar
                 <input data-ksp="stripe" type="checkbox" ${settings.showStripe ? "checked" : ""}>
             </label>
-            <div style="font-size:11px;opacity:.75;margin-top:8px">Tryck på en FFS/MAN-ruta vid en spelare för att ange eget FF och battle stats som K, M eller B.</div>
-            <button data-ksp="rescan">Scanna om factionlistan</button>
-            <button data-ksp="reset">Återställ KSP-position</button>
-            <button data-ksp="save">Spara inställningar</button>
+
+            <div class="ks6-help">
+                Tap a player's FF label to add a custom Fair Fight value, optional battle stats, or a note.
+                FF Scouter remains the default source until a custom FF is enabled.
+            </div>
+
+            <button type="button" data-ksp="rescan">Rescan faction list</button>
+            <button type="button" data-ksp="reset">Reset KSP button position</button>
+            <button type="button" data-ksp="save">Save settings</button>
         `;
 
         let dragging = false;
@@ -630,9 +714,8 @@
         document.querySelectorAll(".ks6-badge").forEach(el => el.remove());
         document.querySelectorAll(".ks6-name-host").forEach(host => {
             host.classList.remove("ks6-name-host");
-            host.style.removeProperty("background");
-            host.style.removeProperty("border-left-color");
-            host.style.removeProperty("padding");
+            host.style.removeProperty("--ks6-color");
+            host.style.removeProperty("--ks6-tint");
         });
         document.querySelectorAll("[data-ks6-applied]").forEach(row => {
             row.removeAttribute("data-ks6-applied");
@@ -643,7 +726,7 @@
     async function scan() {
         scanTimer = null;
         if (!/\/factions\.php\/?$/i.test(location.pathname)) {
-            updatePanelStatus("Öppna en factionlista för att scanna.");
+            updatePanelStatus("Open a faction member list to scan.");
             return;
         }
 
@@ -651,7 +734,7 @@
             'a[href*="profiles.php?XID="], a[href*="user2ID="], a[href*="userId="]'
         ).length;
         const rows = findRows();
-        updatePanelStatus(`${rows.size} spelarrader hittades av ${profileLinkCount} profillänkar`);
+        updatePanelStatus(`${rows.size} member rows found · ${profileLinkCount} profile links detected`);
 
         if (!rows.size) return;
 
@@ -672,13 +755,13 @@
                 entry.row.dataset.ks6Applied = VERSION;
                 entry.row.removeAttribute("data-ks6-pending");
             }
-            updatePanelStatus(`${rows.size} spelarrader · FF laddat`);
+            updatePanelStatus(`${rows.size} member rows · FF data loaded`);
         } catch (error) {
             for (const entry of fresh) {
                 entry.row.removeAttribute("data-ks6-applied");
                 entry.row.removeAttribute("data-ks6-pending");
             }
-            updatePanelStatus(`${rows.size} spelarrader · fel vid FF-hämtning`);
+            updatePanelStatus(`${rows.size} member rows · FF request failed`);
             showToast(error instanceof Error ? error.message : String(error));
         }
     }
@@ -698,6 +781,12 @@
         document.querySelectorAll(
             ".ks6-fab,.ks6-panel,.ks6-badge,.ks6-modal,.ks6-toast,.ks-scout-fab,.ks-scout-panel,.ks-scout-badge,.ks-status-timer,.ks-scout-error"
         ).forEach(el => el.remove());
+
+        document.querySelectorAll(".ks6-name-host").forEach(host => {
+            host.classList.remove("ks6-name-host");
+            host.style.removeProperty("--ks6-color");
+            host.style.removeProperty("--ks6-tint");
+        });
 
         document.querySelectorAll("[data-ks-scout-applied],[data-ks6-applied]").forEach(row => {
             row.removeAttribute("data-ks-scout-applied");
@@ -737,9 +826,8 @@
                 ).forEach(el => el.remove());
                 document.querySelectorAll(".ks6-name-host").forEach(host => {
                     host.classList.remove("ks6-name-host");
-                    host.style.removeProperty("background");
-                    host.style.removeProperty("border-left-color");
-                    host.style.removeProperty("padding");
+                    host.style.removeProperty("--ks6-color");
+                    host.style.removeProperty("--ks6-tint");
                 });
                 document.querySelectorAll("[data-ks6-applied],[data-ks6-pending]").forEach(row => {
                     row.removeAttribute("data-ks6-applied");
