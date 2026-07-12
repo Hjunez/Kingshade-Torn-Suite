@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kingshade's Card Skimming
 // @namespace    Kingshade.Torn.Suite
-// @version      1.2.1
+// @version      1.2.3-test
 // @description  Minimal location-aware Card Skimming assistant for Torn PDA.
 // @author       Kingshade
 // @license      MIT
@@ -16,14 +16,14 @@
 
     const SCRIPT = Object.freeze({
         name: "Kingshade's Card Skimming",
-        version: '1.2.1',
-        styleId: 'ks-card-skimming-v121-styles',
+        version: '1.2.3-test',
+        styleId: 'ks-card-skimming-v123-test-styles',
         globalKey: '__ksCardSkimmingAssistant'
     });
 
     const CONFIG = Object.freeze({
         thresholds: Object.freeze({
-            'Gas Station': 1300,
+            'Gas Station': 100,
             'Post Office': 870,
             'Subway Station': 415,
             'College Campus': 156
@@ -343,21 +343,30 @@
         const labels = Array.from(
             root.querySelectorAll('div, span, strong')
         ).filter(element =>
-            /^Sell Card Details\b/i.test(
-                normalizeText(element.textContent)
-            )
+            normalizeText(element.textContent) ===
+            'Sell Card Details'
         );
 
         for (const label of labels) {
-            let candidate = label;
+            let candidate = label.parentElement;
 
-            for (let depth = 0; depth < 4 && candidate; depth += 1) {
+            for (let depth = 0; depth < 5 && candidate; depth += 1) {
                 const rect = candidate.getBoundingClientRect();
+                const text = normalizeText(candidate.textContent);
+                const hasDetails =
+                    /\b[\d,]+\s+Card Details\b/i.test(text);
+                const hasControl = Boolean(
+                    candidate.querySelector(
+                        'button, [role="button"]'
+                    )
+                );
 
                 if (
-                    rect.width >= 180 &&
-                    rect.height >= 45 &&
-                    rect.height <= 180
+                    rect.width >= 250 &&
+                    rect.height >= 55 &&
+                    rect.height <= 150 &&
+                    hasDetails &&
+                    hasControl
                 ) {
                     return candidate;
                 }
@@ -434,14 +443,18 @@
         }
 
         const sellSection = findSellSection();
-        const sellTop = sellSection
-            ? sellSection.getBoundingClientRect().top
-            : Number.POSITIVE_INFINITY;
+
+        if (!sellSection) {
+            return null;
+        }
+
+        const sellRect = sellSection.getBoundingClientRect();
 
         /*
-         * Torn PDA currently renders the install action as an icon-only
-         * button directly above "Sell Card Details". Find the enabled
-         * action button closest above that section.
+         * The install control is the enabled icon button in the compact
+         * action row immediately above the Sell Card Details row.
+         * Restricting the search to this narrow band prevents carousel
+         * arrows in the header image from being selected.
          */
         const candidates = Array.from(
             root.querySelectorAll(
@@ -455,13 +468,15 @@
             }))
             .filter(({rect}) =>
                 rect.width >= 45 &&
+                rect.width <= 120 &&
                 rect.height >= 35 &&
-                rect.bottom <= sellTop + 2 &&
-                rect.bottom > sellTop - 180
+                rect.height <= 80 &&
+                rect.bottom <= sellRect.top + 4 &&
+                rect.bottom >= sellRect.top - 95 &&
+                rect.left >= sellRect.left + sellRect.width * 0.55
             )
             .sort((a, b) =>
-                b.rect.bottom - a.rect.bottom ||
-                b.rect.left - a.rect.left
+                b.rect.right - a.rect.right
             );
 
         return candidates.length
