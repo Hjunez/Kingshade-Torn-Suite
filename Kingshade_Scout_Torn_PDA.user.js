@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kingshade Scout for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.6.1
+// @version      0.6.2
 // @description  FF Scouter overlay for Torn PDA faction lists with manual FF and compact K/M/B battle-stat overrides.
 // @author       Kingshade
 // @match        https://www.torn.com/*
@@ -19,7 +19,7 @@
     }
 
     const NAME = "Kingshade Scout";
-    const VERSION = "0.6.1";
+    const VERSION = "0.6.2";
     const API_BASE = "https://ffscouter.com/api/v1";
     const PREFIX = "kingshade-scout:";
     const SETTINGS_KEY = `${PREFIX}settings`;
@@ -250,19 +250,10 @@
     }
 
     function findMemberRow(anchor) {
-        let node = anchor;
-
-        for (let depth = 0; depth < 10 && node && node !== document.body; depth++, node = node.parentElement) {
-            const text = String(node.textContent || "").trim();
-            const hasStatus = /\b(?:okay|hospital|jail|traveling|travelling|abroad|fallen)\b/i.test(text);
-            const hasSeveralCells =
-                node.children?.length >= 2 ||
-                !!node.querySelector?.(".status, [class*='status___'], [class*='level___'], [class*='member___']");
-
-            if (hasStatus && hasSeveralCells) return node;
-        }
-
-        return anchor.closest("li, .table-row, [class*='row___'], [class*='member___']");
+        return (
+            anchor.closest(".enemy, .your, .table-row, li, [class*='row___'], [class*='member___']") ||
+            anchor.parentElement
+        );
     }
 
     function findRows() {
@@ -270,7 +261,10 @@
         if (!/\/factions\.php\/?$/i.test(location.pathname)) return map;
 
         const anchors = document.querySelectorAll(
-            'a[href*="profiles.php?XID="], a[href*="user2ID="], a[href*="userId="]'
+            'a[href*="profiles.php?XID="], ' +
+            'a[href*="user2ID="], ' +
+            'a[href*="userId="], ' +
+            'a[href*="step=profile"][href*="ID="]'
         );
 
         for (const anchor of anchors) {
@@ -280,9 +274,12 @@
             const row = findMemberRow(anchor);
             if (!row) continue;
 
-            const text = String(row.textContent || "");
-            if (!/\b(?:okay|hospital|jail|traveling|travelling|abroad)\b/i.test(text)) continue;
-
+            /*
+             * This intentionally does not require status text.
+             * Torn PDA can render the name link and the status cell in
+             * separate React wrappers, which caused v0.6.0–0.6.1 to find
+             * profile links but reject every member row.
+             */
             map.set(id, { id, row, anchor });
         }
 
@@ -621,7 +618,7 @@
             'a[href*="profiles.php?XID="], a[href*="user2ID="], a[href*="userId="]'
         ).length;
         const rows = findRows();
-        updatePanelStatus(`${rows.size} rader av ${profileLinkCount} profillänkar hittades`);
+        updatePanelStatus(`${rows.size} spelarrader hittades av ${profileLinkCount} profillänkar`);
 
         if (!rows.size) return;
 
@@ -642,13 +639,13 @@
                 entry.row.dataset.ks6Applied = VERSION;
                 entry.row.removeAttribute("data-ks6-pending");
             }
-            updatePanelStatus(`${rows.size} rader av ${profileLinkCount} profillänkar · FF laddat`);
+            updatePanelStatus(`${rows.size} spelarrader · FF laddat`);
         } catch (error) {
             for (const entry of fresh) {
                 entry.row.removeAttribute("data-ks6-applied");
                 entry.row.removeAttribute("data-ks6-pending");
             }
-            updatePanelStatus(`${rows.size} rader av ${profileLinkCount} profillänkar · fel vid FF-hämtning`);
+            updatePanelStatus(`${rows.size} spelarrader · fel vid FF-hämtning`);
             showToast(error instanceof Error ? error.message : String(error));
         }
     }
