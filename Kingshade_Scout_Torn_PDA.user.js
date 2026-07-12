@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kingshade Scout for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.4.4
+// @version      0.4.5
 // @description  Lightweight FF Scouter companion for Torn PDA. Adds clear green/yellow/red target markers and estimated battle stats to faction and war lists.
 // @author       Kingshade
 // @match        https://www.torn.com/*
@@ -14,7 +14,7 @@
     "use strict";
 
     const NAME = "Kingshade Scout";
-    const VERSION = "0.4.4";
+    const VERSION = "0.4.5";
     const API_BASE = "https://ffscouter.com/api/v1";
     const CACHE_TTL_MS = 60 * 60 * 1000;
     const STORAGE_PREFIX = "kingshade-scout:";
@@ -328,10 +328,13 @@
                 !!row.querySelector(".level, [class*='level___'], [class*='lvl___']") ||
                 /\b\d{1,3}\b/.test(text);
 
-            const isProfileArea =
-                !!row.closest('[class*="profile"], .user-information, .actions-wrap, .profile-wrapper');
+            // Only reject rows that are themselves part of a player profile/action panel.
+            // Do not use row.closest("[class*=profile]") here because the entire faction page
+            // can be wrapped in a container whose class contains "profile".
+            const isDirectProfileRow =
+                row.matches('.user-information, .actions-wrap, .profile-wrapper, [class*="profileRow"], [class*="profile-row"]');
 
-            if (!hasStatus || !hasLevelLikeCell || isProfileArea) continue;
+            if (!hasStatus || !hasLevelLikeCell || isDirectProfileRow) continue;
             if (!rows.has(id)) rows.set(id, { id, row, anchor });
         }
 
@@ -517,6 +520,7 @@
         panel.hidden = true;
         panel.innerHTML = `
             <strong>Kingshade Scout ${VERSION}</strong>
+            <div data-ksp="scanstatus" style="font-size:11px;opacity:.8;margin:4px 0 8px">Faction scanner active</div>
             <label>FF Scouter API key <input data-ksp="key" type="password" autocomplete="off" value="${getFFKey()}"></label>
             <div style="font-size:11px;opacity:.75;margin:4px 0 8px">Uses FF Scouter's own Fair Fight number and exact Classic color scale automatically.</div>
             <label>Show unknown <input data-ksp="unknown" type="checkbox" ${settings.showUnknown ? "checked" : ""}></label>
@@ -820,6 +824,8 @@
         ensureStyles();
 
         const rows = findTargetRows();
+        const scanStatus = document.querySelector('[data-ksp="scanstatus"]');
+        if (scanStatus) scanStatus.textContent = `Faction scanner: ${rows.size} player rows found`;
         if (rows.size === 0) return;
 
         const freshEntries = [];
