@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kingshade Scout for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.6.2
+// @version      0.6.3
 // @description  FF Scouter overlay for Torn PDA faction lists with manual FF and compact K/M/B battle-stat overrides.
 // @author       Kingshade
 // @match        https://www.torn.com/*
@@ -19,7 +19,7 @@
     }
 
     const NAME = "Kingshade Scout";
-    const VERSION = "0.6.2";
+    const VERSION = "0.6.3";
     const API_BASE = "https://ffscouter.com/api/v1";
     const PREFIX = "kingshade-scout:";
     const SETTINGS_KEY = `${PREFIX}settings`;
@@ -291,6 +291,19 @@
         "#34e817", "#88e817", "#dbe817", "#e8a117", "#e84e17", "#e81734"
     ];
 
+    function hexToRgba(hex, alpha) {
+        const clean = String(hex || "").replace("#", "");
+        const value = clean.length === 3
+            ? clean.split("").map(ch => ch + ch).join("")
+            : clean.padEnd(6, "0").slice(0, 6);
+
+        const number = Number.parseInt(value, 16);
+        const r = (number >> 16) & 255;
+        const g = (number >> 8) & 255;
+        const b = number & 255;
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
+
     function ffStyle(ff) {
         const value = Number(ff);
         if (!Number.isFinite(value) || value <= 0) return { color: "#666", label: "UNKNOWN" };
@@ -317,9 +330,11 @@
             .ks6-panel{position:fixed;right:12px;bottom:150px;width:min(88vw,310px);padding:12px;border-radius:10px;background:#202124;color:#fff;font:13px Arial;z-index:2147483646;box-shadow:0 4px 18px rgba(0,0,0,.55)}
             .ks6-panel label{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:9px 0}
             .ks6-panel input[type=password]{width:155px;min-width:0}
-            .ks6-panel button{width:100%;margin-top:8px;padding:9px;border:0;border-radius:6px;font-weight:700}
+            .ks6-panel button{width:100%;margin-top:8px;padding:10px;border:1px solid #5b6067;border-radius:6px;background:#3a3d42!important;color:#fff!important;font-weight:800;text-shadow:none!important}
+            .ks6-panel button:active{background:#4a4f56!important}
             .ks6-status{margin:5px 0 10px;padding:7px;border-radius:6px;background:#303238;font-size:11px}
-            .ks6-badge{position:absolute!important;right:3px;bottom:2px;display:inline-flex!important;align-items:center;justify-content:center;padding:3px 5px;border-radius:4px;color:#fff!important;font:800 9px/1 Arial;white-space:nowrap;z-index:5;box-shadow:0 0 0 1px rgba(0,0,0,.45);cursor:pointer}
+            .ks6-badge{display:block!important;width:100%;box-sizing:border-box;margin-top:2px;padding:2px 5px;border-radius:3px;color:#fff!important;font:800 9px/1.15 Arial;text-align:center;white-space:nowrap;z-index:5;box-shadow:0 0 0 1px rgba(0,0,0,.35);cursor:pointer}
+            .ks6-name-host{box-sizing:border-box!important;border-left:5px solid transparent!important;border-radius:4px!important;padding:2px 3px!important;overflow:visible!important}
             .ks6-modal{position:fixed;inset:0;background:rgba(0,0,0,.74);display:flex;align-items:center;justify-content:center;z-index:2147483647}
             .ks6-card{width:min(91vw,350px);background:#202124;color:#fff;border-radius:10px;padding:14px;font:13px Arial;box-shadow:0 5px 25px rgba(0,0,0,.65)}
             .ks6-card label{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:11px 0}
@@ -341,8 +356,12 @@
     }
 
     function badgeHost(entry) {
-        const host = entry.anchor.closest(".honor-text-wrap") || entry.anchor.parentElement || entry.row;
-        if (host && getComputedStyle(host).position === "static") host.style.position = "relative";
+        const host =
+            entry.anchor.closest(".honor-text-wrap, [class*='honor'], [class*='memberName'], [class*='name___']") ||
+            entry.anchor.parentElement ||
+            entry.row;
+
+        host?.classList.add("ks6-name-host");
         return host;
     }
 
@@ -429,6 +448,12 @@
     function refreshRow(row) {
         row.removeAttribute("data-ks6-applied");
         row.querySelectorAll(".ks6-badge").forEach(el => el.remove());
+        row.querySelectorAll(".ks6-name-host").forEach(host => {
+            host.classList.remove("ks6-name-host");
+            host.style.removeProperty("background");
+            host.style.removeProperty("border-left-color");
+            host.style.removeProperty("padding");
+        });
         row.style.removeProperty("box-shadow");
         scheduleScan(0);
     }
@@ -458,6 +483,8 @@
             }
             badge.style.background = "#666";
             badge.textContent = "FF ?";
+            host.style.background = "rgba(102,102,102,.28)";
+            host.style.borderLeftColor = "#666";
         } else {
             const style = ffStyle(activeFF);
             badge.style.background = style.color;
@@ -601,6 +628,12 @@
 
     function clearRendered() {
         document.querySelectorAll(".ks6-badge").forEach(el => el.remove());
+        document.querySelectorAll(".ks6-name-host").forEach(host => {
+            host.classList.remove("ks6-name-host");
+            host.style.removeProperty("background");
+            host.style.removeProperty("border-left-color");
+            host.style.removeProperty("padding");
+        });
         document.querySelectorAll("[data-ks6-applied]").forEach(row => {
             row.removeAttribute("data-ks6-applied");
             row.style.removeProperty("box-shadow");
@@ -702,6 +735,12 @@
                 document.querySelectorAll(
                     ".ks6-fab,.ks6-panel,.ks6-badge,.ks6-modal,.ks6-toast"
                 ).forEach(el => el.remove());
+                document.querySelectorAll(".ks6-name-host").forEach(host => {
+                    host.classList.remove("ks6-name-host");
+                    host.style.removeProperty("background");
+                    host.style.removeProperty("border-left-color");
+                    host.style.removeProperty("padding");
+                });
                 document.querySelectorAll("[data-ks6-applied],[data-ks6-pending]").forEach(row => {
                     row.removeAttribute("data-ks6-applied");
                     row.removeAttribute("data-ks6-pending");
