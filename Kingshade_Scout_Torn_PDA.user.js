@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kingshade Scout for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.2.0
+// @version      0.2.1
 // @description  Lightweight FF Scouter companion for Torn PDA. Adds clear green/yellow/red target markers and estimated battle stats to faction and war lists.
 // @author       Kingshade
 // @match        https://www.torn.com/*
@@ -14,11 +14,11 @@
     "use strict";
 
     const NAME = "Kingshade Scout";
-    const VERSION = "0.2.0";
+    const VERSION = "0.2.1";
     const API_BASE = "https://ffscouter.com/api/v1";
     const CACHE_TTL_MS = 60 * 60 * 1000;
     const STORAGE_PREFIX = "kingshade-scout:";
-    const FF_KEY_STORAGE = "ffsv3-configkey";
+    const FF_KEY_STORAGE = `${STORAGE_PREFIX}ff-api-key`;
     const BATCH_SIZE = 100;
     const SETTINGS_KEY = `${STORAGE_PREFIX}settings`;
     const DEFAULT_SETTINGS = {
@@ -66,7 +66,19 @@
     }
 
     function getFFKey() {
-        return readWrappedStorage(FF_KEY_STORAGE) || "";
+        try {
+            return localStorage.getItem(FF_KEY_STORAGE) || "";
+        } catch {
+            return "";
+        }
+    }
+
+    function setFFKey(value) {
+        try {
+            const clean = String(value || "").trim();
+            if (clean) localStorage.setItem(FF_KEY_STORAGE, clean);
+            else localStorage.removeItem(FF_KEY_STORAGE);
+        } catch {}
     }
 
     function normalizeResponse(resp) {
@@ -136,7 +148,7 @@
     async function fetchBatch(ids) {
         const key = getFFKey();
         if (!key) {
-            throw new Error("No FF Scouter API key found. Open FF Scouter settings once and save your key.");
+            throw new Error("No FF Scouter API key saved. Tap KSP, paste the key, then press Apply and refresh.");
         }
 
         const query = new URLSearchParams({
@@ -273,7 +285,7 @@
             .ks-scout-fab{position:fixed;right:14px;bottom:92px;width:48px;height:48px;border:0;border-radius:50%;background:#263238;color:#fff;font:800 12px Arial;z-index:2147483646;box-shadow:0 3px 12px rgba(0,0,0,.45)}
             .ks-scout-panel{position:fixed;right:12px;bottom:150px;width:min(88vw,300px);padding:12px;border-radius:10px;background:#202124;color:#fff;font:13px Arial;z-index:2147483646;box-shadow:0 4px 18px rgba(0,0,0,.55)}
             .ks-scout-panel label{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:8px 0}
-            .ks-scout-panel input[type=number]{width:72px}
+            .ks-scout-panel input[type=number]{width:72px}.ks-scout-panel input[type=password]{width:150px;min-width:0}
             .ks-scout-panel button{width:100%;margin-top:8px;padding:8px;border:0;border-radius:6px;font-weight:700}
         `;
         (document.head || document.documentElement).appendChild(style);
@@ -366,6 +378,7 @@
         panel.hidden = true;
         panel.innerHTML = `
             <strong>Kingshade Scout ${VERSION}</strong>
+            <label>FF Scouter API key <input data-ksp="key" type="password" autocomplete="off" value="${getFFKey()}"></label>
             <label>Easy max FF <input data-ksp="easy" type="number" min="1" max="5" step="0.1" value="${settings.easyMax}"></label>
             <label>Risky max FF <input data-ksp="risky" type="number" min="1" max="8" step="0.1" value="${settings.riskyMax}"></label>
             <label>Show unknown <input data-ksp="unknown" type="checkbox" ${settings.showUnknown ? "checked" : ""}></label>
@@ -378,6 +391,7 @@
         });
 
         panel.querySelector('[data-ksp="apply"]').addEventListener("click", () => {
+            setFFKey(panel.querySelector('[data-ksp="key"]').value);
             const easy = Number(panel.querySelector('[data-ksp="easy"]').value);
             const risky = Number(panel.querySelector('[data-ksp="risky"]').value);
             settings.easyMax = Number.isFinite(easy) ? easy : DEFAULT_SETTINGS.easyMax;
@@ -467,4 +481,3 @@
 
     init();
 })();
-
