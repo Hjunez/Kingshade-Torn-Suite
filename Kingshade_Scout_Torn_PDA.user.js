@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kingshade Scout for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.2.1
+// @version      0.2.2
 // @description  Lightweight FF Scouter companion for Torn PDA. Adds clear green/yellow/red target markers and estimated battle stats to faction and war lists.
 // @author       Kingshade
 // @match        https://www.torn.com/*
@@ -14,7 +14,7 @@
     "use strict";
 
     const NAME = "Kingshade Scout";
-    const VERSION = "0.2.1";
+    const VERSION = "0.2.2";
     const API_BASE = "https://ffscouter.com/api/v1";
     const CACHE_TTL_MS = 60 * 60 * 1000;
     const STORAGE_PREFIX = "kingshade-scout:";
@@ -275,12 +275,13 @@
         const style = document.createElement("style");
         style.id = "ks-scout-styles";
         style.textContent = `
-            .ks-scout-badge{display:inline-flex!important;align-items:center;gap:3px;margin-left:5px;padding:2px 5px;border-radius:4px;font:700 10px/1.2 Arial,sans-serif;color:#fff!important;white-space:nowrap;vertical-align:middle;box-shadow:0 0 0 1px rgba(0,0,0,.35);z-index:2}
+            .ks-scout-badge{display:flex!important;align-items:center;justify-content:center;gap:4px;margin:3px 0 0;padding:4px 7px;border-radius:5px;font:800 11px/1.15 Arial,sans-serif;color:#fff!important;white-space:nowrap;box-shadow:0 0 0 1px rgba(0,0,0,.45);z-index:2;max-width:100%;overflow:hidden;text-overflow:ellipsis}
             .ks-scout-badge[data-state="loading"]{background:#555;opacity:.8}
-            .ks-scout-badge .ks-scout-stats{font-weight:600;opacity:.95}
-            .ks-scout-row-easy{box-shadow:inset 4px 0 0 #2e9d52!important}
-            .ks-scout-row-risky{box-shadow:inset 4px 0 0 #d6a20b!important}
-            .ks-scout-row-avoid{box-shadow:inset 4px 0 0 #d24444!important}
+            .ks-scout-badge .ks-scout-stats{font-weight:700;opacity:.98}
+            .ks-scout-row-easy{background:linear-gradient(90deg,rgba(46,157,82,.34),rgba(46,157,82,.08) 48%,transparent 78%)!important;box-shadow:inset 6px 0 0 #2e9d52!important}
+            .ks-scout-row-risky{background:linear-gradient(90deg,rgba(214,162,11,.34),rgba(214,162,11,.08) 48%,transparent 78%)!important;box-shadow:inset 6px 0 0 #d6a20b!important}
+            .ks-scout-row-avoid{background:linear-gradient(90deg,rgba(210,68,68,.38),rgba(210,68,68,.09) 48%,transparent 78%)!important;box-shadow:inset 6px 0 0 #d24444!important}
+            .ks-scout-row-unknown{background:linear-gradient(90deg,rgba(102,102,102,.25),rgba(102,102,102,.05) 48%,transparent 78%)!important;box-shadow:inset 6px 0 0 #666!important}
             .ks-scout-error{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);max-width:min(92vw,520px);padding:9px 12px;border-radius:7px;background:#b3261e;color:#fff;font:600 12px/1.35 Arial,sans-serif;z-index:2147483647;box-shadow:0 3px 12px rgba(0,0,0,.35)}
             .ks-scout-fab{position:fixed;right:14px;bottom:92px;width:48px;height:48px;border:0;border-radius:50%;background:#263238;color:#fff;font:800 12px Arial;z-index:2147483646;box-shadow:0 3px 12px rgba(0,0,0,.45)}
             .ks-scout-panel{position:fixed;right:12px;bottom:150px;width:min(88vw,300px);padding:12px;border-radius:10px;background:#202124;color:#fff;font:13px Arial;z-index:2147483646;box-shadow:0 4px 18px rgba(0,0,0,.55)}
@@ -327,7 +328,7 @@
             host.appendChild(badge);
         }
 
-        entry.row.classList.remove("ks-scout-row-easy", "ks-scout-row-risky", "ks-scout-row-avoid");
+        entry.row.classList.remove("ks-scout-row-easy", "ks-scout-row-risky", "ks-scout-row-avoid", "ks-scout-row-unknown");
 
         if (!data || data.no_data) {
             if (!settings.showUnknown) {
@@ -338,6 +339,7 @@
             badge.style.background = "#666";
             badge.textContent = "● UNKNOWN";
             badge.title = "FF Scouter has no battle-stat estimate for this player.";
+            if (settings.markRows) entry.row.classList.add("ks-scout-row-unknown");
             return;
         }
 
@@ -351,6 +353,13 @@
             if (rating.label === "EASY") entry.row.classList.add("ks-scout-row-easy");
             if (rating.label === "RISKY") entry.row.classList.add("ks-scout-row-risky");
             if (rating.label === "AVOID") entry.row.classList.add("ks-scout-row-avoid");
+
+            const memberCell = entry.anchor.closest(".member, [class*='member___'], .table-cell") || entry.anchor.parentElement;
+            if (memberCell) {
+                memberCell.style.borderRadius = "4px";
+                memberCell.style.paddingTop = "2px";
+                memberCell.style.paddingBottom = "2px";
+            }
         }
     }
 
@@ -382,7 +391,7 @@
             <label>Easy max FF <input data-ksp="easy" type="number" min="1" max="5" step="0.1" value="${settings.easyMax}"></label>
             <label>Risky max FF <input data-ksp="risky" type="number" min="1" max="8" step="0.1" value="${settings.riskyMax}"></label>
             <label>Show unknown <input data-ksp="unknown" type="checkbox" ${settings.showUnknown ? "checked" : ""}></label>
-            <label>Mark rows <input data-ksp="rows" type="checkbox" ${settings.markRows ? "checked" : ""}></label>
+            <label>Highlight full rows <input data-ksp="rows" type="checkbox" ${settings.markRows ? "checked" : ""}></label>
             <button data-ksp="apply">Apply and refresh</button>
         `;
 
