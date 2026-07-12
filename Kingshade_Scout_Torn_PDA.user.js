@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kingshade Scout for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.6.7
+// @version      0.6.8
 // @description  Mobile FF Scouter overlay for Torn PDA faction member lists with optional manual overrides.
 // @author       Kingshade
 // @match        https://www.torn.com/*
@@ -19,7 +19,7 @@
     }
 
     const NAME = "Kingshade Scout";
-    const VERSION = "0.6.7";
+    const VERSION = "0.6.8";
     const API_BASE = "https://ffscouter.com/api/v1";
     const PREFIX = "kingshade-scout:";
     const SETTINGS_KEY = `${PREFIX}settings`;
@@ -272,63 +272,93 @@
         return ids;
     }
 
-    function findMemberCell(element, kind) {
-        return element?.querySelector?.(
-            `.table-cell.${kind}, [class~="${kind}"][class*="table-cell"], [class*="${kind}___"]`
-        ) || null;
+    function findMembersHeader() {
+        const candidates = document.querySelectorAll(
+            "div, span, li, strong, h1, h2, h3, h4"
+        );
+
+        const matches = [];
+
+        for (const element of candidates) {
+            const text = normalizedText(element);
+            if (!/^\d{1,4}\s*\/\s*\d{1,4}\s+members$/i.test(text)) continue;
+
+            const rect = element.getBoundingClientRect();
+            matches.push({
+                element,
+                area: Math.max(1, rect.width * rect.height),
+                depth: (() => {
+                    let value = 0;
+                    for (let node = element; node; node = node.parentElement) value++;
+                    return value;
+                })()
+            });
+        }
+
+        // Prefer the smallest/deepest exact text node instead of a large page wrapper.
+        matches.sort((a, b) => a.area - b.area || b.depth - a.depth);
+        return matches[0]?.element || null;
     }
 
-    function looksLikeMemberRow(element, playerId) {
+    function findMemberRow(anchor) {
+        return (
+            anchor.closest(".enemy, .your, .table-row, li, [class*='row___'], [class*='member___']") ||
+            anchor.parentElement
+        );
+    }
+
+    function looksLikeMemberRow(element, playerId, headerBottom) {
         if (!element || element === document.body) return false;
 
-        // Validate the actual Torn member-table structure. Requiring dedicated
-        // Days and Status cells prevents faction News, Leader and Co-leader
-        // links from ever being treated as member rows.
-        const daysCell = findMemberCell(element, "days");
-        const statusCell = findMemberCell(element, "status");
-        if (!daysCell || !statusCell) return false;
+        const rect = element.getBoundingClientRect();
 
-        if (!/^\d{1,5}$/.test(normalizedText(daysCell))) return false;
-        if (!MEMBER_STATUS_PATTERN.test(normalizedText(statusCell))) return false;
+        // Leader, co-leader and faction news are above the member-table header.
+        if (Number.isFinite(headerBottom) && rect.top < headerBottom - 2) return false;
 
+        const text = normalizedText(element);
+        if (!MEMBER_STATUS_PATTERN.test(text)) return false;
+
+        // A faction member row shows level and days, so it must contain at
+        // least two ordinary numeric values.
+        const numericTokens = text.match(/\b\d{1,5}\b/g) || [];
+        if (numericTokens.length < 2) return false;
+
+        // The smallest row wrapper must belong to one unique player.
         const ids = profileIdsInside(element);
         if (ids.size !== 1 || !ids.has(playerId)) return false;
 
         return true;
     }
 
-    function findMemberRow(anchor, playerId) {
-        let node = anchor.parentElement;
-
-        // Return the smallest ancestor containing this player's complete
-        // member-row cells. Torn PDA currently renders each member as an <li>,
-        // but the structural cell check also survives wrapper-class changes.
-        for (let depth = 0; depth < 12 && node && node !== document.body; depth++, node = node.parentElement) {
-            if (looksLikeMemberRow(node, playerId)) return node;
-        }
-
-        return null;
-    }
-
     function findRows() {
         const map = new Map();
         if (!/\/factions\.php\/?$/i.test(location.pathname)) {
-            return { rows: map, profileLinks: 0 };
+            return { rows: map, profileLinks: 0, headerFound: false };
         }
 
+        const header = findMembersHeader();
+        const headerBottom = header?.getBoundingClientRect().bottom;
         const anchors = document.querySelectorAll(PROFILE_SELECTOR);
 
         for (const anchor of anchors) {
             const id = extractPlayerId(anchor);
             if (!id || map.has(id)) continue;
 
-            const row = findMemberRow(anchor, id);
-            if (!row) continue;
+            // Do not even inspect links located above the member-list header.
+            const anchorRect = anchor.getBoundingClientRect();
+            if (header && anchorRect.top < headerBottom - 2) continue;
+
+            const row = findMemberRow(anchor);
+            if (!looksLikeMemberRow(row, id, headerBottom)) continue;
 
             map.set(id, { id, row, anchor });
         }
 
-        return { rows: map, profileLinks: anchors.length };
+        return {
+            rows: map,
+            profileLinks: anchors.length,
+            headerFound: Boolean(header)
+        };
     }
 
     const FF_PALETTE = [
@@ -851,7 +881,7 @@
         const result = findRows();
         const rows = result.rows;
 
-        updatePanelStatus(`${rows.size} member rows found · ${result.profileLinks} profile links detected`);
+        updatePanelStatus(`${rows.size} member rows found · ${result.profileLinks} profile links · member header ${result.headerFound ? "found" : "not found"}`);
 
         if (!rows.size) {
             // Torn sometimes rebuilds the member table in stages. Leave the
