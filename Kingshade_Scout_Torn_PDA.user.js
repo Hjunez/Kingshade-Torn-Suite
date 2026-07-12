@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kingshade Scout for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.2.3
+// @version      0.4.0
 // @description  Lightweight FF Scouter companion for Torn PDA. Adds clear green/yellow/red target markers and estimated battle stats to faction and war lists.
 // @author       Kingshade
 // @match        https://www.torn.com/*
@@ -14,7 +14,7 @@
     "use strict";
 
     const NAME = "Kingshade Scout";
-    const VERSION = "0.2.3";
+    const VERSION = "0.4.0";
     const API_BASE = "https://ffscouter.com/api/v1";
     const CACHE_TTL_MS = 60 * 60 * 1000;
     const STORAGE_PREFIX = "kingshade-scout:";
@@ -22,10 +22,13 @@
     const BATCH_SIZE = 100;
     const SETTINGS_KEY = `${STORAGE_PREFIX}settings`;
     const DEFAULT_SETTINGS = {
-        easyMax: 4.0,
-        riskyMax: 5.0,
+        ownBattleScore: 0,
+        easyRatio: 0.75,
+        cautionRatio: 1.05,
         showUnknown: true,
-        markRows: true
+        markRows: true,
+        buttonX: null,
+        buttonY: null
     };
     let settings = loadSettings();
 
@@ -40,12 +43,10 @@
         try {
             const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
 
-            // Migrate the incorrect v0.2.1/v0.2.2 defaults.
-            if (Number(saved.easyMax) === 2 && Number(saved.riskyMax) === 3.5) {
-                saved.easyMax = 4.0;
-                saved.riskyMax = 5.0;
-                localStorage.setItem(SETTINGS_KEY, JSON.stringify(saved));
-            }
+            // Migrate older FF-threshold settings to player-relative comparison.
+            if (!Number(saved.ownBattleScore)) saved.ownBattleScore = 0;
+            if (!Number(saved.easyRatio)) saved.easyRatio = 0.75;
+            if (!Number(saved.cautionRatio)) saved.cautionRatio = 1.05;
 
             return { ...DEFAULT_SETTINGS, ...saved };
         } catch {
@@ -57,6 +58,16 @@
         try {
             localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
         } catch {}
+    }
+
+    function hasOwnBattleScore() {
+        return Number(settings.ownBattleScore) > 0;
+    }
+
+    function saveButtonPosition(x, y) {
+        settings.buttonX = Math.max(8, Math.min(window.innerWidth - 56, x));
+        settings.buttonY = Math.max(70, Math.min(window.innerHeight - 140, y));
+        saveSettings();
     }
 
     function readWrappedStorage(key) {
@@ -272,11 +283,25 @@
         return rows;
     }
 
-    function classify(ff) {
-        if (!Number.isFinite(ff)) return { label: "UNKNOWN", color: "#666", icon: "●" };
-        if (ff <= settings.easyMax) return { label: "LIKELY WIN", color: "#2e9d52", icon: "▼" };
-        if (ff <= settings.riskyMax) return { label: "CAUTION", color: "#d6a20b", icon: "◆" };
-        return { label: "TOO STRONG", color: "#d24444", icon: "▲" };
+    function classify(data) {
+        const target = Number(data?.bs_estimate);
+        const own = Number(settings.ownBattleScore);
+
+        if (!Number.isFinite(target) || target <= 0 || !Number.isFinite(own) || own <= 0) {
+            return { label: "UNKNOWN", color: "#666", icon: "●", ratio: null };
+        }
+
+        const ratio = target / own;
+
+        if (ratio <= settings.easyRatio) {
+            return { label: "LIKELY WIN", color: "#2e9d52", icon: "▼", ratio };
+        }
+
+        if (ratio <= settings.cautionRatio) {
+            return { label: "CAUTION", color: "#d6a20b", icon: "◆", ratio };
+        }
+
+        return { label: "TOO STRONG", color: "#d24444", icon: "▲", ratio };
     }
 
     function ensureStyles() {
@@ -292,10 +317,18 @@
             .ks-scout-row-avoid{background:linear-gradient(90deg,rgba(210,68,68,.38),rgba(210,68,68,.09) 48%,transparent 78%)!important;box-shadow:inset 6px 0 0 #d24444!important}
             .ks-scout-row-unknown{background:linear-gradient(90deg,rgba(102,102,102,.25),rgba(102,102,102,.05) 48%,transparent 78%)!important;box-shadow:inset 6px 0 0 #666!important}
             .ks-scout-error{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);max-width:min(92vw,520px);padding:9px 12px;border-radius:7px;background:#b3261e;color:#fff;font:600 12px/1.35 Arial,sans-serif;z-index:2147483647;box-shadow:0 3px 12px rgba(0,0,0,.35)}
-            .ks-scout-fab{position:fixed;right:14px;bottom:92px;width:48px;height:48px;border:0;border-radius:50%;background:#263238;color:#fff;font:800 12px Arial;z-index:2147483646;box-shadow:0 3px 12px rgba(0,0,0,.45)}
+            .ks-scout-fab{position:fixed;right:14px;bottom:92px;width:48px;height:48px;border:0;border-radius:50%;background:#263238;color:#fff;font:800 12px Arial;z-index:2147483646;box-shadow:0 3px 12px rgba(0,0,0,.45);touch-action:none;user-select:none}
+            .ks-scout-fab.ks-dragging{opacity:.85;transform:scale(1.06)}
+            .ks-scout-setup{margin:8px 0;padding:8px;border-radius:6px;background:#5b3a00;color:#ffd98a;font-weight:700}
+            .ks-status-timer{display:inline-flex!important;align-items:center;gap:3px;margin-left:5px;padding:2px 5px;border-radius:4px;background:#37474f;color:#fff!important;font:700 10px/1.15 Arial,sans-serif;white-space:nowrap;vertical-align:middle;box-shadow:0 0 0 1px rgba(0,0,0,.3)}
+            .ks-status-timer[data-state="hospital"]{background:#9c2c2c}
+            .ks-status-timer[data-state="jail"]{background:#705020}
+            .ks-status-timer[data-state="traveling"]{background:#2e5d8a}
+            .ks-status-timer[data-state="abroad"]{background:#5b4a86}
+            .ks-status-ready{background:#2e9d52!important}
             .ks-scout-panel{position:fixed;right:12px;bottom:150px;width:min(88vw,300px);padding:12px;border-radius:10px;background:#202124;color:#fff;font:13px Arial;z-index:2147483646;box-shadow:0 4px 18px rgba(0,0,0,.55)}
             .ks-scout-panel label{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:8px 0}
-            .ks-scout-panel input[type=number]{width:72px}.ks-scout-panel input[type=password]{width:150px;min-width:0}
+            .ks-scout-panel input[type=number]{width:92px}.ks-scout-panel input[type=password]{width:150px;min-width:0}
             .ks-scout-panel button{width:100%;margin-top:8px;padding:8px;border:0;border-radius:6px;font-weight:700}
         `;
         (document.head || document.documentElement).appendChild(style);
@@ -347,16 +380,19 @@
             badge.dataset.state = "unknown";
             badge.style.background = "#666";
             badge.textContent = "● UNKNOWN";
-            badge.title = "FF Scouter has no battle-stat estimate for this player.";
+            badge.title = !hasOwnBattleScore()
+                ? "Enter your own battle score in KSP settings."
+                : "FF Scouter has no battle-stat estimate for this player.";
             if (settings.markRows) entry.row.classList.add("ks-scout-row-unknown");
             return;
         }
 
-        const rating = classify(data.fair_fight);
+        const rating = classify(data);
         badge.dataset.state = rating.label.toLowerCase();
         badge.style.background = rating.color;
-        badge.innerHTML = `${rating.icon} ${rating.label} <span class="ks-scout-stats">${escapeHtml(data.bs_estimate_human)}</span>`;
-        badge.title = `Fair Fight: ${data.fair_fight.toFixed(2)} | Estimated battle stats: ${data.bs_estimate_human} | Source: ${data.source}`;
+        const pct = rating.ratio === null ? "?" : `${Math.round(rating.ratio * 100)}%`;
+        badge.innerHTML = `${rating.icon} ${rating.label} <span class="ks-scout-stats">${escapeHtml(data.bs_estimate_human)} · ${pct}</span>`;
+        badge.title = `Target estimate: ${data.bs_estimate_human} | Your score: ${formatNumber(settings.ownBattleScore)} | Target is ${pct} of your score | FF: ${data.fair_fight.toFixed(2)} | Source: ${data.source}`;
 
         if (settings.markRows) {
             if (rating.label === "LIKELY WIN") entry.row.classList.add("ks-scout-row-easy");
@@ -391,36 +427,105 @@
         button.textContent = "KSP";
         button.title = "Kingshade Scout settings";
 
+        if (Number.isFinite(Number(settings.buttonX)) && Number.isFinite(Number(settings.buttonY))) {
+            button.style.left = `${settings.buttonX}px`;
+            button.style.top = `${settings.buttonY}px`;
+            button.style.right = "auto";
+            button.style.bottom = "auto";
+        }
+
         const panel = document.createElement("div");
         panel.className = "ks-scout-panel";
         panel.hidden = true;
         panel.innerHTML = `
             <strong>Kingshade Scout ${VERSION}</strong>
+            ${hasOwnBattleScore() ? "" : '<div class="ks-scout-setup">Enter your own battle score before using target colors.</div>'}
             <label>FF Scouter API key <input data-ksp="key" type="password" autocomplete="off" value="${getFFKey()}"></label>
-            <label>Likely win max FF <input data-ksp="easy" type="number" min="1" max="5" step="0.1" value="${settings.easyMax}"></label>
-            <label>Caution max FF <input data-ksp="risky" type="number" min="1" max="8" step="0.1" value="${settings.riskyMax}"></label>
+            <label>Your battle score <input data-ksp="ownbs" type="number" min="1" step="1000" value="${settings.ownBattleScore || ""}"></label>
+            <label>Green up to <input data-ksp="easy" type="number" min="0.1" max="2" step="0.05" value="${settings.easyRatio}"></label>
+            <label>Yellow up to <input data-ksp="risky" type="number" min="0.1" max="3" step="0.05" value="${settings.cautionRatio}"></label>
+            <div style="font-size:11px;opacity:.75;margin:4px 0 8px">Green/yellow/red is based on target battle score compared with yours. 0.75 = 75%.</div>
             <label>Show unknown <input data-ksp="unknown" type="checkbox" ${settings.showUnknown ? "checked" : ""}></label>
             <label>Highlight full rows <input data-ksp="rows" type="checkbox" ${settings.markRows ? "checked" : ""}></label>
             <button data-ksp="apply">Apply and refresh</button>
         `;
 
-        button.addEventListener("click", () => {
-            panel.hidden = !panel.hidden;
+        let dragging = false;
+        let moved = false;
+        let startX = 0;
+        let startY = 0;
+        let startLeft = 0;
+        let startTop = 0;
+
+        button.addEventListener("pointerdown", event => {
+            dragging = true;
+            moved = false;
+            button.setPointerCapture?.(event.pointerId);
+
+            const rect = button.getBoundingClientRect();
+            startX = event.clientX;
+            startY = event.clientY;
+            startLeft = rect.left;
+            startTop = rect.top;
+
+            button.style.left = `${rect.left}px`;
+            button.style.top = `${rect.top}px`;
+            button.style.right = "auto";
+            button.style.bottom = "auto";
+            button.classList.add("ks-dragging");
         });
+
+        button.addEventListener("pointermove", event => {
+            if (!dragging) return;
+
+            const dx = event.clientX - startX;
+            const dy = event.clientY - startY;
+            if (Math.abs(dx) > 4 || Math.abs(dy) > 4) moved = true;
+
+            const x = Math.max(8, Math.min(window.innerWidth - 56, startLeft + dx));
+            const y = Math.max(70, Math.min(window.innerHeight - 140, startTop + dy));
+
+            button.style.left = `${x}px`;
+            button.style.top = `${y}px`;
+        });
+
+        const finishDrag = event => {
+            if (!dragging) return;
+            dragging = false;
+            button.classList.remove("ks-dragging");
+
+            if (moved) {
+                const rect = button.getBoundingClientRect();
+                saveButtonPosition(rect.left, rect.top);
+            } else {
+                panel.hidden = !panel.hidden;
+            }
+
+            try {
+                button.releasePointerCapture?.(event.pointerId);
+            } catch {}
+        };
+
+        button.addEventListener("pointerup", finishDrag);
+        button.addEventListener("pointercancel", finishDrag);
 
         panel.querySelector('[data-ksp="apply"]').addEventListener("click", () => {
             setFFKey(panel.querySelector('[data-ksp="key"]').value);
+
+            const ownbs = Number(panel.querySelector('[data-ksp="ownbs"]').value);
             const easy = Number(panel.querySelector('[data-ksp="easy"]').value);
             const risky = Number(panel.querySelector('[data-ksp="risky"]').value);
-            settings.easyMax = Number.isFinite(easy) ? easy : DEFAULT_SETTINGS.easyMax;
-            settings.riskyMax = Number.isFinite(risky) ? Math.max(risky, settings.easyMax) : DEFAULT_SETTINGS.riskyMax;
+
+            settings.ownBattleScore = Number.isFinite(ownbs) && ownbs > 0 ? ownbs : 0;
+            settings.easyRatio = Number.isFinite(easy) ? easy : DEFAULT_SETTINGS.easyRatio;
+            settings.cautionRatio = Number.isFinite(risky) ? Math.max(risky, settings.easyRatio) : DEFAULT_SETTINGS.cautionRatio;
             settings.showUnknown = panel.querySelector('[data-ksp="unknown"]').checked;
             settings.markRows = panel.querySelector('[data-ksp="rows"]').checked;
             saveSettings();
 
             document.querySelectorAll("[data-ks-scout-applied]").forEach(el => {
                 el.removeAttribute("data-ks-scout-applied");
-                el.classList.remove("ks-scout-row-easy", "ks-scout-row-risky", "ks-scout-row-avoid");
+                el.classList.remove("ks-scout-row-easy", "ks-scout-row-risky", "ks-scout-row-avoid", "ks-scout-row-unknown");
                 el.querySelectorAll(".ks-scout-badge").forEach(b => b.remove());
             });
 
@@ -429,6 +534,207 @@
         });
 
         document.body.append(button, panel);
+
+        if (!hasOwnBattleScore()) {
+            setTimeout(() => {
+                panel.hidden = false;
+            }, 600);
+        }
+    }
+
+
+    const statusTimers = new Map();
+    let timerInterval = null;
+
+    function parseAbsoluteTimestamp(value) {
+        if (value === null || value === undefined || value === "") return null;
+
+        const numeric = Number(value);
+        if (Number.isFinite(numeric)) {
+            if (numeric > 1e12) return Math.floor(numeric / 1000);
+            if (numeric > 1e9) return Math.floor(numeric);
+        }
+
+        const parsed = Date.parse(String(value));
+        if (Number.isFinite(parsed)) return Math.floor(parsed / 1000);
+        return null;
+    }
+
+    function parseDurationSeconds(text) {
+        if (!text) return null;
+        const normalized = String(text).toLowerCase();
+
+        const clock = normalized.match(/\b(?:(\d+):)?(\d{1,2}):(\d{2})\b/);
+        if (clock) {
+            const hours = Number(clock[1] || 0);
+            const minutes = Number(clock[2] || 0);
+            const seconds = Number(clock[3] || 0);
+            return hours * 3600 + minutes * 60 + seconds;
+        }
+
+        let total = 0;
+        let matched = false;
+        const parts = [
+            [/(\d+)\s*(?:d|day|days)\b/, 86400],
+            [/(\d+)\s*(?:h|hr|hrs|hour|hours)\b/, 3600],
+            [/(\d+)\s*(?:m|min|mins|minute|minutes)\b/, 60],
+            [/(\d+)\s*(?:s|sec|secs|second|seconds)\b/, 1]
+        ];
+
+        for (const [regex, multiplier] of parts) {
+            const match = normalized.match(regex);
+            if (match) {
+                total += Number(match[1]) * multiplier;
+                matched = true;
+            }
+        }
+
+        return matched ? total : null;
+    }
+
+    function inferStatus(row) {
+        const statusEl =
+            row.querySelector(".status") ||
+            row.querySelector('[class*="status___"]') ||
+            row.querySelector('[class*="statusWrap"]') ||
+            row.querySelector('[aria-label*="Hospital"], [aria-label*="Jail"], [aria-label*="Travel"], [aria-label*="Abroad"]');
+
+        if (!statusEl) return null;
+
+        const text = [
+            statusEl.textContent,
+            statusEl.getAttribute("aria-label"),
+            statusEl.getAttribute("title"),
+            statusEl.dataset?.status,
+            statusEl.dataset?.state
+        ].filter(Boolean).join(" ").toLowerCase();
+
+        if (text.includes("hospital")) return { state: "hospital", label: "Hospital", element: statusEl };
+        if (text.includes("jail")) return { state: "jail", label: "Jail", element: statusEl };
+        if (text.includes("travel")) return { state: "traveling", label: "Traveling", element: statusEl };
+        if (text.includes("abroad") || text.includes("in ")) return { state: "abroad", label: "Abroad", element: statusEl };
+        return null;
+    }
+
+    function findStatusUntil(row, statusEl) {
+        const candidates = [
+            statusEl?.dataset?.until,
+            statusEl?.dataset?.timestamp,
+            statusEl?.dataset?.time,
+            statusEl?.getAttribute("data-until"),
+            statusEl?.getAttribute("data-timestamp"),
+            row.dataset?.until,
+            row.dataset?.timestamp,
+            row.dataset?.statusUntil,
+            row.getAttribute("data-until"),
+            row.getAttribute("data-status-until")
+        ];
+
+        const timeEl = statusEl?.querySelector?.("time") || row.querySelector("time");
+        if (timeEl) {
+            candidates.push(
+                timeEl.getAttribute("datetime"),
+                timeEl.getAttribute("data-until"),
+                timeEl.getAttribute("data-timestamp")
+            );
+        }
+
+        for (const candidate of candidates) {
+            const ts = parseAbsoluteTimestamp(candidate);
+            if (ts && ts > Date.now() / 1000 - 5) return ts;
+        }
+
+        const sourceText = [
+            statusEl?.textContent,
+            statusEl?.getAttribute?.("aria-label"),
+            statusEl?.getAttribute?.("title"),
+            row.getAttribute("aria-label"),
+            row.getAttribute("title")
+        ].filter(Boolean).join(" ");
+
+        const duration = parseDurationSeconds(sourceText);
+        if (duration && duration > 0) {
+            return Math.floor(Date.now() / 1000) + duration;
+        }
+
+        return null;
+    }
+
+    function formatCountdown(seconds) {
+        const s = Math.max(0, Math.floor(seconds));
+        const days = Math.floor(s / 86400);
+        const hours = Math.floor((s % 86400) / 3600);
+        const minutes = Math.floor((s % 3600) / 60);
+        const secs = s % 60;
+
+        if (days > 0) return `${days}d ${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+        if (hours > 0) return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+        return `${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+    }
+
+    function ensureStatusTimer(entry) {
+        const status = inferStatus(entry.row);
+        const old = entry.row.querySelector(`.ks-status-timer[data-player-id="${entry.id}"]`);
+
+        if (!status) {
+            old?.remove();
+            statusTimers.delete(entry.id);
+            return;
+        }
+
+        let timer = old;
+        if (!timer) {
+            timer = document.createElement("span");
+            timer.className = "ks-status-timer";
+            timer.dataset.playerId = String(entry.id);
+            const host = status.element.parentElement || status.element;
+            host.appendChild(timer);
+        }
+
+        timer.dataset.state = status.state;
+        const until = findStatusUntil(entry.row, status.element);
+
+        if (until) {
+            statusTimers.set(entry.id, { timer, until, label: status.label });
+            updateOneStatusTimer(entry.id);
+        } else {
+            statusTimers.delete(entry.id);
+            timer.textContent = status.label;
+            timer.title = `No exact end time was found in the page data for ${status.label.toLowerCase()}.`;
+        }
+    }
+
+    function updateOneStatusTimer(id) {
+        const item = statusTimers.get(id);
+        if (!item) return;
+
+        if (!item.timer.isConnected) {
+            statusTimers.delete(id);
+            return;
+        }
+
+        const remaining = item.until - Math.floor(Date.now() / 1000);
+        if (remaining <= 0) {
+            item.timer.dataset.state = "ready";
+            item.timer.classList.add("ks-status-ready");
+            item.timer.textContent = "Okay";
+            item.timer.title = "The saved timer has expired. Reload to verify current status.";
+            statusTimers.delete(id);
+            return;
+        }
+
+        item.timer.classList.remove("ks-status-ready");
+        item.timer.textContent = `${item.label} · ${formatCountdown(remaining)}`;
+        item.timer.title = `Estimated time remaining until this status ends: ${formatCountdown(remaining)}`;
+    }
+
+    function startStatusTicker() {
+        if (timerInterval) return;
+        timerInterval = setInterval(() => {
+            for (const id of Array.from(statusTimers.keys())) {
+                updateOneStatusTimer(id);
+            }
+        }, 1000);
     }
 
     async function scan() {
@@ -440,11 +746,15 @@
 
         const freshEntries = [];
         for (const entry of rows.values()) {
+            ensureStatusTimer(entry);
+
             if (entry.row.dataset.ksScoutApplied === "1" || entry.row.dataset.ksScoutApplied === "pending") continue;
             entry.row.dataset.ksScoutApplied = "pending";
             renderLoading(entry);
             freshEntries.push(entry);
         }
+
+        startStatusTicker();
 
         if (freshEntries.length === 0) return;
 
@@ -489,6 +799,7 @@
 
         ensureStyles();
         ensureControlPanel();
+        startStatusTicker();
         startObserver();
         window.addEventListener("popstate", resetOnNavigation);
         window.addEventListener("hashchange", resetOnNavigation);
