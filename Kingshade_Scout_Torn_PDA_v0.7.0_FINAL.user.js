@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Kingshade Scout for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.7.4
-// @description  Active-page-only FF Scouter overlay for Torn PDA faction lists with estimate fallbacks and manual overrides.
+// @version      0.7.5
+// @description  Coordinated Scout Core for Torn PDA with FF/EST, faction status data, and shared War Tools integration.
 // @author       Kingshade
 // @match        https://www.torn.com/*
 // @connect      ffscouter.com
@@ -28,7 +28,7 @@
     }
 
     const NAME = "Kingshade Scout PDA";
-    const VERSION = "0.7.4";
+    const VERSION = "0.7.5";
     const API_BASE = "https://ffscouter.com/api/v1";
     const TORN_API_BASE = "https://api.torn.com";
     const PREFIX = "kingshade-scout:";
@@ -37,8 +37,15 @@
     const MANUAL_PREFIX = `${PREFIX}manual:`;
     const PROFILE_EST_PREFIX = `${PREFIX}profile-estimate:`;
     const CACHE_PREFIX = `${PREFIX}cache:`;
+    const STATUS_STORAGE_KEY = `${PREFIX}status-core`;
+    const TRAVEL_ACTIVE_KEY = `${PREFIX}travel-active`;
+    const TRAVEL_HISTORY_KEY = `${PREFIX}travel-history`;
+    const CORE_WINDOW_KEY = "__kingshadeScoutCore";
+    const STATUS_EVENT = "kingshade-scout:status-update";
+    const WAR_READY_EVENT = "kingshade-war-tools:ready";
     const CACHE_MS = 60 * 60 * 1000;
     const FACTION_DIRECTORY_MS = 5 * 60 * 1000;
+    const STATUS_REFRESH_MS = 30 * 1000;
     const OLD_ESTIMATE_SECONDS = 14 * 24 * 60 * 60;
 
     const DEFAULTS = {
@@ -58,9 +65,14 @@
     let resumeScanWhenVisible = false;
     let observerConnected = false;
     let destroyed = false;
+    let statusTimer = null;
+    let statusRequestRunning = false;
     const activeRequestAborts = new Set();
     const OBSERVER_OPTIONS = { childList: true, subtree: true };
-    const onRouteChange = () => scheduleScan(200);
+    const onRouteChange = () => {
+        scheduleStatusRefresh(200);
+        scheduleScan(200);
+    };
 
     function isPageVisible() {
         return document.visibilityState === "visible" && !document.hidden;
@@ -509,6 +521,314 @@
         return bestId;
     }
 
+
+    const TRAVEL_TIMES_MINUTES = Object.freeze({
+        Mexico: { standard: 26, light_aircraft: 18, wlt: 13, business: 8 },
+        "Cayman Islands": { standard: 35, light_aircraft: 25, wlt: 18, business: 11 },
+        Canada: { standard: 41, light_aircraft: 29, wlt: 20, business: 12 },
+        Hawaii: { standard: 134, light_aircraft: 94, wlt: 67, business: 40 },
+        "United Kingdom": { standard: 159, light_aircraft: 111, wlt: 80, business: 48 },
+        Argentina: { standard: 167, light_aircraft: 117, wlt: 83, business: 50 },
+        Switzerland: { standard: 175, light_aircraft: 123, wlt: 88, business: 53 },
+        Japan: { standard: 225, light_aircraft: 158, wlt: 113, business: 68 },
+        China: { standard: 242, light_aircraft: 169, wlt: 121, business: 72 },
+        "United Arab Emirates": { standard: 271, light_aircraft: 190, wlt: 135, business: 81 },
+        "South Africa": { standard: 297, light_aircraft: 208, wlt: 149, business: 89 }
+    });
+
+    function readStoredJson(key, fallback = null) {
+        try {
+            const value = JSON.parse(localStorage.getItem(key) || "null");
+            return value ?? fallback;
+        } catch {
+            return fallback;
+        }
+    }
+
+    function writeStoredJson(key, value) {
+        try {
+            localStorage.setItem(key, JSON.stringify(value));
+        } catch {}
+    }
+
+    function factionMemberEntries(payload) {
+        if (!payload?.members) return [];
+        return Array.isArray(payload.members)
+            ? payload.members.map(member => [member?.id ?? member?.player_id, member])
+            : Object.entries(payload.members);
+    }
+
+    function normalizedStatus(raw) {
+        const status = raw && typeof raw === "object" ? raw : {};
+        return {
+            description: String(status.description || ""),
+            details: String(status.details || ""),
+            state: String(status.state || "Unknown"),
+            color: String(status.color || ""),
+            until: Number(status.until) || 0,
+            plane_image_type: String(status.plane_image_type || "")
+        };
+    }
+
+    function normalizeDestination(value) {
+        const clean = String(value || "").replace(/\s+/g, " ").trim();
+        if (!clean) return "";
+        return /^UAE$/i.test(clean) ? "United Arab Emirates" : clean;
+    }
+
+    function parseTravelDescription(description) {
+        const text = String(description || "").replace(/\s+/g, " ").trim();
+        const patterns = [
+            [/^Traveling from Torn to (.+)$/i, "outbound"],
+            [/^Traveling from (.+) to Torn$/i, "return"],
+            [/^Returning to Torn from (.+)$/i, "return"],
+            [/^Traveling to (.+)$/i, "outbound"]
+        ];
+
+        for (const [pattern, direction] of patterns) {
+            const match = text.match(pattern);
+            if (match) {
+                return {
+                    description: text,
+                    destination: normalizeDestination(match[1]),
+                    direction
+                };
+            }
+        }
+
+        return { description: text, destination: "", direction: "unknown" };
+    }
+
+    function normalizePlaneType(value) {
+        const raw = String(value || "").toLowerCase();
+        if (raw === "light_aircraft") return "light_aircraft";
+        if (raw === "wlt" || raw === "private_jet") return "wlt";
+        return "airliner";
+    }
+
+    function travelTableColumn(planeType) {
+        return planeType === "light_aircraft" ? "light_aircraft" : planeType === "wlt" ? "wlt" : "standard";
+    }
+
+    function travelTableSeconds(destination, planeType) {
+        const row = TRAVEL_TIMES_MINUTES[destination];
+        if (!row) return null;
+        const minutes = Number(row[travelTableColumn(planeType)]);
+        return Number.isFinite(minutes) && minutes > 0 ? Math.round(minutes * 60) : null;
+    }
+
+    function median(values) {
+        const numbers = values.map(Number).filter(value => Number.isFinite(value) && value > 0).sort((a, b) => a - b);
+        if (!numbers.length) return null;
+        const middle = Math.floor(numbers.length / 2);
+        return numbers.length % 2 ? numbers[middle] : Math.round((numbers[middle - 1] + numbers[middle]) / 2);
+    }
+
+    function travelHistoryKey(playerId, destination, planeType) {
+        return `${playerId}|${destination}|${planeType}`;
+    }
+
+    function buildTravelEstimate(playerId, member, previousMember, activeTravels, history, now) {
+        const status = normalizedStatus(member?.status);
+        const state = status.state.toLowerCase();
+        const previousState = String(previousMember?.status?.state || "").toLowerCase();
+        const active = activeTravels[playerId];
+
+        if (state !== "traveling") {
+            if (active) {
+                const observedDuration = now - Number(active.departedAt || 0);
+                const routeKey = travelHistoryKey(playerId, active.destination, active.planeType);
+                const tableSeconds = travelTableSeconds(active.destination, active.planeType);
+                const plausibleMax = tableSeconds ? Math.round(tableSeconds * 1.6) : 8 * 60 * 60;
+                if (active.destination && observedDuration >= 60 && observedDuration <= plausibleMax) {
+                    const list = Array.isArray(history[routeKey]) ? history[routeKey] : [];
+                    list.push(observedDuration);
+                    history[routeKey] = list.slice(-8);
+                }
+                delete activeTravels[playerId];
+            }
+            return null;
+        }
+
+        const route = parseTravelDescription(status.description);
+        const planeType = normalizePlaneType(status.plane_image_type);
+        const tableSeconds = travelTableSeconds(route.destination, planeType);
+        const sameFlight = active && active.description === route.description;
+        let departedAt = sameFlight ? Number(active.departedAt) : 0;
+        let departureSource = sameFlight ? String(active.departureSource || "observed") : "";
+
+        if (!departedAt) {
+            const lastAction = Number(member?.last_action?.timestamp) || 0;
+            const plausibleWindow = tableSeconds ? Math.round(tableSeconds * 1.35) : 8 * 60 * 60;
+            const lastActionLooksPlausible = lastAction > 0 && lastAction <= now + 60 && lastAction >= now - plausibleWindow;
+            departedAt = lastActionLooksPlausible ? lastAction : now;
+            departureSource = lastActionLooksPlausible ? "last-action-fallback" : (previousState === "traveling" ? "startup-observation" : "observed-transition");
+            activeTravels[playerId] = {
+                playerId,
+                destination: route.destination,
+                direction: route.direction,
+                description: route.description,
+                planeType,
+                departedAt,
+                departureSource
+            };
+        }
+
+        const routeKey = travelHistoryKey(playerId, route.destination, planeType);
+        const observedSeconds = median(Array.isArray(history[routeKey]) ? history[routeKey] : []);
+        const estimatedDuration = observedSeconds || tableSeconds;
+        if (!estimatedDuration || !departedAt) {
+            return {
+                destination: route.destination,
+                direction: route.direction,
+                planeType,
+                departedAt: departedAt || null,
+                departureSource,
+                eta: null,
+                estimateSource: "unavailable",
+                exact: false
+            };
+        }
+
+        const eta = departedAt + estimatedDuration;
+        return {
+            destination: route.destination,
+            direction: route.direction,
+            planeType,
+            departedAt,
+            departureSource,
+            eta: eta > now ? eta : null,
+            estimateSource: observedSeconds ? "observed-history" : "published-table",
+            historyCount: Array.isArray(history[routeKey]) ? history[routeKey].length : 0,
+            durationSeconds: estimatedDuration,
+            varianceSeconds: Math.round(estimatedDuration * 0.03),
+            exact: false
+        };
+    }
+
+    function publishStatusSnapshot(snapshot) {
+        window[CORE_WINDOW_KEY] = snapshot;
+        writeStoredJson(STATUS_STORAGE_KEY, snapshot);
+        window.dispatchEvent(new CustomEvent(STATUS_EVENT, { detail: { updatedAt: snapshot.updatedAt, factionId: snapshot.factionId } }));
+    }
+
+    function loadPublishedStatusSnapshot() {
+        const stored = readStoredJson(STATUS_STORAGE_KEY, null);
+        if (stored?.members && typeof stored.members === "object") {
+            window[CORE_WINDOW_KEY] = stored;
+        }
+    }
+
+    function processFactionStatusPayload(payload, factionId) {
+        const previous = readStoredJson(STATUS_STORAGE_KEY, { members: {} });
+        const activeTravels = readStoredJson(TRAVEL_ACTIVE_KEY, {});
+        const history = readStoredJson(TRAVEL_HISTORY_KEY, {});
+        const now = Math.floor(Date.now() / 1000);
+        const members = {};
+
+        for (const [rawId, member] of factionMemberEntries(payload)) {
+            const id = Number(member?.id ?? member?.player_id ?? rawId);
+            if (!id) continue;
+            const status = normalizedStatus(member?.status);
+            const lastAction = member?.last_action && typeof member.last_action === "object"
+                ? {
+                    status: String(member.last_action.status || ""),
+                    timestamp: Number(member.last_action.timestamp) || 0,
+                    relative: String(member.last_action.relative || "")
+                }
+                : null;
+            const travel = buildTravelEstimate(id, { ...member, status, last_action: lastAction }, previous?.members?.[id], activeTravels, history, now);
+
+            members[id] = {
+                id,
+                name: String(member?.name || member?.player_name || ""),
+                level: Number(member?.level) || null,
+                status,
+                lastAction,
+                travel
+            };
+        }
+
+        writeStoredJson(TRAVEL_ACTIVE_KEY, activeTravels);
+        writeStoredJson(TRAVEL_HISTORY_KEY, history);
+
+        return {
+            version: VERSION,
+            updatedAt: now,
+            factionId: Number(factionId) || Number(payload?.ID) || null,
+            members
+        };
+    }
+
+    async function refreshStatusCore(force = false) {
+        if (destroyed || statusRequestRunning || !isPageVisible() || !/\/factions\.php\/?$/i.test(location.pathname)) return;
+
+        const key = getApiKey();
+        if (!key) return;
+
+        const existing = window[CORE_WINDOW_KEY];
+        const now = Math.floor(Date.now() / 1000);
+        if (!force && existing?.updatedAt) {
+            const ageSeconds = now - Number(existing.updatedAt);
+            if (ageSeconds < 25) {
+                scheduleStatusRefresh(Math.max(1000, (25 - ageSeconds) * 1000));
+                return;
+            }
+        }
+
+        statusRequestRunning = true;
+        try {
+            const factionId = detectFactionId();
+            const path = factionId ? `/faction/${factionId}` : "/faction/";
+            const query = new URLSearchParams({
+                selections: "basic",
+                key,
+                comment: "KingshadeScoutStatus"
+            });
+            const response = await httpGet(`${TORN_API_BASE}${path}?${query}`);
+            if (response.status !== 200) return;
+            const payload = JSON.parse(response.responseText || "null");
+            if (!payload || payload.error || !payload.members) return;
+            publishStatusSnapshot(processFactionStatusPayload(payload, factionId));
+        } catch {
+            // Status failures never interrupt FF/EST rendering.
+        } finally {
+            statusRequestRunning = false;
+            scheduleStatusRefresh(STATUS_REFRESH_MS);
+        }
+    }
+
+    function scheduleStatusRefresh(delay = STATUS_REFRESH_MS) {
+        clearTimeout(statusTimer);
+        statusTimer = null;
+        if (destroyed || !isPageVisible() || !/\/factions\.php\/?$/i.test(location.pathname)) return;
+        statusTimer = setTimeout(() => {
+            statusTimer = null;
+            refreshStatusCore(false);
+        }, delay);
+    }
+
+    function syncButtonDock() {
+        const button = document.querySelector(".ks6-fab");
+        const host = document.querySelector("#kswt-toolbar .kswt-head-actions");
+        if (!button || !host) return false;
+        if (button.parentNode !== host) host.insertBefore(button, host.firstChild);
+        button.classList.add("ks6-docked");
+        button.style.removeProperty("left");
+        button.style.removeProperty("top");
+        return true;
+    }
+
+    function undockButton() {
+        const button = document.querySelector(".ks6-fab");
+        if (!button) return;
+        if (button.parentNode !== document.body) document.body.appendChild(button);
+        button.classList.remove("ks6-docked");
+        const position = buttonPosition();
+        button.style.left = `${position.x}px`;
+        button.style.top = `${position.y}px`;
+    }
+
     async function fetchFactionDirectory() {
         requireVisiblePage();
         const key = getApiKey();
@@ -547,9 +867,9 @@
                 const normalized = normalizePlayerName(name);
                 if (!normalized) continue;
 
-                byId.set(id, { id, name });
+                byId.set(id, { id, name, status: normalizedStatus(member?.status), lastAction: member?.last_action || null });
                 const existing = byName.get(normalized);
-                if (!existing) byName.set(normalized, { id, name, ambiguous: false });
+                if (!existing) byName.set(normalized, { id, name, status: normalizedStatus(member?.status), lastAction: member?.last_action || null, ambiguous: false });
                 else if (existing.id !== id) byName.set(normalized, { id: null, name, ambiguous: true });
             }
 
@@ -727,6 +1047,13 @@
                 transition:transform .12s ease, box-shadow .12s ease, filter .12s ease
             }
             .ks6-fab:active{transform:scale(.98)}
+            .ks6-fab.ks6-docked{
+                position:static!important;left:auto!important;top:auto!important;right:auto!important;bottom:auto!important;
+                flex:0 0 34px!important;width:34px!important;height:34px!important;min-width:34px!important;
+                margin:0!important;z-index:auto!important;touch-action:manipulation!important
+            }
+            .ks6-fab.ks6-docked .ks6-fab-label{font-size:11px!important}
+            .ks6-fab.ks6-docked .ks6-fab-crown-mark{font-size:7px!important;margin:0!important}
             .ks6-fab .ks6-fab-label{display:block;line-height:1;pointer-events:none}
             .ks6-fab .ks6-fab-crown-mark{display:none;line-height:1;pointer-events:none}
 
@@ -1197,6 +1524,10 @@
         button.onpointerdown = event => {
             dragging = true;
             moved = false;
+            if (button.classList.contains("ks6-docked")) {
+                event.preventDefault();
+                return;
+            }
             const rect = button.getBoundingClientRect();
             sx = event.clientX;
             sy = event.clientY;
@@ -1207,7 +1538,7 @@
         };
 
         button.onpointermove = event => {
-            if (!dragging) return;
+            if (!dragging || button.classList.contains("ks6-docked")) return;
             const dx = event.clientX - sx;
             const dy = event.clientY - sy;
             if (Math.abs(dx) > 4 || Math.abs(dy) > 4) moved = true;
@@ -1227,7 +1558,10 @@
             const nextStyle = panel.querySelector('[data-ksp="style"]').value || "crest";
 
             setApiKey(nextKey);
-            if (previousKey !== nextKey) factionDirectoryCache.clear();
+            if (previousKey !== nextKey) {
+                factionDirectoryCache.clear();
+                scheduleStatusRefresh(0);
+            }
             settings.showUnknown = nextUnknown;
             settings.buttonStyle = ["simple", "crest", "royal"].includes(nextStyle) ? nextStyle : "crest";
             saveSettings();
@@ -1284,6 +1618,7 @@
             persistPanelSettings();
             memoryCache.clear();
             clearRendered();
+            scheduleStatusRefresh(0);
             scheduleScan(0);
         };
 
@@ -1299,6 +1634,7 @@
         };
 
         document.body.append(button, panel);
+        syncButtonDock();
     }
 
     function removePanel() {
@@ -1340,6 +1676,8 @@
             }
 
             ensurePanel();
+            syncButtonDock();
+            scheduleStatusRefresh(0);
 
             const result = await findRows();
             requireVisiblePage();
@@ -1431,6 +1769,8 @@
             resumeScanWhenVisible = true;
             clearTimeout(scanTimer);
             scanTimer = null;
+            clearTimeout(statusTimer);
+            statusTimer = null;
             disconnectObserver();
             abortActiveRequests();
             updatePanelStatus("Paused while Torn is not visible.");
@@ -1439,6 +1779,7 @@
 
         connectObserver();
         updatePanelStatus("Visible again · resuming scan…");
+        scheduleStatusRefresh(0);
         scheduleScan(resumeScanWhenVisible ? 0 : 80);
     }
 
@@ -1462,16 +1803,20 @@
             row.style.removeProperty("box-shadow");
         });
 
+        loadPublishedStatusSnapshot();
         ensureStyles();
         ensurePanel();
+        syncButtonDock();
+        scheduleStatusRefresh(0);
 
         observer = new MutationObserver(mutations => {
             if (!isPageVisible()) return;
             const relevant = mutations.some(mutation =>
                 Array.from(mutation.addedNodes).some(node => {
                     if (!(node instanceof Element)) return false;
-                    return !node.matches(".ks6-fab,.ks6-panel,.ks6-badge,.ks6-modal,.ks6-toast") &&
-                           !node.closest?.(".ks6-panel,.ks6-modal");
+                    if (node.matches(".ks6-fab,.ks6-panel,.ks6-badge,.ks6-modal,.ks6-toast,.kswt-timer,#kswt-toolbar,[data-ks-suite-mutating]")) return false;
+                    if (node.closest?.(".ks6-panel,.ks6-modal,#kswt-toolbar,[data-ks-suite-mutating]")) return false;
+                    return true;
                 })
             );
 
@@ -1483,20 +1828,30 @@
         window.addEventListener("hashchange", onRouteChange);
         window.addEventListener("popstate", onRouteChange);
         window.navigation?.addEventListener?.("currententrychange", onRouteChange);
+        window.addEventListener(WAR_READY_EVENT, syncButtonDock);
 
         scheduleScan(0);
 
         window[INSTANCE_KEY] = {
+            version: VERSION,
+            getStatusSnapshot: () => window[CORE_WINDOW_KEY] || null,
+            refreshStatus: () => refreshStatusCore(false),
+            forceStatusRefresh: () => refreshStatusCore(true),
+            syncButtonDock,
+            undockButton,
             destroy() {
                 destroyed = true;
                 clearTimeout(scanTimer);
                 scanTimer = null;
+                clearTimeout(statusTimer);
+                statusTimer = null;
                 disconnectObserver();
                 abortActiveRequests();
                 document.removeEventListener("visibilitychange", onVisibilityChange);
                 window.removeEventListener("hashchange", onRouteChange);
                 window.removeEventListener("popstate", onRouteChange);
                 window.navigation?.removeEventListener?.("currententrychange", onRouteChange);
+                window.removeEventListener(WAR_READY_EVENT, syncButtonDock);
                 document.querySelectorAll(
                     ".ks6-fab,.ks6-panel,.ks6-badge,.ks6-modal,.ks6-toast"
                 ).forEach(el => el.remove());
