@@ -2,6 +2,33 @@
 
 All notable changes to Kingshade Suite are documented here.
 
+## [0.8.4] — 2026-07-14 — Beta
+
+### Suite Control Center
+
+- Replaced the Scout-only settings panel with a tabbed Suite Control Center.
+- Added Overview diagnostics for component state, version matching, API-key state, status age, member count and local data.
+- Added centralized Scout and War Tools settings with immediate synchronization.
+- Added a Suite refresh action and a cache reset that preserves API key, preferences, manual FF values and notes.
+- Kept the Control Center read-only with respect to Torn actions.
+
+### Scout
+
+- Added Control Center helpers and public Suite diagnostics.
+- Added persistent tab selection and live status/settings updates.
+- Added local-data inventory and targeted cache clearing.
+
+### War Tools
+
+- Added validated `getSettings`, `updateSettings`, `resetSettings` and `getStatus` interfaces.
+- Added settings command/update events for loose coupling with Scout.
+- Synchronized toolbar controls after external setting changes.
+
+### Repository
+
+- Advanced Scout and War Tools together to Suite version 0.8.4.
+- Added the Control Center architecture document.
+
 ## [0.8.3] — 2026-07-13 — Beta
 
 ### Scout
