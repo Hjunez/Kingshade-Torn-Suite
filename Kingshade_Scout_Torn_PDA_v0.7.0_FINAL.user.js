@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kingshade Scout for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.8.1
+// @version      0.8.2
 // @description  Kingshade Suite Scout Core for Torn PDA with FF/EST, shared faction status data, and War Tools integration.
 // @author       Kingshade
 // @match        https://www.torn.com/*
@@ -29,7 +29,7 @@
 
     const NAME = "Kingshade Suite";
     const COMPONENT = "Scout Core";
-    const VERSION = "0.8.1";
+    const VERSION = "0.8.2";
     const API_BASE = "https://ffscouter.com/api/v1";
     const TORN_API_BASE = "https://api.torn.com";
     const PREFIX = "kingshade-scout:";
@@ -925,6 +925,11 @@
         const estimatedDuration = observedSeconds || tableSeconds;
 
         if (!estimatedDuration || !departedAt) {
+            const unavailableReason = !route.destination
+                ? "destination-not-exposed"
+                : !estimatedDuration
+                    ? "route-time-unavailable"
+                    : "departure-unavailable";
             return {
                 destination: route.destination,
                 direction: route.direction,
@@ -933,6 +938,7 @@
                 departureSource,
                 eta: null,
                 estimateSource: "unavailable",
+                unavailableReason,
                 confidence: "low",
                 uncertaintySeconds: uncertaintySeconds || null,
                 exact: false
@@ -958,6 +964,7 @@
             etaLow: now + lowRemaining,
             etaHigh: now + highRemaining,
             estimateSource: observedSeconds ? "observed-history" : "published-table",
+            unavailableReason: eta > now ? "" : "estimate-expired-while-still-traveling",
             historyCount: durationSamples.length,
             durationSeconds: estimatedDuration,
             uncertaintySeconds: uncertainty,

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KS War Tools for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.8.1
+// @version      0.8.2
 // @description  Kingshade Suite War Tools for faction filters, sorting, exact status timers, and marked travel ETA estimates.
 // @author       Kingshade
 // @match        https://www.torn.com/factions.php*
@@ -23,7 +23,7 @@
     const SCRIPT = Object.freeze({
         name: "Kingshade Suite",
         component: "War Tools",
-        version: "0.8.1",
+        version: "0.8.2",
         instanceKey: "__ksWarToolsActive",
         sharedCoreKey: "__kingshadeScoutCore",
         sharedStorageKey: "kingshade-scout:status-core",
@@ -394,7 +394,13 @@
         const exactUntil = positiveNumber(apiStatus?.until) ?? domStatusUntil(row);
         const travelEta = status === "traveling" ? positiveNumber(member?.travel?.eta) : null;
         const until = exactUntil && exactUntil > now ? exactUntil : travelEta && travelEta > now ? travelEta : null;
-        const timerKind = exactUntil && exactUntil > now ? "exact" : travelEta && travelEta > now ? "estimate" : null;
+        const timerKind = exactUntil && exactUntil > now
+            ? "exact"
+            : travelEta && travelEta > now
+                ? "estimate"
+                : status === "traveling"
+                    ? "estimate-unavailable"
+                    : null;
 
         const rawDescription = String(apiStatus?.description || "");
         const rawDetails = String(apiStatus?.details || "");
@@ -496,6 +502,22 @@
     }
 
     function timerTitle(info) {
+        if (info.timerKind === "estimate-unavailable") {
+            const reason = String(info.travel?.unavailableReason || "");
+            const reasonText = reason === "destination-not-exposed"
+                ? "Torn did not expose the destination"
+                : reason === "route-time-unavailable"
+                    ? "No verified route time is available"
+                    : reason === "estimate-expired-while-still-traveling"
+                        ? "The previous estimate expired while Torn still reports Traveling"
+                        : "Scout could not establish a trustworthy departure estimate";
+            return [
+                info.description || "Traveling",
+                "ETA unavailable",
+                reasonText,
+                "Torn exposes no exact arrival timestamp"
+            ].filter(Boolean).join(" · ");
+        }
         if (info.timerKind === "exact") {
             return [info.description, info.details, "Exact Torn status end time"].filter(Boolean).join(" · ");
         }
@@ -612,11 +634,16 @@
 
     function renderTimer(info) {
         removeTimer(info.row);
-        if (!info.until || info.status === "okay" || info.status === "abroad") return;
-        const remaining = info.until - Math.floor(Date.now() / 1000);
-        if (remaining <= 0) return;
+        if (info.status === "okay" || info.status === "abroad") return;
+
         const statusElement = getStatusElement(info.row);
         if (!statusElement) return;
+
+        const isUnavailableTravel = info.timerKind === "estimate-unavailable";
+        const remaining = info.until
+            ? info.until - Math.floor(Date.now() / 1000)
+            : null;
+        if (!isUnavailableTravel && (!info.until || remaining <= 0)) return;
 
         statusElement.classList.add("kswt-status-host");
         const statusText = statusElement.querySelector(".ellipsis");
@@ -626,15 +653,23 @@
         }
 
         const timer = document.createElement("span");
-        timer.className = `kswt-timer ${info.timerKind === "estimate" ? "estimated" : "exact"}`;
-        timer.dataset.until = String(info.until);
+        timer.className = `kswt-timer ${
+            info.timerKind === "estimate"
+                ? "estimated"
+                : isUnavailableTravel
+                    ? "unavailable"
+                    : "exact"
+        }`;
+        if (info.until) timer.dataset.until = String(info.until);
         timer.dataset.kind = String(info.timerKind || "");
         timer.dataset.info = timerTitle(info);
         if (info.linkedPlayer?.id && info.linkedPlayer?.name) {
             timer.dataset.linkedPlayerId = String(info.linkedPlayer.id);
             timer.dataset.linkedPlayerName = String(info.linkedPlayer.name);
         }
-        timer.textContent = `${info.timerKind === "estimate" ? "~" : ""}${formatCountdown(remaining)}`;
+        timer.textContent = isUnavailableTravel
+            ? "~?"
+            : `${info.timerKind === "estimate" ? "~" : ""}${formatCountdown(remaining)}`;
         timer.setAttribute("aria-label", timer.dataset.info || timer.textContent);
         timer.setAttribute("role", "button");
         timer.tabIndex = 0;
@@ -763,7 +798,8 @@
             core: infos.filter(info => info.hasCoreData || info.row.querySelector(".ks6-badge")).length,
             status: infos.filter(info => info.hasStatusData).length,
             exact: infos.filter(info => info.timerKind === "exact").length,
-            estimate: infos.filter(info => info.timerKind === "estimate").length
+            estimate: infos.filter(info => info.timerKind === "estimate").length,
+            estimateUnavailable: infos.filter(info => info.timerKind === "estimate-unavailable").length
         };
     }
 
@@ -806,7 +842,10 @@
         }
 
         const timerSummary = toolbar.querySelector('[data-kswt="timer-summary"]');
-        if (timerSummary) timerSummary.textContent = `Exact timers ${counts.exact} · Travel estimates ${counts.estimate}`;
+        if (timerSummary) {
+            timerSummary.textContent =
+                `Exact timers ${counts.exact} · Travel estimates ${counts.estimate} · Travel unknown ${counts.estimateUnavailable}`;
+        }
         toolbar.classList.toggle("collapsed", Boolean(state.settings.collapsed));
     }
 
@@ -854,13 +893,22 @@
             #${SCRIPT.toolbarId} .kswt-note{margin-top:8px!important;color:#bfc2c6!important;font-size:10px!important;line-height:1.35!important}
             #${SCRIPT.toolbarId} .kswt-timer-summary{margin-top:6px!important;color:#e3d29f!important;font-size:9.5px!important}
             .kswt-status-host{position:relative!important;overflow:visible!important}
+            .kswt-status-host.kswt-compact-status{
+                display:flex!important;flex-direction:column!important;align-items:center!important;
+                justify-content:center!important;gap:2px!important;text-align:center!important
+            }
             .kswt-status-host.kswt-compact-status>.ellipsis{display:none!important}
             .kswt-status-host.kswt-compact-status::before{
                 content:attr(data-kswt-label)!important;display:block!important;color:inherit!important;
-                font:700 8px/1.05 Arial,sans-serif!important;white-space:nowrap!important
+                font:800 7.5px/1 Arial,sans-serif!important;letter-spacing:.15px!important;white-space:nowrap!important
             }
-            .kswt-timer{display:block!important;margin-top:1px!important;color:#fff!important;font:800 8px/1.1 Arial,sans-serif!important;text-shadow:0 1px 2px rgba(0,0,0,.8)!important;white-space:nowrap!important;cursor:pointer!important}
+            .kswt-timer{
+                display:block!important;margin:0!important;color:#fff!important;
+                font:800 8px/1.05 Arial,sans-serif!important;text-shadow:0 1px 2px rgba(0,0,0,.8)!important;
+                white-space:nowrap!important;cursor:pointer!important
+            }
             .kswt-timer.estimated{color:#ffe6a6!important}
+            .kswt-timer.unavailable{color:#ffd98a!important;font-size:9px!important}
             #${SCRIPT.infoId}{
                 position:fixed!important;left:8px!important;right:8px!important;bottom:max(78px,calc(env(safe-area-inset-bottom) + 78px))!important;
                 z-index:2147483647!important;display:flex!important;align-items:flex-start!important;gap:8px!important;
