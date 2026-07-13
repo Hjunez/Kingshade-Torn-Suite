@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Kingshade Scout for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.7.4
-// @description  Active-page-only FF Scouter overlay for Torn PDA faction lists with estimate fallbacks and manual overrides.
+// @version      0.8.3
+// @description  Kingshade Suite Scout Core for Torn PDA with FF/EST, shared faction status data, and War Tools integration.
 // @author       Kingshade
 // @match        https://www.torn.com/*
 // @connect      ffscouter.com
@@ -14,7 +14,7 @@
 // Data use and privacy disclosure:
 // - Runs only while the Torn page is visible. Scanning and new network requests pause when hidden.
 // - Sends player IDs from the currently viewed faction member list, plus the entered key, to FF Scouter for FF/estimate lookups.
-// - When a row has no direct player ID, the entered key may also be sent to Torn's official API for faction/basic membership mapping.
+// - While a faction member list is open, the entered key is sent to Torn's official faction/basic API for member status/timers and fallback member mapping.
 // - Stores the key, settings, manual FF/battle-stat values, notes, cached results, and captured profile estimates locally in this webview.
 // - Does not automate attacks, clicks, travel, purchases, or any other Torn action.
 // - This script has no developer-operated server; FF Scouter remains a separate external service.
@@ -27,8 +27,9 @@
         try { window[INSTANCE_KEY].destroy?.(); } catch {}
     }
 
-    const NAME = "Kingshade Scout PDA";
-    const VERSION = "0.7.4";
+    const NAME = "Kingshade Suite";
+    const COMPONENT = "Scout Core";
+    const VERSION = "0.8.3";
     const API_BASE = "https://ffscouter.com/api/v1";
     const TORN_API_BASE = "https://api.torn.com";
     const PREFIX = "kingshade-scout:";
@@ -37,8 +38,16 @@
     const MANUAL_PREFIX = `${PREFIX}manual:`;
     const PROFILE_EST_PREFIX = `${PREFIX}profile-estimate:`;
     const CACHE_PREFIX = `${PREFIX}cache:`;
+    const STATUS_STORAGE_KEY = `${PREFIX}status-core`;
+    const TRAVEL_ACTIVE_KEY = `${PREFIX}travel-active`;
+    const TRAVEL_HISTORY_KEY = `${PREFIX}travel-history`;
+    const CORE_WINDOW_KEY = "__kingshadeScoutCore";
+    const STATUS_EVENT = "kingshade-scout:status-update";
+    const FF_EVENT = "kingshade-scout:ff-update";
+    const WAR_READY_EVENT = "kingshade-war-tools:ready";
     const CACHE_MS = 60 * 60 * 1000;
     const FACTION_DIRECTORY_MS = 5 * 60 * 1000;
+    const STATUS_REFRESH_MS = 30 * 1000;
     const OLD_ESTIMATE_SECONDS = 14 * 24 * 60 * 60;
 
     const DEFAULTS = {
@@ -58,12 +67,56 @@
     let resumeScanWhenVisible = false;
     let observerConnected = false;
     let destroyed = false;
+    let statusTimer = null;
+    let statusRequestRunning = false;
+    let ffRetryTimer = null;
+    let lastPanelStatus = "Waiting for faction scan…";
     const activeRequestAborts = new Set();
     const OBSERVER_OPTIONS = { childList: true, subtree: true };
-    const onRouteChange = () => scheduleScan(200);
+    const onRouteChange = () => {
+        clearTimeout(statusTimer);
+        statusTimer = null;
+
+        if (!isFactionPath()) {
+            clearRendered();
+            removePanel();
+        }
+
+        setTimeout(() => {
+            if (!hasFactionMemberList()) {
+                clearRendered();
+                removePanel();
+            }
+            scheduleScan(0);
+            scheduleStatusRefresh(0);
+        }, 120);
+    };
 
     function isPageVisible() {
         return document.visibilityState === "visible" && !document.hidden;
+    }
+
+    function isFactionPath() {
+        return /\/factions\.php\/?$/i.test(location.pathname);
+    }
+
+    function isProfilePath() {
+        return /\/profiles\.php\/?$/i.test(location.pathname);
+    }
+
+    function factionMemberLists() {
+        if (!isFactionPath()) return [];
+        return Array.from(document.querySelectorAll(".members-list")).filter(list =>
+            list instanceof HTMLElement && list.querySelector(".table-body")
+        );
+    }
+
+    function hasFactionMemberList() {
+        return factionMemberLists().length > 0;
+    }
+
+    function wait(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
     }
 
     function hiddenPageError() {
@@ -298,27 +351,75 @@
         }
     }
 
-    function getCached(playerId) {
-        if (memoryCache.has(playerId)) return memoryCache.get(playerId);
-        try {
-            const key = `${CACHE_PREFIX}${playerId}`;
-            const parsed = JSON.parse(localStorage.getItem(key) || "null");
-            if (!parsed || parsed.expires <= Date.now()) {
-                localStorage.removeItem(key);
-                return null;
+    async function getFfScouterResponse(url) {
+        let lastError = null;
+        const delays = [0, 700, 1800];
+
+        for (let attempt = 0; attempt < delays.length; attempt++) {
+            requireVisiblePage();
+            if (delays[attempt]) await wait(delays[attempt]);
+
+            try {
+                const response = await httpGet(url);
+                if (response.status !== 0 || attempt === delays.length - 1) return response;
+            } catch (error) {
+                if (isHiddenPageError(error)) throw error;
+                lastError = error;
+                if (attempt === delays.length - 1) throw error;
             }
-            memoryCache.set(playerId, parsed.value);
-            return parsed.value;
+        }
+
+        if (lastError) throw lastError;
+        return { status: 0, responseText: "" };
+    }
+
+    function readCacheRecord(playerId) {
+        try {
+            const parsed = JSON.parse(localStorage.getItem(`${CACHE_PREFIX}${playerId}`) || "null");
+            return parsed?.value ? parsed : null;
         } catch {
             return null;
         }
     }
 
+    function getCached(playerId) {
+        const memory = memoryCache.get(playerId);
+        if (memory?.value && Number(memory.expires) > Date.now()) return memory.value;
+        if (memory) memoryCache.delete(playerId);
+
+        const parsed = readCacheRecord(playerId);
+        if (!parsed || Number(parsed.expires) <= Date.now()) return null;
+        memoryCache.set(playerId, { expires: Number(parsed.expires), value: parsed.value });
+        return parsed.value;
+    }
+
+    function getStaleCached(playerId) {
+        return readCacheRecord(playerId)?.value || null;
+    }
+
+    function emptyFfValue(playerId, transient = false) {
+        return {
+            player_id: playerId,
+            fair_fight: null,
+            last_updated: null,
+            bs_estimate: null,
+            bs_estimate_human: "",
+            bss_public: null,
+            source: "",
+            available_estimates: null,
+            premium_insights_available: false,
+            distribution: null,
+            spies: [],
+            _transient: Boolean(transient)
+        };
+    }
+
     function setCached(playerId, value) {
-        memoryCache.set(playerId, value);
+        const expires = Date.now() + CACHE_MS;
+        memoryCache.set(playerId, { expires, value });
         try {
             localStorage.setItem(`${CACHE_PREFIX}${playerId}`, JSON.stringify({
-                expires: Date.now() + CACHE_MS,
+                expires,
                 value
             }));
         } catch {}
@@ -327,12 +428,19 @@
     async function fetchPlayers(ids) {
         requireVisiblePage();
         const result = new Map();
+        const stale = new Map();
         const missing = [];
 
         for (const id of ids) {
             const cached = getCached(id);
-            if (cached) result.set(id, cached);
-            else missing.push(id);
+            if (cached) {
+                result.set(id, cached);
+                continue;
+            }
+
+            const staleValue = getStaleCached(id);
+            if (staleValue) stale.set(id, staleValue);
+            missing.push(id);
         }
 
         if (!missing.length) return result;
@@ -340,11 +448,31 @@
         const key = getApiKey();
         if (!key) throw new Error("No FF Scouter API key is saved. Open KS and paste your key.");
 
+        result.ksTransientFailure = false;
+        result.ksNeedsRetryIds = new Set();
+
         for (let i = 0; i < missing.length; i += 100) {
             requireVisiblePage();
             const batch = missing.slice(i, i + 100);
             const query = new URLSearchParams({ key, targets: batch.join(",") });
-            const response = await httpGet(`${API_BASE}/get-stats?${query}`);
+
+            let response;
+            try {
+                response = await getFfScouterResponse(`${API_BASE}/get-stats?${query}`);
+            } catch (error) {
+                if (isHiddenPageError(error)) throw error;
+                response = { status: 0, responseText: "" };
+            }
+
+            if (response.status === 0) {
+                result.ksTransientFailure = true;
+                for (const id of batch) {
+                    const fallback = stale.get(id);
+                    result.set(id, fallback ? { ...fallback, _transient: true, _stale: true } : emptyFfValue(id, true));
+                    result.ksNeedsRetryIds.add(id);
+                }
+                continue;
+            }
 
             if (response.status !== 200) {
                 throw new Error(`FF Scouter returned HTTP ${response.status}`);
@@ -390,19 +518,7 @@
 
             for (const id of batch) {
                 if (!returned.has(id)) {
-                    const value = {
-                        player_id: id,
-                        fair_fight: null,
-                        last_updated: null,
-                        bs_estimate: null,
-                        bs_estimate_human: "",
-                        bss_public: null,
-                        source: "",
-                        available_estimates: null,
-                        premium_insights_available: false,
-                        distribution: null,
-                        spies: []
-                    };
+                    const value = emptyFfValue(id, false);
                     result.set(id, value);
                     setCached(id, value);
                 }
@@ -509,12 +625,529 @@
         return bestId;
     }
 
+
+    const TRAVEL_TIMES_MINUTES = Object.freeze({
+        Mexico: { standard: 26, light_aircraft: 18, wlt: 13, business: 8 },
+        "Cayman Islands": { standard: 35, light_aircraft: 25, wlt: 18, business: 11 },
+        Canada: { standard: 41, light_aircraft: 29, wlt: 20, business: 12 },
+        Hawaii: { standard: 134, light_aircraft: 94, wlt: 67, business: 40 },
+        "United Kingdom": { standard: 159, light_aircraft: 111, wlt: 80, business: 48 },
+        Argentina: { standard: 167, light_aircraft: 117, wlt: 83, business: 50 },
+        Switzerland: { standard: 175, light_aircraft: 123, wlt: 88, business: 53 },
+        Japan: { standard: 225, light_aircraft: 158, wlt: 113, business: 68 },
+        China: { standard: 242, light_aircraft: 169, wlt: 121, business: 72 },
+        "United Arab Emirates": { standard: 271, light_aircraft: 190, wlt: 135, business: 81 },
+        "South Africa": { standard: 297, light_aircraft: 208, wlt: 149, business: 89 }
+    });
+
+    function readStoredJson(key, fallback = null) {
+        try {
+            const value = JSON.parse(localStorage.getItem(key) || "null");
+            return value ?? fallback;
+        } catch {
+            return fallback;
+        }
+    }
+
+    function writeStoredJson(key, value) {
+        try {
+            localStorage.setItem(key, JSON.stringify(value));
+        } catch {}
+    }
+
+    function factionMemberEntries(payload) {
+        if (!payload?.members) return [];
+        return Array.isArray(payload.members)
+            ? payload.members.map(member => [member?.id ?? member?.player_id, member])
+            : Object.entries(payload.members);
+    }
+
+    function normalizedStatus(raw) {
+        const status = raw && typeof raw === "object" ? raw : {};
+        return {
+            description: String(status.description || ""),
+            details: String(status.details || ""),
+            state: String(status.state || "Unknown"),
+            color: String(status.color || ""),
+            until: Number(status.until) || 0,
+            plane_image_type: String(status.plane_image_type || "")
+        };
+    }
+
+    function normalizeDestination(value) {
+        const clean = String(value || "").replace(/\s+/g, " ").trim();
+        if (!clean) return "";
+        return /^UAE$/i.test(clean) ? "United Arab Emirates" : clean;
+    }
+
+    function parseTravelDescription(description) {
+        const text = String(description || "").replace(/\s+/g, " ").trim();
+        const patterns = [
+            [/^Traveling from Torn to (.+)$/i, "outbound"],
+            [/^Traveling from (.+) to Torn$/i, "return"],
+            [/^Returning to Torn from (.+)$/i, "return"],
+            [/^Traveling to (.+)$/i, "outbound"]
+        ];
+
+        for (const [pattern, direction] of patterns) {
+            const match = text.match(pattern);
+            if (match) {
+                return {
+                    description: text,
+                    destination: normalizeDestination(match[1]),
+                    direction
+                };
+            }
+        }
+
+        return { description: text, destination: "", direction: "unknown" };
+    }
+
+    function normalizePlaneType(value) {
+        const raw = String(value || "").toLowerCase();
+        if (raw === "light_aircraft") return "light_aircraft";
+        if (raw === "wlt" || raw === "private_jet") return "wlt";
+        return "airliner";
+    }
+
+    function travelTableColumn(planeType) {
+        return planeType === "light_aircraft" ? "light_aircraft" : planeType === "wlt" ? "wlt" : "standard";
+    }
+
+    function travelTableSeconds(destination, planeType) {
+        const row = TRAVEL_TIMES_MINUTES[destination];
+        if (!row) return null;
+        const minutes = Number(row[travelTableColumn(planeType)]);
+        return Number.isFinite(minutes) && minutes > 0 ? Math.round(minutes * 60) : null;
+    }
+
+    function median(values) {
+        const numbers = values.map(Number).filter(value => Number.isFinite(value) && value > 0).sort((a, b) => a - b);
+        if (!numbers.length) return null;
+        const middle = Math.floor(numbers.length / 2);
+        return numbers.length % 2 ? numbers[middle] : Math.round((numbers[middle - 1] + numbers[middle]) / 2);
+    }
+
+    function medianSigned(values) {
+        const numbers = values.map(Number).filter(Number.isFinite).sort((a, b) => a - b);
+        if (!numbers.length) return null;
+        const middle = Math.floor(numbers.length / 2);
+        return numbers.length % 2 ? numbers[middle] : Math.round((numbers[middle - 1] + numbers[middle]) / 2);
+    }
+
+    function medianAbsoluteDeviation(values, center) {
+        const numbers = values.map(Number).filter(Number.isFinite);
+        if (!numbers.length || !Number.isFinite(center)) return null;
+        return median(numbers.map(value => Math.abs(value - center)).filter(value => value > 0)) ?? 0;
+    }
+
+    function historyValues(history, key) {
+        return Array.isArray(history?.[key])
+            ? history[key].map(Number).filter(Number.isFinite)
+            : [];
+    }
+
+    function pushHistoryValue(history, key, value, limit = 16) {
+        const number = Number(value);
+        if (!Number.isFinite(number)) return;
+        const list = historyValues(history, key);
+        list.push(Math.round(number));
+        history[key] = list.slice(-limit);
+    }
+
+    function travelDurationKey(destination, planeType) {
+        return `duration|${destination}|${planeType}`;
+    }
+
+    function travelActionOffsetKey(destination, planeType) {
+        return `action-offset|${destination}|${planeType}`;
+    }
+
+    function travelGlobalActionOffsetKey(planeType) {
+        return `action-offset-global|${planeType}`;
+    }
+
+    function buildTravelEstimate(playerId, member, previousMember, activeTravels, history, now) {
+        const status = normalizedStatus(member?.status);
+        const state = status.state.toLowerCase();
+        const previousState = String(previousMember?.status?.state || "").toLowerCase();
+        const active = activeTravels[playerId];
+
+        if (state !== "traveling") {
+            if (active) {
+                const tableSeconds = travelTableSeconds(active.destination, active.planeType);
+                const arrivedAt = now;
+
+                // Only learn actual route duration when Scout saw the transition into Traveling.
+                // A startup/last-action estimate does not have a trustworthy departure timestamp.
+                if (
+                    active.departureSource === "observed-transition" &&
+                    Number(active.departedAt) > 0
+                ) {
+                    const observedDuration = arrivedAt - Number(active.departedAt);
+                    const plausibleMin = tableSeconds ? Math.round(tableSeconds * 0.75) : 60;
+                    const plausibleMax = tableSeconds ? Math.round(tableSeconds * 1.25) : 8 * 60 * 60;
+                    if (
+                        active.destination &&
+                        observedDuration >= plausibleMin &&
+                        observedDuration <= plausibleMax
+                    ) {
+                        pushHistoryValue(
+                            history,
+                            travelDurationKey(active.destination, active.planeType),
+                            observedDuration
+                        );
+                    }
+                }
+
+                // If the flight was first seen mid-air, arrival observation lets Scout learn
+                // how far the player's last_action timestamp usually sits after/before departure.
+                if (
+                    active.departureSource === "last-action-fallback" &&
+                    Number(active.lastActionAt) > 0 &&
+                    tableSeconds
+                ) {
+                    const estimatedActualDeparture = arrivedAt - tableSeconds;
+                    const offset = Number(active.lastActionAt) - estimatedActualDeparture;
+                    const plausibleOffset = Math.min(45 * 60, Math.round(tableSeconds * 0.65));
+
+                    if (Math.abs(offset) <= plausibleOffset) {
+                        pushHistoryValue(
+                            history,
+                            travelActionOffsetKey(active.destination, active.planeType),
+                            offset
+                        );
+                        pushHistoryValue(
+                            history,
+                            travelGlobalActionOffsetKey(active.planeType),
+                            offset
+                        );
+                    }
+                }
+
+                delete activeTravels[playerId];
+            }
+            return null;
+        }
+
+        const route = parseTravelDescription(status.description);
+        const planeType = normalizePlaneType(status.plane_image_type);
+        const tableSeconds = travelTableSeconds(route.destination, planeType);
+        const sameFlight = active && active.description === route.description;
+
+        let departedAt = sameFlight ? Number(active.departedAt) : 0;
+        let departureSource = sameFlight ? String(active.departureSource || "observed") : "";
+        let lastActionAt = sameFlight ? Number(active.lastActionAt || 0) : 0;
+        let appliedActionOffset = sameFlight ? Number(active.appliedActionOffset || 0) : 0;
+        let actionOffsetSamples = sameFlight ? Number(active.actionOffsetSamples || 0) : 0;
+        let uncertaintySeconds = sameFlight ? Number(active.uncertaintySeconds || 0) : 0;
+        let confidence = sameFlight ? String(active.confidence || "low") : "low";
+
+        if (!departedAt) {
+            const lastAction = Number(member?.last_action?.timestamp) || 0;
+            const sawPreFlightState = previousMember && previousState && previousState !== "traveling";
+
+            if (sawPreFlightState) {
+                // Scout polled this member before and after departure, so departure is known
+                // within one status refresh interval.
+                departedAt = now;
+                departureSource = "observed-transition";
+                uncertaintySeconds = 30;
+                confidence = "high";
+            } else if (lastAction > 0 && tableSeconds) {
+                const routeOffsets = historyValues(
+                    history,
+                    travelActionOffsetKey(route.destination, planeType)
+                );
+                const globalOffsets = historyValues(
+                    history,
+                    travelGlobalActionOffsetKey(planeType)
+                );
+                const selectedOffsets = routeOffsets.length ? routeOffsets : globalOffsets;
+                const learnedOffset = medianSigned(selectedOffsets) ?? 0;
+                const spread = medianAbsoluteDeviation(selectedOffsets, learnedOffset) ?? 0;
+
+                lastActionAt = lastAction;
+                appliedActionOffset = learnedOffset;
+                actionOffsetSamples = selectedOffsets.length;
+
+                const inferred = lastAction - learnedOffset;
+                const earliestStillTraveling = now - tableSeconds + 1;
+                departedAt = Math.max(earliestStillTraveling, Math.min(now, inferred));
+                departureSource = "last-action-fallback";
+
+                if (selectedOffsets.length >= 3) {
+                    uncertaintySeconds = Math.max(90, Math.round(spread * 2.5));
+                    confidence = "medium";
+                } else if (selectedOffsets.length > 0) {
+                    uncertaintySeconds = Math.max(4 * 60, Math.round(tableSeconds * 0.12));
+                    confidence = "low";
+                } else {
+                    // No public departure timestamp exists. A 20% route-time uncertainty
+                    // correctly reflects that last_action can occur before or after departure.
+                    uncertaintySeconds = Math.min(
+                        20 * 60,
+                        Math.max(5 * 60, Math.round(tableSeconds * 0.20))
+                    );
+                    confidence = "low";
+                }
+            } else {
+                departedAt = now;
+                departureSource = previousState === "traveling"
+                    ? "startup-observation"
+                    : "observed-transition";
+                uncertaintySeconds = tableSeconds
+                    ? Math.min(20 * 60, Math.max(5 * 60, Math.round(tableSeconds * 0.25)))
+                    : 15 * 60;
+                confidence = "low";
+            }
+
+            activeTravels[playerId] = {
+                playerId,
+                destination: route.destination,
+                direction: route.direction,
+                description: route.description,
+                planeType,
+                departedAt,
+                departureSource,
+                lastActionAt,
+                appliedActionOffset,
+                actionOffsetSamples,
+                uncertaintySeconds,
+                confidence
+            };
+        }
+
+        const durationSamples = historyValues(
+            history,
+            travelDurationKey(route.destination, planeType)
+        ).filter(value => value > 0);
+        const observedSeconds = median(durationSamples);
+        const estimatedDuration = observedSeconds || tableSeconds;
+
+        if (!estimatedDuration || !departedAt) {
+            const unavailableReason = !route.destination
+                ? "destination-not-exposed"
+                : !estimatedDuration
+                    ? "route-time-unavailable"
+                    : "departure-unavailable";
+            return {
+                destination: route.destination,
+                direction: route.direction,
+                planeType,
+                departedAt: departedAt || null,
+                departureSource,
+                eta: null,
+                estimateSource: "unavailable",
+                unavailableReason,
+                confidence: "low",
+                uncertaintySeconds: uncertaintySeconds || null,
+                exact: false
+            };
+        }
+
+        const eta = departedAt + estimatedDuration;
+        const remaining = Math.max(0, eta - now);
+        const uncertainty = Math.max(30, Number(uncertaintySeconds) || Math.round(estimatedDuration * 0.10));
+        const lowRemaining = Math.max(0, remaining - uncertainty);
+        const highRemaining = Math.max(lowRemaining, remaining + uncertainty);
+
+        return {
+            destination: route.destination,
+            direction: route.direction,
+            planeType,
+            departedAt,
+            departureSource,
+            lastActionAt: lastActionAt || null,
+            appliedActionOffset,
+            actionOffsetSamples,
+            eta: eta > now ? eta : null,
+            etaLow: now + lowRemaining,
+            etaHigh: now + highRemaining,
+            estimateSource: observedSeconds ? "observed-history" : "published-table",
+            unavailableReason: eta > now ? "" : "estimate-expired-while-still-traveling",
+            historyCount: durationSamples.length,
+            durationSeconds: estimatedDuration,
+            uncertaintySeconds: uncertainty,
+            confidence,
+            exact: false
+        };
+    }
+
+    function publishStatusSnapshot(snapshot) {
+        window[CORE_WINDOW_KEY] = snapshot;
+        writeStoredJson(STATUS_STORAGE_KEY, snapshot);
+        window.dispatchEvent(new CustomEvent(STATUS_EVENT, { detail: { version: VERSION, updatedAt: snapshot.updatedAt, factionId: snapshot.factionId } }));
+    }
+
+    function loadPublishedStatusSnapshot() {
+        const stored = readStoredJson(STATUS_STORAGE_KEY, null);
+        if (stored?.members && typeof stored.members === "object") {
+            window[CORE_WINDOW_KEY] = stored;
+        }
+    }
+
+    function processFactionStatusPayload(payload, factionId) {
+        const storedPrevious = readStoredJson(STATUS_STORAGE_KEY, { members: {} });
+        const resolvedFactionId = Number(factionId) || Number(payload?.ID) || null;
+        const previous = Number(storedPrevious?.factionId) === Number(resolvedFactionId)
+            ? storedPrevious
+            : { members: {} };
+        const activeTravels = readStoredJson(TRAVEL_ACTIVE_KEY, {});
+        const history = readStoredJson(TRAVEL_HISTORY_KEY, {});
+        const now = Math.floor(Date.now() / 1000);
+        const members = {};
+
+        for (const [rawId, member] of factionMemberEntries(payload)) {
+            const id = Number(member?.id ?? member?.player_id ?? rawId);
+            if (!id) continue;
+            const status = normalizedStatus(member?.status);
+            const lastAction = member?.last_action && typeof member.last_action === "object"
+                ? {
+                    status: String(member.last_action.status || ""),
+                    timestamp: Number(member.last_action.timestamp) || 0,
+                    relative: String(member.last_action.relative || "")
+                }
+                : null;
+            const travel = buildTravelEstimate(id, { ...member, status, last_action: lastAction }, previous?.members?.[id], activeTravels, history, now);
+
+            members[id] = {
+                id,
+                name: String(member?.name || member?.player_name || ""),
+                level: Number(member?.level) || null,
+                status,
+                lastAction,
+                travel
+            };
+        }
+
+        writeStoredJson(TRAVEL_ACTIVE_KEY, activeTravels);
+        writeStoredJson(TRAVEL_HISTORY_KEY, history);
+
+        return {
+            version: VERSION,
+            updatedAt: now,
+            factionId: resolvedFactionId,
+            members
+        };
+    }
+
+    async function refreshStatusCore(force = false) {
+        if (destroyed || statusRequestRunning || !isPageVisible() || !hasFactionMemberList()) return;
+
+        const key = getApiKey();
+        if (!key) return;
+
+        const existing = window[CORE_WINDOW_KEY];
+        const now = Math.floor(Date.now() / 1000);
+        if (!force && existing?.updatedAt) {
+            const ageSeconds = now - Number(existing.updatedAt);
+            if (ageSeconds < 25) {
+                scheduleStatusRefresh(Math.max(1000, (25 - ageSeconds) * 1000));
+                return;
+            }
+        }
+
+        statusRequestRunning = true;
+        try {
+            const factionId = detectFactionId();
+            const path = factionId ? `/faction/${factionId}` : "/faction/";
+            const query = new URLSearchParams({
+                selections: "basic",
+                key,
+                comment: "KingshadeScoutStatus"
+            });
+            const response = await httpGet(`${TORN_API_BASE}${path}?${query}`);
+            if (!hasFactionMemberList() || response.status !== 200) return;
+            const payload = JSON.parse(response.responseText || "null");
+            if (!payload || payload.error || !payload.members) return;
+
+            const currentFactionId = detectFactionId();
+            if (factionId && currentFactionId && Number(factionId) !== Number(currentFactionId)) return;
+
+            publishStatusSnapshot(processFactionStatusPayload(payload, factionId));
+        } catch {
+            // Status failures never interrupt FF/EST rendering.
+        } finally {
+            statusRequestRunning = false;
+            scheduleStatusRefresh(STATUS_REFRESH_MS);
+        }
+    }
+
+    function scheduleStatusRefresh(delay = STATUS_REFRESH_MS) {
+        clearTimeout(statusTimer);
+        statusTimer = null;
+        if (destroyed || !isPageVisible() || !hasFactionMemberList()) return;
+        statusTimer = setTimeout(() => {
+            statusTimer = null;
+            refreshStatusCore(false);
+        }, delay);
+    }
+
+    function syncButtonDock() {
+        const button = document.querySelector(".ks6-fab");
+        const host = document.querySelector("#kswt-toolbar .kswt-head-actions");
+        if (!button || !host) return false;
+        if (button.parentNode !== host) host.insertBefore(button, host.firstChild);
+        button.classList.add("ks6-docked");
+        button.style.removeProperty("left");
+        button.style.removeProperty("top");
+        return true;
+    }
+
+    function undockButton() {
+        const button = document.querySelector(".ks6-fab");
+        if (!button) return;
+        if (button.parentNode !== document.body) document.body.appendChild(button);
+        button.classList.remove("ks6-docked");
+        const position = buttonPosition();
+        button.style.left = `${position.x}px`;
+        button.style.top = `${position.y}px`;
+    }
+
+    function directoryFromStatusSnapshot(factionId) {
+        const snapshot = window[CORE_WINDOW_KEY];
+        if (!snapshot?.members || typeof snapshot.members !== "object") return null;
+        if (factionId && snapshot.factionId && Number(factionId) !== Number(snapshot.factionId)) return null;
+
+        const byName = new Map();
+        const byId = new Map();
+
+        for (const member of Object.values(snapshot.members)) {
+            const id = Number(member?.id);
+            const name = String(member?.name || "").trim();
+            if (!id || !name) continue;
+
+            const normalized = normalizePlayerName(name);
+            if (!normalized) continue;
+
+            byId.set(id, { id, name, status: member.status || null, lastAction: member.lastAction || null });
+            const existing = byName.get(normalized);
+            if (!existing) {
+                byName.set(normalized, {
+                    id,
+                    name,
+                    status: member.status || null,
+                    lastAction: member.lastAction || null,
+                    ambiguous: false
+                });
+            } else if (existing.id !== id) {
+                byName.set(normalized, { id: null, name, ambiguous: true });
+            }
+        }
+
+        return byId.size ? { factionId: Number(snapshot.factionId) || Number(factionId) || null, byName, byId } : null;
+    }
+
     async function fetchFactionDirectory() {
         requireVisiblePage();
         const key = getApiKey();
         if (!key) return null;
 
         const factionId = detectFactionId();
+        const sharedDirectory = directoryFromStatusSnapshot(factionId);
+        if (sharedDirectory) return sharedDirectory;
+
         const cacheKey = factionId ? String(factionId) : "self";
         const cached = factionDirectoryCache.get(cacheKey);
         if (cached && cached.expires > Date.now()) return cached.value;
@@ -547,9 +1180,9 @@
                 const normalized = normalizePlayerName(name);
                 if (!normalized) continue;
 
-                byId.set(id, { id, name });
+                byId.set(id, { id, name, status: normalizedStatus(member?.status), lastAction: member?.last_action || null });
                 const existing = byName.get(normalized);
-                if (!existing) byName.set(normalized, { id, name, ambiguous: false });
+                if (!existing) byName.set(normalized, { id, name, status: normalizedStatus(member?.status), lastAction: member?.last_action || null, ambiguous: false });
                 else if (existing.id !== id) byName.set(normalized, { id: null, name, ambiguous: true });
             }
 
@@ -586,11 +1219,11 @@
     async function findRows() {
         requireVisiblePage();
         const map = new Map();
-        if (!/\/factions\.php\/?$/i.test(location.pathname)) {
+        if (!isFactionPath()) {
             return { rows: map, memberLists: 0, candidateRows: 0, directIds: 0, nameIds: 0 };
         }
 
-        const memberLists = Array.from(document.querySelectorAll(".members-list"));
+        const memberLists = factionMemberLists();
         const candidates = [];
 
         for (const membersList of memberLists) {
@@ -727,6 +1360,13 @@
                 transition:transform .12s ease, box-shadow .12s ease, filter .12s ease
             }
             .ks6-fab:active{transform:scale(.98)}
+            .ks6-fab.ks6-docked{
+                position:static!important;left:auto!important;top:auto!important;right:auto!important;bottom:auto!important;
+                flex:0 0 34px!important;width:34px!important;height:34px!important;min-width:34px!important;
+                margin:0!important;z-index:auto!important;touch-action:manipulation!important
+            }
+            .ks6-fab.ks6-docked .ks6-fab-label{font-size:11px!important}
+            .ks6-fab.ks6-docked .ks6-fab-crown-mark{font-size:7px!important;margin:0!important}
             .ks6-fab .ks6-fab-label{display:block;line-height:1;pointer-events:none}
             .ks6-fab .ks6-fab-crown-mark{display:none;line-height:1;pointer-events:none}
 
@@ -757,7 +1397,13 @@
             }
             .ks6-panel *{box-sizing:border-box}
             .ks6-panel-head,.ks6-card-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+            .ks6-panel-title{min-width:0}
             .ks6-panel strong,.ks6-card strong{font-size:16px;color:#fff!important}
+            .ks6-component{margin-top:1px;color:#c9cbd0!important;font-size:10px}
+            .ks6-version-warning{
+                margin:7px 0;padding:7px;border:1px solid #8a6530;border-radius:6px;
+                background:#493617!important;color:#ffe0a0!important;font-size:10px;font-weight:700
+            }
             .ks6-close{
                 flex:0 0 34px!important;width:34px!important;height:34px!important;margin:0!important;padding:0!important;
                 border:1px solid #686d73!important;border-radius:50%!important;background:#34383d!important;
@@ -1004,6 +1650,7 @@
     function clearRowVisuals(row) {
         row.removeAttribute("data-ks6-applied");
         row.removeAttribute("data-ks6-pending");
+        row.removeAttribute("data-ks6-retry");
         row.classList.remove("ks6-colored-row");
         row.style.removeProperty("--ks6-row-color");
         row.style.removeProperty("--ks6-row-tint");
@@ -1133,8 +1780,25 @@
             : '<span class="ks6-fab-label">KS</span>';
     }
 
+    function updateSuiteVersionWarning() {
+        const warning = document.querySelector('[data-ksp="version-warning"]');
+        if (!warning) return;
+
+        const warVersion = String(window.__ksWarToolsActive?.version || "");
+        const mismatch = Boolean(warVersion && warVersion !== VERSION);
+        warning.hidden = !mismatch;
+        warning.textContent = mismatch
+            ? `Version mismatch: Scout ${VERSION} / War Tools ${warVersion}`
+            : "";
+    }
+
+    function onWarToolsReady() {
+        syncButtonDock();
+        updateSuiteVersionWarning();
+    }
+
     function ensurePanel() {
-        if (!/\/factions\.php\/?$/i.test(location.pathname)) return;
+        if (!hasFactionMemberList()) return;
         if (document.querySelector(".ks6-fab")) return;
 
         const button = document.createElement("button");
@@ -1151,10 +1815,14 @@
         panel.hidden = true;
         panel.innerHTML = `
             <div class="ks6-panel-head">
-                <strong>${NAME} ${VERSION}</strong>
+                <div class="ks6-panel-title">
+                    <strong>${NAME} ${VERSION}</strong>
+                    <div class="ks6-component">${COMPONENT}</div>
+                </div>
                 <button type="button" class="ks6-close" data-ksp="close" aria-label="Close">×</button>
             </div>
-            <div class="ks6-status" data-ksp="status">Waiting for faction scan…</div>
+            <div class="ks6-version-warning" data-ksp="version-warning" hidden></div>
+            <div class="ks6-status" data-ksp="status">${escapeHtml(lastPanelStatus)}</div>
 
             <label>FF Scouter API key
                 <input data-ksp="key" type="password" value="${escapeHtml(getApiKey())}">
@@ -1181,7 +1849,7 @@
                 <div>
                     <strong>Active page only:</strong> scanning and new requests pause whenever Torn is hidden or in the background.<br><br>
                     <strong>Sent to FF Scouter:</strong> the entered key and player IDs from the faction list currently on screen, solely to retrieve FF scores and battle-stat estimates.<br><br>
-                    <strong>Sent to Torn API when needed:</strong> the entered key is used only for the official faction/basic membership request when a displayed row has no direct player ID.<br><br>
+                    <strong>Sent to Torn API on member lists:</strong> the entered key is used for the official faction/basic request that supplies member status/timers and fallback member mapping. No Torn API request is made from Main News or other faction tabs without a member list.<br><br>
                     <strong>Stored locally:</strong> the key, settings, manual FF/battle stats, notes, cached lookup results, and profile estimates. This script has no developer-operated server and automates no Torn actions. FF Scouter is a separate external service.
                 </div>
             </details>
@@ -1197,6 +1865,10 @@
         button.onpointerdown = event => {
             dragging = true;
             moved = false;
+            if (button.classList.contains("ks6-docked")) {
+                event.preventDefault();
+                return;
+            }
             const rect = button.getBoundingClientRect();
             sx = event.clientX;
             sy = event.clientY;
@@ -1207,7 +1879,7 @@
         };
 
         button.onpointermove = event => {
-            if (!dragging) return;
+            if (!dragging || button.classList.contains("ks6-docked")) return;
             const dx = event.clientX - sx;
             const dy = event.clientY - sy;
             if (Math.abs(dx) > 4 || Math.abs(dy) > 4) moved = true;
@@ -1227,7 +1899,10 @@
             const nextStyle = panel.querySelector('[data-ksp="style"]').value || "crest";
 
             setApiKey(nextKey);
-            if (previousKey !== nextKey) factionDirectoryCache.clear();
+            if (previousKey !== nextKey) {
+                factionDirectoryCache.clear();
+                scheduleStatusRefresh(0);
+            }
             settings.showUnknown = nextUnknown;
             settings.buttonStyle = ["simple", "crest", "royal"].includes(nextStyle) ? nextStyle : "crest";
             saveSettings();
@@ -1284,6 +1959,7 @@
             persistPanelSettings();
             memoryCache.clear();
             clearRendered();
+            scheduleStatusRefresh(0);
             scheduleScan(0);
         };
 
@@ -1299,6 +1975,8 @@
         };
 
         document.body.append(button, panel);
+        syncButtonDock();
+        updateSuiteVersionWarning();
     }
 
     function removePanel() {
@@ -1306,8 +1984,9 @@
     }
 
     function updatePanelStatus(text) {
+        lastPanelStatus = String(text || "");
         const el = document.querySelector('[data-ksp="status"]');
-        if (el) el.textContent = text;
+        if (el && el.textContent !== lastPanelStatus) el.textContent = lastPanelStatus;
     }
 
     function clearRendered() {
@@ -1333,31 +2012,40 @@
             requireVisiblePage();
             captureProfileEstimate();
 
-            if (!/\/factions\.php\/?$/i.test(location.pathname)) {
+            if (!isFactionPath()) {
                 clearRendered();
                 removePanel();
+                clearTimeout(statusTimer);
+                statusTimer = null;
                 return;
             }
-
-            ensurePanel();
 
             const result = await findRows();
             requireVisiblePage();
             const rows = result.rows;
 
             if (!result.memberLists) {
-                updatePanelStatus("Torn member-list container not loaded yet.");
-            } else {
-                updatePanelStatus(`${rows.size}/${result.candidateRows} members mapped · ${result.directIds} XID · ${result.nameIds} name`);
+                clearRendered();
+                removePanel();
+                clearTimeout(statusTimer);
+                statusTimer = null;
+                return;
             }
+
+            ensurePanel();
+            syncButtonDock();
+            scheduleStatusRefresh(0);
+            updatePanelStatus(`${rows.size}/${result.candidateRows} members mapped · ${result.directIds} XID · ${result.nameIds} name`);
 
             if (!rows.size) return;
 
             const fresh = [];
             for (const entry of rows.values()) {
-                if (entry.row.dataset.ks6Applied === VERSION) continue;
+                const retry = entry.row.dataset.ks6Retry === "1";
+                if (entry.row.dataset.ks6Applied === VERSION && !retry) continue;
                 if (entry.row.dataset.ks6Pending === "1") continue;
                 entry.row.dataset.ks6Pending = "1";
+                entry.row.removeAttribute("data-ks6-retry");
                 fresh.push(entry);
             }
 
@@ -1368,12 +2056,37 @@
                 requireVisiblePage();
                 for (const entry of fresh) {
                     requireVisiblePage();
-                    const rendered = render(entry, data.get(entry.id));
+                    const value = data.get(entry.id);
+                    const rendered = render(entry, value);
                     if (rendered) entry.row.dataset.ks6Applied = VERSION;
                     else entry.row.removeAttribute("data-ks6-applied");
+
+                    if (value?._transient || data.ksNeedsRetryIds?.has?.(entry.id)) {
+                        entry.row.dataset.ks6Retry = "1";
+                    } else {
+                        entry.row.removeAttribute("data-ks6-retry");
+                    }
                     entry.row.removeAttribute("data-ks6-pending");
                 }
-                updatePanelStatus(`${rows.size}/${result.candidateRows} members · FF/EST data loaded`);
+
+                window.dispatchEvent(new CustomEvent(FF_EVENT, {
+                    detail: {
+                        version: VERSION,
+                        factionId: detectFactionId(),
+                        degraded: Boolean(data.ksTransientFailure)
+                    }
+                }));
+
+                if (data.ksTransientFailure) {
+                    updatePanelStatus(`${rows.size}/${result.candidateRows} members · FF Scouter temporarily unavailable · using cache`);
+                    clearTimeout(ffRetryTimer);
+                    ffRetryTimer = setTimeout(() => {
+                        ffRetryTimer = null;
+                        scheduleScan(0);
+                    }, 5000);
+                } else {
+                    updatePanelStatus(`${rows.size}/${result.candidateRows} members · FF/EST data loaded`);
+                }
             } catch (error) {
                 for (const entry of fresh) {
                     entry.row.removeAttribute("data-ks6-applied");
@@ -1431,6 +2144,10 @@
             resumeScanWhenVisible = true;
             clearTimeout(scanTimer);
             scanTimer = null;
+            clearTimeout(statusTimer);
+            statusTimer = null;
+            clearTimeout(ffRetryTimer);
+            ffRetryTimer = null;
             disconnectObserver();
             abortActiveRequests();
             updatePanelStatus("Paused while Torn is not visible.");
@@ -1439,6 +2156,7 @@
 
         connectObserver();
         updatePanelStatus("Visible again · resuming scan…");
+        if (hasFactionMemberList()) scheduleStatusRefresh(0);
         scheduleScan(resumeScanWhenVisible ? 0 : 80);
     }
 
@@ -1462,16 +2180,36 @@
             row.style.removeProperty("box-shadow");
         });
 
+        loadPublishedStatusSnapshot();
         ensureStyles();
-        ensurePanel();
 
         observer = new MutationObserver(mutations => {
             if (!isPageVisible()) return;
+            if (!isFactionPath() && !isProfilePath()) return;
+
             const relevant = mutations.some(mutation =>
-                Array.from(mutation.addedNodes).some(node => {
+                [...Array.from(mutation.addedNodes), ...Array.from(mutation.removedNodes)].some(node => {
                     if (!(node instanceof Element)) return false;
-                    return !node.matches(".ks6-fab,.ks6-panel,.ks6-badge,.ks6-modal,.ks6-toast") &&
-                           !node.closest?.(".ks6-panel,.ks6-modal");
+
+                    if (node.matches(
+                        ".ks6-fab,.ks6-panel,.ks6-badge,.ks6-modal,.ks6-toast," +
+                        ".kswt-timer,#kswt-toolbar,#kswt-timer-info,.kswt-info-text,.kswt-info-close," +
+                        "[data-ks-suite-mutating]"
+                    )) return false;
+
+                    if (node.closest?.(
+                        ".ks6-panel,.ks6-modal,#kswt-toolbar,#kswt-timer-info,[data-ks-suite-mutating]"
+                    )) return false;
+
+                    // Profile capture still needs to tolerate Torn's dynamic profile DOM.
+                    if (isProfilePath()) return true;
+
+                    // On faction pages, only member-list changes justify a full scan.
+                    return Boolean(
+                        node.matches(".members-list,.table-body,.table-row") ||
+                        node.querySelector?.(".members-list,.table-body,.table-row") ||
+                        node.closest?.(".members-list .table-row")
+                    );
                 })
             );
 
@@ -1483,20 +2221,33 @@
         window.addEventListener("hashchange", onRouteChange);
         window.addEventListener("popstate", onRouteChange);
         window.navigation?.addEventListener?.("currententrychange", onRouteChange);
+        window.addEventListener(WAR_READY_EVENT, onWarToolsReady);
 
         scheduleScan(0);
 
         window[INSTANCE_KEY] = {
+            version: VERSION,
+            component: COMPONENT,
+            getStatusSnapshot: () => window[CORE_WINDOW_KEY] || null,
+            refreshStatus: () => refreshStatusCore(false),
+            forceStatusRefresh: () => refreshStatusCore(true),
+            syncButtonDock,
+            undockButton,
             destroy() {
                 destroyed = true;
                 clearTimeout(scanTimer);
                 scanTimer = null;
+                clearTimeout(statusTimer);
+                statusTimer = null;
+                clearTimeout(ffRetryTimer);
+                ffRetryTimer = null;
                 disconnectObserver();
                 abortActiveRequests();
                 document.removeEventListener("visibilitychange", onVisibilityChange);
                 window.removeEventListener("hashchange", onRouteChange);
                 window.removeEventListener("popstate", onRouteChange);
                 window.navigation?.removeEventListener?.("currententrychange", onRouteChange);
+                window.removeEventListener(WAR_READY_EVENT, onWarToolsReady);
                 document.querySelectorAll(
                     ".ks6-fab,.ks6-panel,.ks6-badge,.ks6-modal,.ks6-toast"
                 ).forEach(el => el.remove());

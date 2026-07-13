@@ -1,85 +1,124 @@
-# 👑 Kingshade Torn Suite
+# Kingshade Torn Suite
 
 ![Platform](https://img.shields.io/badge/Platform-Torn%20PDA-blue)
-![Scripts](https://img.shields.io/badge/Scripts-3-purple)
-![Status](https://img.shields.io/badge/Status-Active-brightgreen)
+![Suite](https://img.shields.io/badge/Kingshade%20Suite-0.8.3%20Beta-orange)
+![Status](https://img.shields.io/badge/Status-Faction%20testing-yellow)
 
-A compact collection of Torn PDA userscripts by **Kingshade**. The scripts provide information and visual guidance without performing Torn actions for the player.
+A compact collection of read-only Torn PDA userscripts by **Kingshade**. The scripts add information, filtering and visual guidance without performing Torn actions for the player.
 
-## 🔎 Kingshade Scout PDA
+## Kingshade Suite 0.8.3 Beta
 
-**Current script version: 0.7.4**
+Scout and War Tools are one coordinated suite. They must always use the **same version number**.
 
-Faction-member overlay for faster target assessment.
+### Kingshade Scout 0.8.3
 
-- FF Scouter Fair Fight scores
-- Estimated battle-stat fallback when no FF score exists
-- Full-row FF color scale
-- Older-data marker
-- Optional manual values and notes
-- Three selectable KS button designs
-- Active-page-only requests and clear privacy disclosure
+Faction-member intelligence and shared data core.
 
-**Repository file:** `Kingshade_Scout_Torn_PDA_v0.7.0_FINAL.user.js`
+- FF Scouter Fair Fight values
+- Estimated battle-stat fallback when FF is unavailable
+- Full-row FF colour scale
+- Manual FF, battle-stat values and notes
+- Shared faction status data for War Tools
+- Exact Hospital, Jail and Federal end timestamps when Torn exposes them
+- Marked travel-time estimates when Torn does not expose an exact arrival timestamp
+- Active-page-only network requests
+- Reduced rescanning and smoother scrolling on long member lists
 
-**Raw installation/update URL:**
+**Repository file:** `Kingshade_Scout_Torn_PDA_v0.8.3.user.js`
 
-`https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/Kingshade_Scout_Torn_PDA_v0.7.0_FINAL.user.js`
+**Raw installation URL:**
 
-> The older filename is intentionally retained so existing Torn PDA remote-update links continue to work. The userscript metadata contains the actual current version.
+`https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/Kingshade_Scout_Torn_PDA_v0.8.3.user.js`
 
-## ⚔️ KS War Tools
+### KS War Tools 0.8.3
 
-**Current script version: 0.1.0**
+Mobile faction filters, sorting and status timers powered by Scout.
 
-Companion script for Kingshade Scout PDA.
+- ALL, READY, EASY NOW, SOON and NO DATA filters
+- Configurable maximum FF and SOON window
+- Sorting by original order, FF, status and ending time
+- Exact Hospital, Jail and Federal countdowns
+- Travel estimates clearly prefixed with `~`
+- `TRAVEL ~?` when no trustworthy ETA can be produced
+- Clickable attacker names only when Torn exposes a verifiable profile ID
+- Version-mismatch warning when Scout and War Tools do not match
+- No independent API requests and no automated Torn actions
 
-- Filters faction members by readiness and FF threshold
-- Sorts by FF, status, level, or original order
-- Adds exact status countdowns when Torn exposes a usable timestamp
-- Uses only data already stored or rendered by Kingshade Scout
-- Makes no API calls or background requests
+**Repository file:** `KS_War_Tools_Torn_PDA_v0.8.3.user.js`
 
-**Repository file:** `KS_War_Tools_Torn_PDA.user.js`
+**Raw installation URL:**
 
-**Raw installation/update URL:**
+`https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_War_Tools_Torn_PDA_v0.8.3.user.js`
 
-`https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_War_Tools_Torn_PDA.user.js`
+### Timer accuracy
 
-## 🎬 Kingshade's Bootlegging Clean
+- **Hospital, Jail and Federal:** exact countdowns based on Torn's exposed end timestamp.
+- **Traveling:** estimates only. Torn does not expose another player's exact departure or arrival timestamp.
+- **Abroad:** no countdown because the player is stationary abroad.
 
-**Current script version: 4.1.1**
+## Kingshade's Bootlegging Clean 4.1.1
 
-Visual guidance for the Bootlegging crime.
+Standalone visual guidance for the Bootlegging crime. It keeps its own version number.
 
-- 🔵 Blue highlight — copy that genre
-- 🟢 Green highlight — sell counterfeit DVDs
-- ⚫ No highlight — wait
+- Blue highlight — copy that genre
+- Green highlight — sell counterfeit DVDs
+- No highlight — wait
 - Reads only Bootlegging data already loaded on the open Crimes page
-- Does not click, perform crimes, or initiate additional Torn requests
+- Does not click, perform crimes or initiate additional Torn requests
 
 **Repository file:** `Kingshades_Bootlegging_Clean_v4.1.1.user.js`
 
-**Raw installation/update URL:**
+**Raw installation URL:**
 
 `https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/Kingshades_Bootlegging_Clean_v4.1.1.user.js`
 
 ## Installation in Torn PDA
 
-1. Open the raw URL for the script.
-2. Add it to Torn PDA's userscript manager.
-3. Use the same raw URL for remote updates.
+1. Open the raw installation URL for each required script.
+2. Add the script to Torn PDA's userscript manager.
+3. Enable both Scout and War Tools.
+4. Confirm that both display version **0.8.3**.
+5. Disable older Scout and War Tools versions.
 
-## Repository structure
+## Feedback for faction testing
 
-The repository root intentionally contains only:
+Include:
 
-- Three userscripts
-- `README.md`
-- `CHANGELOG.md`
-- `LICENSES.md`
+- Scout and War Tools version numbers
+- Torn PDA and Android versions
+- A screenshot of the faction member list and War Tools panel
+- The active filter or sort mode
+- Whether the problem remains after one page reload
 
-No duplicate script copies, checksums, ZIP archives, or upload-instruction files belong in the repository root.
+Never include an API key in screenshots, reports or issues.
+
+## Repository workflow
+
+- `main` contains the current released build.
+- `dev` is the integration branch for future work.
+- `feature/...` branches contain isolated changes.
+- `release/...` branches prepare a version for `main`.
+- `test-status-timers` is retained as the historical v0.8.3 faction-test branch.
+- Scout and War Tools always share the version stored in [`VERSION`](VERSION).
+- Temporary diagnostics, test notes, ZIP archives and duplicate script copies do not belong in the repository root.
+
+See [`docs/RELEASE_PROCESS.md`](docs/RELEASE_PROCESS.md).
+
+## Validation
+
+Every push and pull request runs an automated repository check. It verifies:
+
+- Suite version consistency
+- Required script filenames
+- Userscript metadata versions
+- README and CHANGELOG version references
+- Absence of temporary diagnostics, test notes and ZIP files
+
+Run locally with:
+
+```bash
+bash tools/validate-suite.sh
+```
 
 ## Licensing
 

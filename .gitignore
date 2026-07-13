@@ -1,0 +1,10 @@
+# Local release packages and temporary test material
+*.zip
+TEST_NOTES_v*.txt
+KS_Status_Diagnostics*.user.js
+
+# Editor and operating-system files
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp
