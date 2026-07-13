@@ -1,0 +1,22 @@
+Kingshade Suite 0.8.3 test package
+
+Install both files together:
+- Kingshade_Scout_Torn_PDA_v0.8.3.user.js
+- KS_War_Tools_Torn_PDA_v0.8.3.user.js
+
+Both components and all package filenames use version 0.8.3.
+
+Changes:
+- Reduced scroll-time work on long faction lists.
+- Countdown DOM updates pause while scrolling and resume immediately afterward.
+- Timer text is only rewritten when the displayed value actually changes.
+- War Tools toolbar age/count text updates at a lower frequency.
+- Scout and War Tools ignore unrelated Torn UI/chat/navigation mutations.
+- Opening or closing timer information no longer triggers faction rescans.
+- Scout panel retains its latest scan status instead of reverting to "Waiting for faction scan".
+- The old UNKNOWN filter label is now NO DATA, because it means no FF/EST data rather than unknown Torn status.
+
+No mechanics changed:
+- Hospital, jail and federal timers remain exact.
+- Travel times remain marked estimates.
+- Abroad remains without a countdown.
