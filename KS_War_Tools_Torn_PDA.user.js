@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KS War Tools for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.1.1
+// @version      0.1.2
 // @description  Coordinated faction filters, sorting, exact hospital timers, and clearly marked travel ETA estimates for Kingshade Scout Core.
 // @author       Kingshade
 // @match        https://www.torn.com/factions.php*
@@ -22,7 +22,7 @@
 
     const SCRIPT = Object.freeze({
         name: "KS War Tools",
-        version: "0.1.1",
+        version: "0.1.2",
         instanceKey: "__ksWarToolsActive",
         sharedCoreKey: "__kingshadeScoutCore",
         sharedStorageKey: "kingshade-scout:status-core",
@@ -30,6 +30,7 @@
         readyEvent: "kingshade-war-tools:ready",
         styleId: "kswt-styles",
         toolbarId: "kswt-toolbar",
+        infoId: "kswt-timer-info",
         settingsKey: "kingshade-war-tools:settings",
         coreCachePrefix: "kingshade-scout:cache:",
         coreManualPrefix: "kingshade-scout:manual:"
@@ -53,6 +54,7 @@
         observer: null,
         scanTimer: null,
         clockTimer: null,
+        infoTimer: null,
         settings: loadSettings(),
         originalOrder: new WeakMap(),
         managedRows: new Set(),
@@ -368,6 +370,49 @@
         return "";
     }
 
+    function closeTimerInfo() {
+        clearTimeout(state.infoTimer);
+        state.infoTimer = null;
+        document.getElementById(SCRIPT.infoId)?.remove();
+    }
+
+    function showTimerInfo(text) {
+        closeTimerInfo();
+        const message = normalizeText(text);
+        if (!message) return;
+
+        const box = document.createElement("div");
+        box.id = SCRIPT.infoId;
+        box.setAttribute("role", "status");
+        box.setAttribute("aria-live", "polite");
+
+        const content = document.createElement("div");
+        content.className = "kswt-info-text";
+        content.textContent = message;
+
+        const close = document.createElement("button");
+        close.type = "button";
+        close.className = "kswt-info-close";
+        close.setAttribute("aria-label", "Close timer information");
+        close.textContent = "×";
+        close.onclick = event => {
+            event.preventDefault();
+            event.stopPropagation();
+            closeTimerInfo();
+        };
+
+        box.append(content, close);
+        document.body.appendChild(box);
+        state.infoTimer = setTimeout(closeTimerInfo, 5000);
+    }
+
+    function activateTimerInfo(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        const timer = event.currentTarget;
+        showTimerInfo(timer?.dataset?.info || "");
+    }
+
     function renderTimer(info) {
         removeTimer(info.row);
         if (!info.until || info.status === "okay" || info.status === "abroad") return;
@@ -381,8 +426,15 @@
         timer.className = `kswt-timer ${info.timerKind === "estimate" ? "estimated" : "exact"}`;
         timer.dataset.until = String(info.until);
         timer.dataset.kind = String(info.timerKind || "");
+        timer.dataset.info = timerTitle(info);
         timer.textContent = `${info.timerKind === "estimate" ? "~" : ""}${formatCountdown(remaining)}`;
-        timer.title = timerTitle(info);
+        timer.setAttribute("aria-label", timer.dataset.info || timer.textContent);
+        timer.setAttribute("role", "button");
+        timer.tabIndex = 0;
+        timer.addEventListener("click", activateTimerInfo);
+        timer.addEventListener("keydown", event => {
+            if (event.key === "Enter" || event.key === " ") activateTimerInfo(event);
+        });
         statusElement.appendChild(timer);
     }
 
@@ -560,8 +612,21 @@
             #${SCRIPT.toolbarId} .kswt-note{margin-top:8px!important;color:#bfc2c6!important;font-size:10px!important;line-height:1.35!important}
             #${SCRIPT.toolbarId} .kswt-timer-summary{margin-top:6px!important;color:#e3d29f!important;font-size:9.5px!important}
             .kswt-status-host{position:relative!important;overflow:visible!important}
-            .kswt-timer{display:block!important;margin-top:1px!important;color:#fff!important;font:800 8px/1.1 Arial,sans-serif!important;text-shadow:0 1px 2px rgba(0,0,0,.8)!important;white-space:nowrap!important}
+            .kswt-timer{display:block!important;margin-top:1px!important;color:#fff!important;font:800 8px/1.1 Arial,sans-serif!important;text-shadow:0 1px 2px rgba(0,0,0,.8)!important;white-space:nowrap!important;cursor:pointer!important}
             .kswt-timer.estimated{color:#ffe6a6!important}
+            #${SCRIPT.infoId}{
+                position:fixed!important;left:8px!important;right:8px!important;bottom:max(78px,calc(env(safe-area-inset-bottom) + 78px))!important;
+                z-index:2147483647!important;display:flex!important;align-items:flex-start!important;gap:8px!important;
+                max-width:520px!important;margin:0 auto!important;padding:11px 12px!important;border:1px solid #666b72!important;
+                border-radius:8px!important;background:#3d3f42!important;color:#fff!important;
+                box-shadow:0 5px 20px rgba(0,0,0,.65)!important;font:12px/1.4 Arial,sans-serif!important
+            }
+            #${SCRIPT.infoId} .kswt-info-text{flex:1 1 auto!important;min-width:0!important}
+            #${SCRIPT.infoId} .kswt-info-close{
+                flex:0 0 30px!important;width:30px!important;height:30px!important;margin:-5px -6px 0 0!important;padding:0!important;
+                border:0!important;border-radius:50%!important;background:transparent!important;color:#fff!important;
+                font:800 22px/28px Arial,sans-serif!important;text-shadow:none!important
+            }
             @media (min-width:520px){
                 #${SCRIPT.toolbarId} .kswt-filters{grid-template-columns:repeat(5,minmax(0,1fr))!important}
                 #${SCRIPT.toolbarId} .kswt-controls{grid-template-columns:1fr 1fr!important}
@@ -723,7 +788,14 @@
         return true;
     }
 
+    function closeInfoOnOutsidePointer(event) {
+        const info = document.getElementById(SCRIPT.infoId);
+        if (!info || info.contains(event.target) || event.target?.closest?.(".kswt-timer")) return;
+        closeTimerInfo();
+    }
+
     function handleVisibility() {
+        closeTimerInfo();
         if (isVisiblePage()) {
             window.__kingshadeScoutActive?.refreshStatus?.();
             scheduleApply(0);
@@ -740,6 +812,7 @@
     }
 
     function onRouteChange() {
+        closeTimerInfo();
         setTimeout(() => {
             if (!isFactionPage()) {
                 document.getElementById(SCRIPT.toolbarId)?.remove();
@@ -767,6 +840,8 @@
         });
         state.observer.observe(document.body, { childList: true, subtree: true });
 
+        document.addEventListener("pointerdown", closeInfoOnOutsidePointer, true);
+        window.addEventListener("scroll", closeTimerInfo, true);
         document.addEventListener("visibilitychange", handleVisibility);
         window.addEventListener(SCRIPT.sharedEvent, onCoreStatusUpdate);
         window.addEventListener("hashchange", onRouteChange);
@@ -788,7 +863,10 @@
         state.destroyed = true;
         clearTimeout(state.scanTimer);
         clearInterval(state.clockTimer);
+        closeTimerInfo();
         state.observer?.disconnect();
+        document.removeEventListener("pointerdown", closeInfoOnOutsidePointer, true);
+        window.removeEventListener("scroll", closeTimerInfo, true);
         document.removeEventListener("visibilitychange", handleVisibility);
         window.removeEventListener(SCRIPT.sharedEvent, onCoreStatusUpdate);
         window.removeEventListener("hashchange", onRouteChange);
