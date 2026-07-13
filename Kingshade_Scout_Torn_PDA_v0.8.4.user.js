@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kingshade Scout for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.8.3
+// @version      0.8.4
 // @description  Kingshade Suite Scout Core for Torn PDA with FF/EST, shared faction status data, and War Tools integration.
 // @author       Kingshade
 // @match        https://www.torn.com/*
@@ -29,7 +29,7 @@
 
     const NAME = "Kingshade Suite";
     const COMPONENT = "Scout Core";
-    const VERSION = "0.8.3";
+    const VERSION = "0.8.4";
     const API_BASE = "https://ffscouter.com/api/v1";
     const TORN_API_BASE = "https://api.torn.com";
     const PREFIX = "kingshade-scout:";
@@ -45,6 +45,9 @@
     const STATUS_EVENT = "kingshade-scout:status-update";
     const FF_EVENT = "kingshade-scout:ff-update";
     const WAR_READY_EVENT = "kingshade-war-tools:ready";
+    const WAR_SETTINGS_KEY = "kingshade-war-tools:settings";
+    const WAR_SETTINGS_EVENT = "kingshade-war-tools:settings-update";
+    const WAR_SETTINGS_COMMAND_EVENT = "kingshade-war-tools:settings-command";
     const CACHE_MS = 60 * 60 * 1000;
     const FACTION_DIRECTORY_MS = 5 * 60 * 1000;
     const STATUS_REFRESH_MS = 30 * 1000;
@@ -54,7 +57,8 @@
         showUnknown: true,
         buttonStyle: "crest",
         buttonX: null,
-        buttonY: null
+        buttonY: null,
+        controlTab: "overview"
     };
 
     let settings = loadSettings();
@@ -145,6 +149,7 @@
             const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
             // Keep old installations compatible while removing the obsolete stripe option.
             delete saved.showStripe;
+            if (!["overview", "scout", "war", "data"].includes(saved.controlTab)) delete saved.controlTab;
             return { ...DEFAULTS, ...saved };
         } catch {
             return { ...DEFAULTS };
@@ -1492,6 +1497,26 @@
                 max-width:90vw;padding:9px 12px;border-radius:7px;background:#b3261e!important;
                 color:#fff!important;font:600 12px Arial;z-index:2147483647
             }
+
+            .ks6-control-center{width:min(94vw,410px)!important;max-height:min(78vh,700px)!important;overflow-y:auto!important;padding:12px!important}
+            .ks6-tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;margin:9px 0 11px}
+            .ks6-tabs button{min-width:0;padding:8px 2px;border:1px solid #555b62;border-radius:5px;background:#30343a!important;color:#d8dade!important;font-size:9px!important;font-weight:800!important;text-shadow:none!important}
+            .ks6-tabs button.active{border-color:#d4ab58;background:#594317!important;color:#ffe5a5!important}
+            .ks6-tab-page[hidden]{display:none!important}
+            .ks6-tab-page label{margin:10px 0}
+            .ks6-control-center input[type=number]{width:90px;min-width:0;height:31px;padding:4px 7px;border:1px solid #777;border-radius:4px;background:#fff!important;color:#111!important}
+            .ks6-control-center input[type=checkbox]{width:22px;height:22px}
+            .ks6-inline-number{display:flex;align-items:center;gap:5px}
+            .ks6-overview-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+            .ks6-overview-card{min-width:0;padding:8px;border:1px solid #4d5259;border-radius:6px;background:#292c31!important}
+            .ks6-overview-card span{display:block;color:#aeb2b8!important;font-size:9px;text-transform:uppercase;letter-spacing:.3px}
+            .ks6-overview-card strong{display:block;margin-top:3px;color:#fff!important;font-size:10.5px;line-height:1.25;overflow-wrap:anywhere}
+            .ks6-overview-card strong[data-state='ok']{color:#b9efc4!important}
+            .ks6-overview-card strong[data-state='warn']{color:#ffe0a0!important}
+            .ks6-overview-card strong[data-state='muted']{color:#c6c9cd!important}
+            .ks6-wide-action{width:100%;margin-top:9px;padding:10px;border:1px solid #686d73;border-radius:6px;background:#3b3f44!important;color:#fff!important;font-weight:800!important;text-shadow:none!important}
+            .ks6-wide-action:active{background:#50555c!important}
+            .ks6-danger-action{border-color:#875050!important;background:#5d2e2e!important}
         `;
         (document.head || document.documentElement).appendChild(style);
     }
@@ -1795,6 +1820,170 @@
     function onWarToolsReady() {
         syncButtonDock();
         updateSuiteVersionWarning();
+        updateControlCenterOverview();
+    }
+
+    const WAR_DEFAULTS = Object.freeze({
+        filter: "all",
+        sort: "original",
+        maxFF: 3.0,
+        soonMinutes: 60,
+        collapsed: false
+    });
+
+    function readWarSettings() {
+        const runtime = window.__ksWarToolsActive;
+        if (runtime?.getSettings instanceof Function) {
+            try { return { ...WAR_DEFAULTS, ...runtime.getSettings() }; } catch {}
+        }
+        try {
+            const stored = JSON.parse(localStorage.getItem(WAR_SETTINGS_KEY) || "{}");
+            return { ...WAR_DEFAULTS, ...(stored && typeof stored === "object" ? stored : {}) };
+        } catch {
+            return { ...WAR_DEFAULTS };
+        }
+    }
+
+    function updateWarSettings(partial = {}) {
+        const runtime = window.__ksWarToolsActive;
+        if (runtime?.updateSettings instanceof Function) {
+            try { return runtime.updateSettings(partial); } catch {}
+        }
+        const next = { ...readWarSettings(), ...(partial && typeof partial === "object" ? partial : {}) };
+        try { localStorage.setItem(WAR_SETTINGS_KEY, JSON.stringify(next)); } catch {}
+        window.dispatchEvent(new CustomEvent(WAR_SETTINGS_COMMAND_EVENT, { detail: { settings: next } }));
+        return next;
+    }
+
+    function resetWarSettings() {
+        const runtime = window.__ksWarToolsActive;
+        if (runtime?.resetSettings instanceof Function) {
+            try { return runtime.resetSettings(); } catch {}
+        }
+        try { localStorage.setItem(WAR_SETTINGS_KEY, JSON.stringify(WAR_DEFAULTS)); } catch {}
+        window.dispatchEvent(new CustomEvent(WAR_SETTINGS_COMMAND_EVENT, { detail: { reset: true } }));
+        return { ...WAR_DEFAULTS };
+    }
+
+    function localDataCounts() {
+        const counts = { cache: 0, manual: 0, profile: 0, suite: 0 };
+        try {
+            for (let index = 0; index < localStorage.length; index++) {
+                const key = localStorage.key(index) || "";
+                if (!key.startsWith(PREFIX) && key !== WAR_SETTINGS_KEY) continue;
+                counts.suite += 1;
+                if (key.startsWith(CACHE_PREFIX)) counts.cache += 1;
+                if (key.startsWith(MANUAL_PREFIX)) counts.manual += 1;
+                if (key.startsWith(PROFILE_EST_PREFIX)) counts.profile += 1;
+            }
+        } catch {}
+        return counts;
+    }
+
+    function clearCachedSuiteData() {
+        const keys = [];
+        try {
+            for (let index = 0; index < localStorage.length; index++) {
+                const key = localStorage.key(index) || "";
+                if (
+                    key.startsWith(CACHE_PREFIX) ||
+                    key.startsWith(PROFILE_EST_PREFIX) ||
+                    key === STATUS_STORAGE_KEY ||
+                    key === TRAVEL_ACTIVE_KEY ||
+                    key === TRAVEL_HISTORY_KEY
+                ) keys.push(key);
+            }
+            keys.forEach(key => localStorage.removeItem(key));
+        } catch {}
+        memoryCache.clear();
+        factionDirectoryCache.clear();
+        delete window[CORE_WINDOW_KEY];
+        clearRendered();
+        window.__ksWarToolsActive?.refresh?.();
+        scheduleStatusRefresh(0);
+        scheduleScan(0);
+        return keys.length;
+    }
+
+    function formatSnapshotAge(updatedAt) {
+        const timestamp = Number(updatedAt);
+        if (!Number.isFinite(timestamp) || timestamp <= 0) return "No status snapshot";
+        const seconds = Math.max(0, Math.floor(Date.now() / 1000 - timestamp));
+        if (seconds < 60) return `${seconds}s old`;
+        if (seconds < 3600) return `${Math.floor(seconds / 60)}m old`;
+        return `${Math.floor(seconds / 3600)}h old`;
+    }
+
+    function suiteDiagnostics() {
+        const snapshot = window[CORE_WINDOW_KEY] || readStoredJson(STATUS_STORAGE_KEY, null);
+        const war = window.__ksWarToolsActive;
+        const warVersion = String(war?.version || "");
+        const members = snapshot?.members && typeof snapshot.members === "object"
+            ? Object.keys(snapshot.members).length
+            : 0;
+        return {
+            scoutVersion: VERSION,
+            warActive: Boolean(war),
+            warVersion,
+            versionMatch: !warVersion || warVersion === VERSION,
+            apiKeyConfigured: Boolean(getApiKey()),
+            snapshotAge: formatSnapshotAge(snapshot?.updatedAt),
+            members,
+            factionId: Number(snapshot?.factionId) || null,
+            data: localDataCounts()
+        };
+    }
+
+    function setControlTab(panel, tab) {
+        const valid = ["overview", "scout", "war", "data"].includes(tab) ? tab : "overview";
+        settings.controlTab = valid;
+        saveSettings();
+        panel.querySelectorAll("[data-ksp-tab]").forEach(button => {
+            const active = button.dataset.kspTab === valid;
+            button.classList.toggle("active", active);
+            button.setAttribute("aria-selected", active ? "true" : "false");
+        });
+        panel.querySelectorAll("[data-ksp-page]").forEach(page => {
+            page.hidden = page.dataset.kspPage !== valid;
+        });
+    }
+
+    function syncWarControls(panel) {
+        if (!panel) return;
+        const war = readWarSettings();
+        const filter = panel.querySelector('[data-ksp="war-filter"]');
+        const sort = panel.querySelector('[data-ksp="war-sort"]');
+        const maxFF = panel.querySelector('[data-ksp="war-max-ff"]');
+        const soon = panel.querySelector('[data-ksp="war-soon"]');
+        const collapsed = panel.querySelector('[data-ksp="war-collapsed"]');
+        if (filter) filter.value = war.filter;
+        if (sort) sort.value = war.sort;
+        if (maxFF) maxFF.value = String(war.maxFF);
+        if (soon) soon.value = String(war.soonMinutes);
+        if (collapsed) collapsed.checked = Boolean(war.collapsed);
+    }
+
+    function updateControlCenterOverview(panel = document.querySelector(".ks6-panel")) {
+        if (!panel) return;
+        const info = suiteDiagnostics();
+        const set = (key, text, state = "") => {
+            const element = panel.querySelector(`[data-ksp-overview="${key}"]`);
+            if (!element) return;
+            element.textContent = text;
+            element.dataset.state = state;
+        };
+        set("scout", `Active · v${info.scoutVersion}`, "ok");
+        set("war", info.warActive ? `Active · v${info.warVersion || "?"}` : "Not active on this page", info.warActive ? "ok" : "muted");
+        set("versions", info.versionMatch ? "Versions match" : `Mismatch · Scout ${VERSION} / War ${info.warVersion}`, info.versionMatch ? "ok" : "warn");
+        set("api", info.apiKeyConfigured ? "Configured" : "Not configured", info.apiKeyConfigured ? "ok" : "warn");
+        set("status", `${info.snapshotAge}${info.members ? ` · ${info.members} members` : ""}`, info.members ? "ok" : "muted");
+        set("storage", `${info.data.cache} cache · ${info.data.manual} manual · ${info.data.profile} profile`, "muted");
+        updateSuiteVersionWarning();
+        syncWarControls(panel);
+    }
+
+    function onWarSettingsUpdate() {
+        updateControlCenterOverview();
     }
 
     function ensurePanel() {
@@ -1803,59 +1992,105 @@
 
         const button = document.createElement("button");
         button.className = "ks6-fab";
-        button.title = NAME;
+        button.title = `${NAME} Control Center`;
         applyButtonTheme(button);
 
         const pos = buttonPosition();
         button.style.left = `${pos.x}px`;
         button.style.top = `${pos.y}px`;
 
+        const warSettings = readWarSettings();
         const panel = document.createElement("div");
-        panel.className = "ks6-panel";
+        panel.className = "ks6-panel ks6-control-center";
         panel.hidden = true;
         panel.innerHTML = `
             <div class="ks6-panel-head">
                 <div class="ks6-panel-title">
                     <strong>${NAME} ${VERSION}</strong>
-                    <div class="ks6-component">${COMPONENT}</div>
+                    <div class="ks6-component">Suite Control Center</div>
                 </div>
                 <button type="button" class="ks6-close" data-ksp="close" aria-label="Close">×</button>
             </div>
             <div class="ks6-version-warning" data-ksp="version-warning" hidden></div>
-            <div class="ks6-status" data-ksp="status">${escapeHtml(lastPanelStatus)}</div>
-
-            <label>FF Scouter API key
-                <input data-ksp="key" type="password" value="${escapeHtml(getApiKey())}">
-            </label>
-
-            <label>Show players with no FF or estimate
-                <input data-ksp="unknown" type="checkbox" ${settings.showUnknown ? "checked" : ""}>
-            </label>
-
-            <label>KS button style
-                <select data-ksp="style">
-                    <option value="simple" ${settings.buttonStyle === "simple" ? "selected" : ""}>Style A · Simple gold</option>
-                    <option value="crest" ${settings.buttonStyle === "crest" ? "selected" : ""}>Style B · Crest</option>
-                    <option value="royal" ${settings.buttonStyle === "royal" ? "selected" : ""}>Style C · Crown</option>
-                </select>
-            </label>
-
-            <div class="ks6-help">
-                FF scores use the full FF color scale. When no FF score exists, a verified battle-stat estimate is shown as EST on a neutral row. Tap any label for details or manual values.
+            <div class="ks6-tabs" role="tablist" aria-label="Control Center sections">
+                <button type="button" data-ksp-tab="overview">Overview</button>
+                <button type="button" data-ksp-tab="scout">Scout</button>
+                <button type="button" data-ksp-tab="war">War Tools</button>
+                <button type="button" data-ksp-tab="data">Data</button>
             </div>
 
-            <details class="ks6-privacy">
-                <summary>Privacy &amp; data use</summary>
-                <div>
-                    <strong>Active page only:</strong> scanning and new requests pause whenever Torn is hidden or in the background.<br><br>
-                    <strong>Sent to FF Scouter:</strong> the entered key and player IDs from the faction list currently on screen, solely to retrieve FF scores and battle-stat estimates.<br><br>
-                    <strong>Sent to Torn API on member lists:</strong> the entered key is used for the official faction/basic request that supplies member status/timers and fallback member mapping. No Torn API request is made from Main News or other faction tabs without a member list.<br><br>
-                    <strong>Stored locally:</strong> the key, settings, manual FF/battle stats, notes, cached lookup results, and profile estimates. This script has no developer-operated server and automates no Torn actions. FF Scouter is a separate external service.
+            <section class="ks6-tab-page" data-ksp-page="overview">
+                <div class="ks6-overview-grid">
+                    <div class="ks6-overview-card"><span>Scout</span><strong data-ksp-overview="scout">Loading…</strong></div>
+                    <div class="ks6-overview-card"><span>War Tools</span><strong data-ksp-overview="war">Loading…</strong></div>
+                    <div class="ks6-overview-card"><span>Suite versions</span><strong data-ksp-overview="versions">Loading…</strong></div>
+                    <div class="ks6-overview-card"><span>API key</span><strong data-ksp-overview="api">Loading…</strong></div>
+                    <div class="ks6-overview-card"><span>Status data</span><strong data-ksp-overview="status">Loading…</strong></div>
+                    <div class="ks6-overview-card"><span>Local data</span><strong data-ksp-overview="storage">Loading…</strong></div>
                 </div>
-            </details>
+                <div class="ks6-status" data-ksp="status">${escapeHtml(lastPanelStatus)}</div>
+                <button type="button" class="ks6-wide-action" data-ksp="refresh-suite">Refresh Suite data</button>
+            </section>
 
-            <button type="button" data-ksp="rescan">Rescan faction member list</button>
-            <button type="button" data-ksp="reset">Reset KS button position</button>
+            <section class="ks6-tab-page" data-ksp-page="scout" hidden>
+                <label>FF Scouter API key
+                    <input data-ksp="key" type="password" value="${escapeHtml(getApiKey())}">
+                </label>
+                <label>Show players with no FF or estimate
+                    <input data-ksp="unknown" type="checkbox" ${settings.showUnknown ? "checked" : ""}>
+                </label>
+                <label>KS button style
+                    <select data-ksp="style">
+                        <option value="simple" ${settings.buttonStyle === "simple" ? "selected" : ""}>Style A · Simple gold</option>
+                        <option value="crest" ${settings.buttonStyle === "crest" ? "selected" : ""}>Style B · Crest</option>
+                        <option value="royal" ${settings.buttonStyle === "royal" ? "selected" : ""}>Style C · Crown</option>
+                    </select>
+                </label>
+                <div class="ks6-help">FF uses the full colour scale. Verified battle-stat estimates remain neutral and are labelled EST.</div>
+                <button type="button" class="ks6-wide-action" data-ksp="rescan">Rescan faction member list</button>
+                <button type="button" class="ks6-wide-action" data-ksp="reset">Reset KS button position</button>
+            </section>
+
+            <section class="ks6-tab-page" data-ksp-page="war" hidden>
+                <label>Default filter
+                    <select data-ksp="war-filter">
+                        <option value="all">ALL</option><option value="ready">READY</option>
+                        <option value="easy">EASY NOW</option><option value="soon">SOON</option>
+                        <option value="unknown">NO DATA</option>
+                    </select>
+                </label>
+                <label>Sort
+                    <select data-ksp="war-sort">
+                        <option value="original">Original order</option><option value="ff">FF low → high</option>
+                        <option value="status">Status</option><option value="soon">Ending soon</option>
+                    </select>
+                </label>
+                <label>Easy max FF
+                    <input data-ksp="war-max-ff" type="number" min="0.1" max="20" step="0.1" value="${warSettings.maxFF}">
+                </label>
+                <label>SOON within
+                    <span class="ks6-inline-number"><input data-ksp="war-soon" type="number" min="1" max="1440" step="5" value="${warSettings.soonMinutes}"><span>min</span></span>
+                </label>
+                <label>Start toolbar collapsed
+                    <input data-ksp="war-collapsed" type="checkbox" ${warSettings.collapsed ? "checked" : ""}>
+                </label>
+                <div class="ks6-help">Changes apply immediately to the War Tools toolbar. The quick filter buttons remain available on the faction page.</div>
+                <button type="button" class="ks6-wide-action" data-ksp="war-reset">Reset War Tools defaults</button>
+            </section>
+
+            <section class="ks6-tab-page" data-ksp-page="data" hidden>
+                <details class="ks6-privacy" open>
+                    <summary>Privacy &amp; data use</summary>
+                    <div>
+                        <strong>Active page only:</strong> new requests pause whenever Torn is hidden.<br><br>
+                        <strong>FF Scouter:</strong> receives the entered key and IDs from the visible faction member list for FF/estimate lookups.<br><br>
+                        <strong>Torn API:</strong> receives the entered key for official faction/basic status data while a member list is open.<br><br>
+                        <strong>Stored locally:</strong> key, settings, manual values, notes, cached results, profile estimates and travel calibration. No developer-operated server and no automated Torn actions.
+                    </div>
+                </details>
+                <div class="ks6-help">Clearing cache keeps the API key, preferences, manual FF values and notes. It removes cached FF/profile/status/travel data and reloads it.</div>
+                <button type="button" class="ks6-wide-action ks6-danger-action" data-ksp="clear-cache">Clear cached Suite data</button>
+            </section>
         `;
 
         let dragging = false;
@@ -1870,10 +2105,7 @@
                 return;
             }
             const rect = button.getBoundingClientRect();
-            sx = event.clientX;
-            sy = event.clientY;
-            sl = rect.left;
-            st = rect.top;
+            sx = event.clientX; sy = event.clientY; sl = rect.left; st = rect.top;
             button.setPointerCapture?.(event.pointerId);
             event.preventDefault();
         };
@@ -1883,21 +2115,17 @@
             const dx = event.clientX - sx;
             const dy = event.clientY - sy;
             if (Math.abs(dx) > 4 || Math.abs(dy) > 4) moved = true;
-            const x = Math.max(8, Math.min(innerWidth - 58, sl + dx));
-            const y = Math.max(70, Math.min(innerHeight - 145, st + dy));
-            button.style.left = `${x}px`;
-            button.style.top = `${y}px`;
+            button.style.left = `${Math.max(8, Math.min(innerWidth - 58, sl + dx))}px`;
+            button.style.top = `${Math.max(70, Math.min(innerHeight - 145, st + dy))}px`;
         };
 
-        const persistPanelSettings = () => {
+        const persistScoutSettings = () => {
             const previousKey = getApiKey();
             const previousUnknown = settings.showUnknown;
             const previousStyle = settings.buttonStyle || "crest";
-
             const nextKey = panel.querySelector('[data-ksp="key"]').value.trim();
             const nextUnknown = panel.querySelector('[data-ksp="unknown"]').checked;
             const nextStyle = panel.querySelector('[data-ksp="style"]').value || "crest";
-
             setApiKey(nextKey);
             if (previousKey !== nextKey) {
                 factionDirectoryCache.clear();
@@ -1907,76 +2135,75 @@
             settings.buttonStyle = ["simple", "crest", "royal"].includes(nextStyle) ? nextStyle : "crest";
             saveSettings();
             applyButtonTheme(button, settings.buttonStyle);
-
             return previousKey !== nextKey || previousUnknown !== nextUnknown || previousStyle !== settings.buttonStyle;
         };
 
+        const persistWarSettings = () => updateWarSettings({
+            filter: panel.querySelector('[data-ksp="war-filter"]').value,
+            sort: panel.querySelector('[data-ksp="war-sort"]').value,
+            maxFF: Number(panel.querySelector('[data-ksp="war-max-ff"]').value),
+            soonMinutes: Number(panel.querySelector('[data-ksp="war-soon"]').value),
+            collapsed: panel.querySelector('[data-ksp="war-collapsed"]').checked
+        });
+
         const closePanel = () => {
-            const changed = persistPanelSettings();
+            const changed = persistScoutSettings();
+            persistWarSettings();
             panel.hidden = true;
-            if (changed) {
-                clearRendered();
-                scheduleScan(0);
-            }
+            if (changed) { clearRendered(); scheduleScan(0); }
         };
 
         const finishPointer = event => {
             if (!dragging) return;
             dragging = false;
-
             if (moved) {
                 const rect = button.getBoundingClientRect();
-                settings.buttonX = rect.left;
-                settings.buttonY = rect.top;
-                saveSettings();
+                settings.buttonX = rect.left; settings.buttonY = rect.top; saveSettings();
             } else if (panel.hidden) {
                 panel.hidden = false;
-            } else {
-                closePanel();
-            }
-
+                updateControlCenterOverview(panel);
+            } else closePanel();
             try { button.releasePointerCapture?.(event.pointerId); } catch {}
         };
 
         button.onpointerup = finishPointer;
-        button.onpointercancel = event => {
-            dragging = false;
-            moved = false;
-            try { button.releasePointerCapture?.(event.pointerId); } catch {}
-        };
-        button.onlostpointercapture = () => {
-            dragging = false;
-            moved = false;
-        };
+        button.onpointercancel = event => { dragging = false; moved = false; try { button.releasePointerCapture?.(event.pointerId); } catch {} };
+        button.onlostpointercapture = () => { dragging = false; moved = false; };
 
-        panel.querySelector('[data-ksp="style"]').onchange = event => {
-            applyButtonTheme(button, event.target.value || "crest");
-        };
-
+        panel.querySelectorAll("[data-ksp-tab]").forEach(tab => {
+            tab.onclick = () => setControlTab(panel, tab.dataset.kspTab || "overview");
+        });
+        panel.querySelector('[data-ksp="style"]').onchange = event => applyButtonTheme(button, event.target.value || "crest");
         panel.querySelector('[data-ksp="close"]').onclick = closePanel;
-
-        panel.querySelector('[data-ksp="rescan"]').onclick = () => {
-            persistPanelSettings();
-            memoryCache.clear();
-            clearRendered();
-            scheduleStatusRefresh(0);
-            scheduleScan(0);
+        panel.querySelector('[data-ksp="refresh-suite"]').onclick = () => {
+            persistScoutSettings(); persistWarSettings(); memoryCache.clear(); clearRendered();
+            refreshStatusCore(true); scheduleScan(0); window.__ksWarToolsActive?.refresh?.();
+            updateControlCenterOverview(panel);
         };
-
+        panel.querySelector('[data-ksp="rescan"]').onclick = () => {
+            persistScoutSettings(); memoryCache.clear(); clearRendered(); scheduleStatusRefresh(0); scheduleScan(0);
+        };
         panel.querySelector('[data-ksp="reset"]').onclick = () => {
-            persistPanelSettings();
-            settings.buttonX = null;
-            settings.buttonY = null;
-            saveSettings();
-            const reset = buttonPosition();
-            button.style.left = `${reset.x}px`;
-            button.style.top = `${reset.y}px`;
-            panel.hidden = true;
+            persistScoutSettings(); settings.buttonX = null; settings.buttonY = null; saveSettings();
+            const reset = buttonPosition(); button.style.left = `${reset.x}px`; button.style.top = `${reset.y}px`; panel.hidden = true;
+        };
+        panel.querySelectorAll('[data-ksp="war-filter"],[data-ksp="war-sort"],[data-ksp="war-max-ff"],[data-ksp="war-soon"],[data-ksp="war-collapsed"]').forEach(control => {
+            control.onchange = () => { persistWarSettings(); updateControlCenterOverview(panel); };
+        });
+        panel.querySelector('[data-ksp="war-reset"]').onclick = () => {
+            resetWarSettings(); syncWarControls(panel); updateControlCenterOverview(panel);
+        };
+        panel.querySelector('[data-ksp="clear-cache"]').onclick = () => {
+            if (!window.confirm("Clear cached FF, profile, status and travel data? Manual values, notes, API key and preferences will be kept.")) return;
+            const removed = clearCachedSuiteData();
+            showToast(`Cleared ${removed} cached Suite record${removed === 1 ? "" : "s"}.`);
+            updateControlCenterOverview(panel);
         };
 
         document.body.append(button, panel);
+        setControlTab(panel, settings.controlTab || "overview");
         syncButtonDock();
-        updateSuiteVersionWarning();
+        updateControlCenterOverview(panel);
     }
 
     function removePanel() {
@@ -2222,6 +2449,8 @@
         window.addEventListener("popstate", onRouteChange);
         window.navigation?.addEventListener?.("currententrychange", onRouteChange);
         window.addEventListener(WAR_READY_EVENT, onWarToolsReady);
+        window.addEventListener(WAR_SETTINGS_EVENT, onWarSettingsUpdate);
+        window.addEventListener(STATUS_EVENT, onWarSettingsUpdate);
 
         scheduleScan(0);
 
@@ -2229,6 +2458,17 @@
             version: VERSION,
             component: COMPONENT,
             getStatusSnapshot: () => window[CORE_WINDOW_KEY] || null,
+            getSettings: () => ({ ...settings }),
+            getSuiteStatus: suiteDiagnostics,
+            openControlCenter: (tab = "overview") => {
+                ensurePanel();
+                const panel = document.querySelector(".ks6-panel");
+                if (!panel) return false;
+                setControlTab(panel, tab);
+                panel.hidden = false;
+                updateControlCenterOverview(panel);
+                return true;
+            },
             refreshStatus: () => refreshStatusCore(false),
             forceStatusRefresh: () => refreshStatusCore(true),
             syncButtonDock,
@@ -2248,6 +2488,8 @@
                 window.removeEventListener("popstate", onRouteChange);
                 window.navigation?.removeEventListener?.("currententrychange", onRouteChange);
                 window.removeEventListener(WAR_READY_EVENT, onWarToolsReady);
+                window.removeEventListener(WAR_SETTINGS_EVENT, onWarSettingsUpdate);
+                window.removeEventListener(STATUS_EVENT, onWarSettingsUpdate);
                 document.querySelectorAll(
                     ".ks6-fab,.ks6-panel,.ks6-badge,.ks6-modal,.ks6-toast"
                 ).forEach(el => el.remove());

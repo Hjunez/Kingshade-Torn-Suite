@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KS War Tools for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.8.3
+// @version      0.8.4
 // @description  Kingshade Suite War Tools for faction filters, sorting, exact status timers, and marked travel ETA estimates.
 // @author       Kingshade
 // @match        https://www.torn.com/factions.php*
@@ -23,13 +23,15 @@
     const SCRIPT = Object.freeze({
         name: "Kingshade Suite",
         component: "War Tools",
-        version: "0.8.3",
+        version: "0.8.4",
         instanceKey: "__ksWarToolsActive",
         sharedCoreKey: "__kingshadeScoutCore",
         sharedStorageKey: "kingshade-scout:status-core",
         sharedEvent: "kingshade-scout:status-update",
         ffEvent: "kingshade-scout:ff-update",
         readyEvent: "kingshade-war-tools:ready",
+        settingsEvent: "kingshade-war-tools:settings-update",
+        settingsCommandEvent: "kingshade-war-tools:settings-command",
         styleId: "kswt-styles",
         toolbarId: "kswt-toolbar",
         infoId: "kswt-timer-info",
@@ -45,6 +47,9 @@
         soonMinutes: 60,
         collapsed: false
     });
+
+    const FILTERS = new Set(["all", "ready", "easy", "soon", "unknown"]);
+    const SORTS = new Set(["original", "ff", "status", "soon"]);
 
     const previous = window[SCRIPT.instanceKey];
     if (previous?.destroy instanceof Function) {
@@ -69,20 +74,73 @@
         lastToolbarTick: 0
     };
 
+    function normalizeSettings(value = {}, base = DEFAULTS) {
+        const candidate = { ...base, ...(value && typeof value === "object" ? value : {}) };
+        const maxFF = Number(candidate.maxFF);
+        const soonMinutes = Number(candidate.soonMinutes);
+        return {
+            filter: FILTERS.has(candidate.filter) ? candidate.filter : DEFAULTS.filter,
+            sort: SORTS.has(candidate.sort) ? candidate.sort : DEFAULTS.sort,
+            maxFF: Number.isFinite(maxFF) && maxFF > 0 ? Math.min(20, maxFF) : DEFAULTS.maxFF,
+            soonMinutes: Number.isFinite(soonMinutes) && soonMinutes > 0
+                ? Math.min(1440, Math.max(1, Math.round(soonMinutes)))
+                : DEFAULTS.soonMinutes,
+            collapsed: Boolean(candidate.collapsed)
+        };
+    }
+
     function loadSettings() {
         try {
             const parsed = JSON.parse(localStorage.getItem(SCRIPT.settingsKey) || "{}");
             delete parsed.showTimers;
-            return { ...DEFAULTS, ...parsed };
+            return normalizeSettings(parsed);
         } catch {
-            return { ...DEFAULTS };
+            return normalizeSettings();
         }
     }
 
-    function saveSettings() {
+    function getSettings() {
+        return { ...state.settings };
+    }
+
+    function saveSettings(emit = true) {
         try {
             localStorage.setItem(SCRIPT.settingsKey, JSON.stringify(state.settings));
         } catch {}
+        if (emit) {
+            window.dispatchEvent(new CustomEvent(SCRIPT.settingsEvent, {
+                detail: { version: SCRIPT.version, settings: getSettings() }
+            }));
+        }
+    }
+
+    function syncToolbarControls(toolbar = document.getElementById(SCRIPT.toolbarId)) {
+        if (!toolbar) return;
+        const maxFF = toolbar.querySelector('[data-kswt="max-ff"]');
+        const soon = toolbar.querySelector('[data-kswt="soon"]');
+        const sort = toolbar.querySelector('[data-kswt="sort"]');
+        const collapse = toolbar.querySelector('[data-kswt="collapse"]');
+        if (maxFF) maxFF.value = String(state.settings.maxFF);
+        if (soon) soon.value = String(state.settings.soonMinutes);
+        if (sort) sort.value = state.settings.sort;
+        toolbar.classList.toggle("collapsed", state.settings.collapsed);
+        if (collapse) collapse.textContent = state.settings.collapsed ? "+" : "−";
+    }
+
+    function updateSettings(partial = {}) {
+        state.settings = normalizeSettings(partial, state.settings);
+        saveSettings();
+        syncToolbarControls();
+        scheduleApply(0);
+        return getSettings();
+    }
+
+    function resetSettings() {
+        state.settings = normalizeSettings();
+        saveSettings();
+        syncToolbarControls();
+        scheduleApply(0);
+        return getSettings();
     }
 
     function readJson(key) {
@@ -1013,47 +1071,33 @@
     function bindToolbar(toolbar) {
         toolbar.querySelectorAll("[data-filter]").forEach(button => {
             button.addEventListener("click", () => {
-                state.settings.filter = button.dataset.filter || "all";
-                saveSettings();
-                scheduleApply(0);
+                updateSettings({ filter: button.dataset.filter || "all" });
             });
         });
 
         toolbar.querySelector('[data-kswt="collapse"]').addEventListener("click", () => {
-            state.settings.collapsed = !state.settings.collapsed;
-            saveSettings();
-            toolbar.classList.toggle("collapsed", state.settings.collapsed);
-            toolbar.querySelector('[data-kswt="collapse"]').textContent = state.settings.collapsed ? "+" : "−";
+            updateSettings({ collapsed: !state.settings.collapsed });
         });
 
         const maxFF = toolbar.querySelector('[data-kswt="max-ff"]');
         maxFF.addEventListener("change", () => {
             const value = Number(maxFF.value);
-            state.settings.maxFF = Number.isFinite(value) && value > 0 ? value : DEFAULTS.maxFF;
-            maxFF.value = String(state.settings.maxFF);
-            saveSettings();
-            scheduleApply(0);
+            updateSettings({ maxFF: value });
         });
 
         const soon = toolbar.querySelector('[data-kswt="soon"]');
         soon.addEventListener("change", () => {
             const value = Number(soon.value);
-            state.settings.soonMinutes = Number.isFinite(value) && value > 0 ? Math.min(1440, Math.max(1, value)) : DEFAULTS.soonMinutes;
-            soon.value = String(state.settings.soonMinutes);
-            saveSettings();
-            scheduleApply(0);
+            updateSettings({ soonMinutes: value });
         });
 
         const sort = toolbar.querySelector('[data-kswt="sort"]');
         sort.value = state.settings.sort;
         sort.addEventListener("change", () => {
-            state.settings.sort = sort.value;
-            saveSettings();
-            scheduleApply(0);
+            updateSettings({ sort: sort.value });
         });
 
-        toolbar.classList.toggle("collapsed", state.settings.collapsed);
-        toolbar.querySelector('[data-kswt="collapse"]').textContent = state.settings.collapsed ? "+" : "−";
+        syncToolbarControls(toolbar);
     }
 
     function dockScoutButton() {
@@ -1194,6 +1238,30 @@
         }, 150);
     }
 
+    function getStatus() {
+        const snapshot = state.activeSnapshot && snapshotMatchesCurrent(state.activeSnapshot)
+            ? state.activeSnapshot
+            : getStatusSnapshot();
+        const counts = countsFor(state.lastInfos);
+        return {
+            active: !state.destroyed,
+            version: SCRIPT.version,
+            component: SCRIPT.component,
+            toolbarPresent: Boolean(document.getElementById(SCRIPT.toolbarId)),
+            factionId: positiveNumber(snapshot?.factionId),
+            snapshotUpdatedAt: positiveNumber(snapshot?.updatedAt),
+            settings: getSettings(),
+            counts: { ...counts, showing: state.lastInfos.filter(matchesFilter).length }
+        };
+    }
+
+    function onSettingsCommand(event) {
+        const detail = event?.detail;
+        if (!detail || typeof detail !== "object") return;
+        if (detail.reset) resetSettings();
+        else updateSettings(detail.settings || detail);
+    }
+
     function init() {
         if (!document.body) {
             setTimeout(init, 100);
@@ -1216,6 +1284,7 @@
         document.addEventListener("visibilitychange", handleVisibility);
         window.addEventListener(SCRIPT.sharedEvent, onCoreStatusUpdate);
         window.addEventListener(SCRIPT.ffEvent, onCoreFfUpdate);
+        window.addEventListener(SCRIPT.settingsCommandEvent, onSettingsCommand);
         window.addEventListener("hashchange", onRouteChange);
         window.addEventListener("popstate", onRouteChange);
         window.navigation?.addEventListener?.("currententrychange", onRouteChange);
@@ -1226,6 +1295,10 @@
         window[SCRIPT.instanceKey] = {
             version: SCRIPT.version,
             component: SCRIPT.component,
+            getSettings,
+            updateSettings,
+            resetSettings,
+            getStatus,
             refresh: () => scheduleApply(0),
             destroy
         };
@@ -1247,6 +1320,7 @@
         document.removeEventListener("visibilitychange", handleVisibility);
         window.removeEventListener(SCRIPT.sharedEvent, onCoreStatusUpdate);
         window.removeEventListener(SCRIPT.ffEvent, onCoreFfUpdate);
+        window.removeEventListener(SCRIPT.settingsCommandEvent, onSettingsCommand);
         window.removeEventListener("hashchange", onRouteChange);
         window.removeEventListener("popstate", onRouteChange);
         window.navigation?.removeEventListener?.("currententrychange", onRouteChange);
