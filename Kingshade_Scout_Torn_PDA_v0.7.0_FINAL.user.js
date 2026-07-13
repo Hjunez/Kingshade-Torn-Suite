@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Kingshade Scout for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.7.2
-// @description  Mobile FF Scouter overlay for Torn PDA faction member lists with FF, estimate fallbacks, and optional manual overrides.
+// @version      0.7.4
+// @description  Active-page-only FF Scouter overlay for Torn PDA faction lists with estimate fallbacks and manual overrides.
 // @author       Kingshade
 // @match        https://www.torn.com/*
 // @connect      ffscouter.com
@@ -10,6 +10,14 @@
 // @grant        GM_xmlhttpRequest
 // @run-at       document-idle
 // ==/UserScript==
+//
+// Data use and privacy disclosure:
+// - Runs only while the Torn page is visible. Scanning and new network requests pause when hidden.
+// - Sends player IDs from the currently viewed faction member list, plus the entered key, to FF Scouter for FF/estimate lookups.
+// - When a row has no direct player ID, the entered key may also be sent to Torn's official API for faction/basic membership mapping.
+// - Stores the key, settings, manual FF/battle-stat values, notes, cached results, and captured profile estimates locally in this webview.
+// - Does not automate attacks, clicks, travel, purchases, or any other Torn action.
+// - This script has no developer-operated server; FF Scouter remains a separate external service.
 
 (() => {
     "use strict";
@@ -20,7 +28,7 @@
     }
 
     const NAME = "Kingshade Scout PDA";
-    const VERSION = "0.7.3";
+    const VERSION = "0.7.4";
     const API_BASE = "https://ffscouter.com/api/v1";
     const TORN_API_BASE = "https://api.torn.com";
     const PREFIX = "kingshade-scout:";
@@ -47,7 +55,37 @@
     const factionDirectoryCache = new Map();
     let scanRunning = false;
     let rescanRequested = false;
+    let resumeScanWhenVisible = false;
+    let observerConnected = false;
+    let destroyed = false;
+    const activeRequestAborts = new Set();
+    const OBSERVER_OPTIONS = { childList: true, subtree: true };
     const onRouteChange = () => scheduleScan(200);
+
+    function isPageVisible() {
+        return document.visibilityState === "visible" && !document.hidden;
+    }
+
+    function hiddenPageError() {
+        const error = new Error("Kingshade Scout paused because the Torn page is not visible.");
+        error.code = "KS_PAGE_HIDDEN";
+        return error;
+    }
+
+    function isHiddenPageError(error) {
+        return error?.code === "KS_PAGE_HIDDEN";
+    }
+
+    function requireVisiblePage() {
+        if (!isPageVisible()) throw hiddenPageError();
+    }
+
+    function abortActiveRequests() {
+        for (const abort of Array.from(activeRequestAborts)) {
+            try { abort(); } catch {}
+        }
+        activeRequestAborts.clear();
+    }
 
     function loadSettings() {
         try {
@@ -138,6 +176,7 @@
     }
 
     function captureProfileEstimate() {
+        if (!isPageVisible()) return;
         if (!/\/profiles\.php\/?$/i.test(location.pathname)) return;
 
         const playerId = playerIdFromUrl(location.href);
@@ -193,25 +232,70 @@
     }
 
     async function httpGet(url) {
+        requireVisiblePage();
+
         if (typeof window.PDA_httpGet === "function") {
-            return normalizeResponse(await window.PDA_httpGet(url, {}));
+            const response = await window.PDA_httpGet(url, {});
+            requireVisiblePage();
+            return normalizeResponse(response);
         }
 
         if (typeof GM_xmlhttpRequest === "function") {
             return new Promise((resolve, reject) => {
-                GM_xmlhttpRequest({
+                let settled = false;
+                let request = null;
+
+                const finish = (callback, value) => {
+                    if (settled) return;
+                    settled = true;
+                    activeRequestAborts.delete(abort);
+                    callback(value);
+                };
+
+                const abort = () => {
+                    if (settled) return;
+                    try { request?.abort?.(); } catch {}
+                    finish(reject, hiddenPageError());
+                };
+
+                activeRequestAborts.add(abort);
+                request = GM_xmlhttpRequest({
                     method: "GET",
                     url,
                     timeout: 30000,
-                    onload: response => resolve(normalizeResponse(response)),
-                    onerror: reject,
-                    ontimeout: () => reject(new Error("Request timed out"))
+                    onload: response => {
+                        if (!isPageVisible()) {
+                            abort();
+                            return;
+                        }
+                        finish(resolve, normalizeResponse(response));
+                    },
+                    onerror: error => finish(reject, error instanceof Error ? error : new Error("Network request failed")),
+                    ontimeout: () => finish(reject, new Error("Request timed out")),
+                    onabort: () => finish(reject, hiddenPageError())
                 });
             });
         }
 
-        const response = await fetch(url, { credentials: "omit" });
-        return { status: response.status, responseText: await response.text() };
+        const controller = new AbortController();
+        let settled = false;
+        const abort = () => {
+            if (settled) return;
+            controller.abort();
+        };
+        activeRequestAborts.add(abort);
+
+        try {
+            const response = await fetch(url, { credentials: "omit", signal: controller.signal });
+            requireVisiblePage();
+            return { status: response.status, responseText: await response.text() };
+        } catch (error) {
+            if (controller.signal.aborted || !isPageVisible()) throw hiddenPageError();
+            throw error;
+        } finally {
+            settled = true;
+            activeRequestAborts.delete(abort);
+        }
     }
 
     function getCached(playerId) {
@@ -241,6 +325,7 @@
     }
 
     async function fetchPlayers(ids) {
+        requireVisiblePage();
         const result = new Map();
         const missing = [];
 
@@ -256,6 +341,7 @@
         if (!key) throw new Error("No FF Scouter API key is saved. Open KS and paste your key.");
 
         for (let i = 0; i < missing.length; i += 100) {
+            requireVisiblePage();
             const batch = missing.slice(i, i + 100);
             const query = new URLSearchParams({ key, targets: batch.join(",") });
             const response = await httpGet(`${API_BASE}/get-stats?${query}`);
@@ -424,6 +510,7 @@
     }
 
     async function fetchFactionDirectory() {
+        requireVisiblePage();
         const key = getApiKey();
         if (!key) return null;
 
@@ -497,6 +584,7 @@
     }
 
     async function findRows() {
+        requireVisiblePage();
         const map = new Map();
         if (!/\/factions\.php\/?$/i.test(location.pathname)) {
             return { rows: map, memberLists: 0, candidateRows: 0, directIds: 0, nameIds: 0 };
@@ -693,6 +781,17 @@
                 color:#fff!important;font-size:11px
             }
             .ks6-help{font-size:11px;color:#c9cbd0!important;margin:8px 0 2px}
+            .ks6-privacy{
+                margin:10px 0 2px;padding:8px;border:1px solid #555b62;border-radius:6px;
+                background:#2a2d31!important;color:#fff!important
+            }
+            .ks6-privacy summary{
+                cursor:pointer;color:#fff!important;font-weight:800;list-style-position:inside
+            }
+            .ks6-privacy div{
+                margin-top:8px;color:#d0d2d5!important;font-size:10.5px;line-height:1.35
+            }
+            .ks6-privacy div strong{font-size:10.5px!important;color:#fff!important}
 
             .ks6-colored-row{
                 --ks6-row-color:#666;
@@ -1077,6 +1176,16 @@
                 FF scores use the full FF color scale. When no FF score exists, a verified battle-stat estimate is shown as EST on a neutral row. Tap any label for details or manual values.
             </div>
 
+            <details class="ks6-privacy">
+                <summary>Privacy &amp; data use</summary>
+                <div>
+                    <strong>Active page only:</strong> scanning and new requests pause whenever Torn is hidden or in the background.<br><br>
+                    <strong>Sent to FF Scouter:</strong> the entered key and player IDs from the faction list currently on screen, solely to retrieve FF scores and battle-stat estimates.<br><br>
+                    <strong>Sent to Torn API when needed:</strong> the entered key is used only for the official faction/basic membership request when a displayed row has no direct player ID.<br><br>
+                    <strong>Stored locally:</strong> the key, settings, manual FF/battle stats, notes, cached lookup results, and profile estimates. This script has no developer-operated server and automates no Torn actions. FF Scouter is a separate external service.
+                </div>
+            </details>
+
             <button type="button" data-ksp="rescan">Rescan faction member list</button>
             <button type="button" data-ksp="reset">Reset KS button position</button>
         `;
@@ -1209,6 +1318,11 @@
 
     async function scan() {
         scanTimer = null;
+        if (destroyed) return;
+        if (!isPageVisible()) {
+            resumeScanWhenVisible = true;
+            return;
+        }
         if (scanRunning) {
             rescanRequested = true;
             return;
@@ -1216,6 +1330,7 @@
         scanRunning = true;
 
         try {
+            requireVisiblePage();
             captureProfileEstimate();
 
             if (!/\/factions\.php\/?$/i.test(location.pathname)) {
@@ -1227,6 +1342,7 @@
             ensurePanel();
 
             const result = await findRows();
+            requireVisiblePage();
             const rows = result.rows;
 
             if (!result.memberLists) {
@@ -1249,7 +1365,9 @@
 
             try {
                 const data = await fetchPlayers(fresh.map(entry => entry.id));
+                requireVisiblePage();
                 for (const entry of fresh) {
+                    requireVisiblePage();
                     const rendered = render(entry, data.get(entry.id));
                     if (rendered) entry.row.dataset.ks6Applied = VERSION;
                     else entry.row.removeAttribute("data-ks6-applied");
@@ -1261,7 +1379,19 @@
                     entry.row.removeAttribute("data-ks6-applied");
                     entry.row.removeAttribute("data-ks6-pending");
                 }
-                updatePanelStatus(`${rows.size} member rows · FF request failed`);
+                if (isHiddenPageError(error) || !isPageVisible()) {
+                    resumeScanWhenVisible = true;
+                    updatePanelStatus("Paused while Torn is not visible.");
+                } else {
+                    updatePanelStatus(`${rows.size} member rows · FF request failed`);
+                    showToast(error instanceof Error ? error.message : String(error));
+                }
+            }
+        } catch (error) {
+            if (isHiddenPageError(error) || !isPageVisible()) {
+                resumeScanWhenVisible = true;
+                updatePanelStatus("Paused while Torn is not visible.");
+            } else {
                 showToast(error instanceof Error ? error.message : String(error));
             }
         } finally {
@@ -1275,7 +1405,41 @@
 
     function scheduleScan(delay = 120) {
         clearTimeout(scanTimer);
+        scanTimer = null;
+        if (destroyed) return;
+        if (!isPageVisible()) {
+            resumeScanWhenVisible = true;
+            return;
+        }
+        resumeScanWhenVisible = false;
         scanTimer = setTimeout(scan, delay);
+    }
+
+    function connectObserver() {
+        if (!observer || observerConnected || !document.body || !isPageVisible() || destroyed) return;
+        observer.observe(document.body, OBSERVER_OPTIONS);
+        observerConnected = true;
+    }
+
+    function disconnectObserver() {
+        observer?.disconnect();
+        observerConnected = false;
+    }
+
+    function onVisibilityChange() {
+        if (!isPageVisible()) {
+            resumeScanWhenVisible = true;
+            clearTimeout(scanTimer);
+            scanTimer = null;
+            disconnectObserver();
+            abortActiveRequests();
+            updatePanelStatus("Paused while Torn is not visible.");
+            return;
+        }
+
+        connectObserver();
+        updatePanelStatus("Visible again · resuming scan…");
+        scheduleScan(resumeScanWhenVisible ? 0 : 80);
     }
 
     function init() {
@@ -1302,6 +1466,7 @@
         ensurePanel();
 
         observer = new MutationObserver(mutations => {
+            if (!isPageVisible()) return;
             const relevant = mutations.some(mutation =>
                 Array.from(mutation.addedNodes).some(node => {
                     if (!(node instanceof Element)) return false;
@@ -1312,8 +1477,9 @@
 
             if (relevant) scheduleScan();
         });
-        observer.observe(document.body, { childList: true, subtree: true });
+        connectObserver();
 
+        document.addEventListener("visibilitychange", onVisibilityChange);
         window.addEventListener("hashchange", onRouteChange);
         window.addEventListener("popstate", onRouteChange);
         window.navigation?.addEventListener?.("currententrychange", onRouteChange);
@@ -1322,8 +1488,12 @@
 
         window[INSTANCE_KEY] = {
             destroy() {
+                destroyed = true;
                 clearTimeout(scanTimer);
-                observer?.disconnect();
+                scanTimer = null;
+                disconnectObserver();
+                abortActiveRequests();
+                document.removeEventListener("visibilitychange", onVisibilityChange);
                 window.removeEventListener("hashchange", onRouteChange);
                 window.removeEventListener("popstate", onRouteChange);
                 window.navigation?.removeEventListener?.("currententrychange", onRouteChange);

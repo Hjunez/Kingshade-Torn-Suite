@@ -1,76 +1,90 @@
-# 🎬 Kingshade's Bootlegging
+# 👑 Kingshade Torn Suite
 
 ![Platform](https://img.shields.io/badge/Platform-Torn%20PDA-blue)
+![Scripts](https://img.shields.io/badge/Scripts-3-purple)
 ![Status](https://img.shields.io/badge/Status-Active-brightgreen)
-![Version](https://img.shields.io/badge/Version-3.7.1-orange)
-![License](https://img.shields.io/badge/License-MIT-lightgrey)
 
-> 📌 Designed for Torn PDA.
->
-> This script highlights the next action to take for the most efficient Bootlegging strategy.
+A compact collection of Torn PDA userscripts by **Kingshade**. The scripts provide information and visual guidance without performing Torn actions for the player.
 
----
+## 🔎 Kingshade Scout PDA
 
-# 🔵 Blue Highlight - COPY
+**Current script version: 0.7.4**
 
-When a genre is highlighted in **blue**, copy that genre.
+Faction-member overlay for faster target assessment.
 
-✅ Keep copying the highlighted genre until the script changes the recommendation or the blue highlight disappears.
+- FF Scouter Fair Fight scores
+- Estimated battle-stat fallback when no FF score exists
+- Full-row FF color scale
+- Older-data marker
+- Optional manual values and notes
+- Three selectable KS button designs
+- Active-page-only requests and clear privacy disclosure
 
----
+**Repository file:** `Kingshade_Scout_Torn_PDA_v0.7.0_FINAL.user.js`
 
-# 🟢 Green Highlight - SELL
+**Raw installation/update URL:**
 
-When the **Sell Counterfeit DVDs** button is highlighted in **green**:
+`https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/Kingshade_Scout_Torn_PDA_v0.7.0_FINAL.user.js`
 
-✅ Click **Sell Counterfeit DVDs**.
+> The older filename is intentionally retained so existing Torn PDA remote-update links continue to work. The userscript metadata contains the actual current version.
 
----
+## ⚔️ KS War Tools
 
-# ⚫ No Highlight
+**Current script version: 0.1.0**
 
-If there is **no blue or green highlight**, do nothing.
+Companion script for Kingshade Scout PDA.
 
-⏳ The script has determined that your current copying queue already covers the optimal strategy.
+- Filters faction members by readiness and FF threshold
+- Sorts by FF, status, level, or original order
+- Adds exact status countdowns when Torn exposes a usable timestamp
+- Uses only data already stored or rendered by Kingshade Scout
+- Makes no API calls or background requests
 
-Wait until the queue becomes smaller. When the script decides more copies are needed, a new highlight will automatically appear.
+**Repository file:** `KS_War_Tools_Torn_PDA.user.js`
 
----
+**Raw installation/update URL:**
 
-# 📖 How to Use
+`https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_War_Tools_Torn_PDA.user.js`
 
-1. Open Bootlegging.
-2. 🔵 Blue highlight = Copy that genre.
-3. 🟢 Green highlight = Sell your DVDs.
-4. ⚫ No highlight = Wait.
-5. Repeat.
+## 🎬 Kingshade's Bootlegging Clean
 
----
+**Current script version: 4.1.1**
 
-# 📚 Research
+Visual guidance for the Bootlegging crime.
 
-The recommendations used by this script are based on extensive research and testing from multiple trusted Torn City sources, including:
+- 🔵 Blue highlight — copy that genre
+- 🟢 Green highlight — sell counterfeit DVDs
+- ⚫ No highlight — wait
+- Reads only Bootlegging data already loaded on the open Crimes page
+- Does not click, perform crimes, or initiate additional Torn requests
 
-- Official Torn City Forums
-- Torn City Wiki
-- Community Bootlegging guides
-- Experienced Bootlegging players
-- Long-term community testing and strategy discussions
+**Repository file:** `Kingshades_Bootlegging_Clean_v4.1.1.user.js`
 
-The goal is to combine these sources into one simple visual guide, removing the need to manually calculate stock levels or decide which genre to copy next.
+**Raw installation/update URL:**
 
----
+`https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/Kingshades_Bootlegging_Clean_v4.1.1.user.js`
 
-# ⭐ Features
+## Installation in Torn PDA
 
-- 🔵 Highlights the next genre to copy.
-- 🟢 Highlights when it is time to sell.
-- ⚫ Automatically hides highlights when waiting is the optimal action.
-- 🎯 Keeps the original Bootlegging interface intact.
-- 📱 Optimized specifically for Torn PDA.
+1. Open the raw URL for the script.
+2. Add it to Torn PDA's userscript manager.
+3. Use the same raw URL for remote updates.
 
----
+## Repository structure
 
-# ⚠️ Disclaimer
+The repository root intentionally contains only:
 
-This is an unofficial community project and is not affiliated with Torn City.
+- Three userscripts
+- `README.md`
+- `CHANGELOG.md`
+- `LICENSES.md`
+
+No duplicate script copies, checksums, ZIP archives, or upload-instruction files belong in the repository root.
+
+## Licensing
+
+See [`LICENSES.md`](LICENSES.md). The repository contains scripts with different licensing status.
+
+## Disclaimer
+
+Unofficial community project. Not affiliated with Torn City or FF Scouter.
