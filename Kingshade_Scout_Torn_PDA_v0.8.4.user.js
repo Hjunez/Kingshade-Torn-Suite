@@ -1498,7 +1498,7 @@
                 color:#fff!important;font:600 12px Arial;z-index:2147483647
             }
 
-            .ks6-control-center{width:min(94vw,410px)!important;max-height:min(78vh,700px)!important;overflow-y:auto!important;padding:12px!important}
+            .ks6-control-center{box-sizing:border-box!important;width:min(calc(100vw - 24px),410px)!important;max-width:calc(100vw - 24px)!important;max-height:min(78vh,700px)!important;overflow-y:auto!important;padding:12px!important;margin-left:auto!important;margin-right:auto!important}
             .ks6-tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;margin:9px 0 11px}
             .ks6-tabs button{min-width:0;padding:8px 2px;border:1px solid #555b62;border-radius:5px;background:#30343a!important;color:#d8dade!important;font-size:9px!important;font-weight:800!important;text-shadow:none!important}
             .ks6-tabs button.active{border-color:#d4ab58;background:#594317!important;color:#ffe5a5!important}
