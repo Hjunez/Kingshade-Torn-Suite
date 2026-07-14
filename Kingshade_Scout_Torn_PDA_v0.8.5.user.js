@@ -81,6 +81,7 @@
     let statusTimer = null;
     let statusRequestRunning = false;
     let ffRetryTimer = null;
+    let startupProbeTimer = null;
     let lastPanelStatus = "Waiting for faction scan…";
     const activeRequestAborts = new Set();
     const OBSERVER_OPTIONS = { childList: true, subtree: true };
@@ -100,6 +101,7 @@
             }
             scheduleScan(0);
             scheduleStatusRefresh(0);
+            startStartupProbe();
         }, 120);
     };
 
@@ -1545,10 +1547,10 @@
             .ks6-danger-action{border-color:#875050!important;background:#5d2e2e!important}
             .ks6-api-disclosure{margin:9px 0;padding:8px;border:1px solid #666b72;border-radius:6px;background:#292c31!important}
             .ks6-api-disclosure summary{cursor:pointer;color:#fff!important;font-weight:800!important}
-            .ks6-api-table-wrap{margin-top:8px;overflow-x:auto;-webkit-overflow-scrolling:touch}
-            .ks6-api-table{width:720px;border-collapse:collapse;font-size:9px;line-height:1.35}
-            .ks6-api-table th,.ks6-api-table td{padding:6px;border:1px solid #555b62;text-align:left;vertical-align:top;color:#e7e8ea!important}
-            .ks6-api-table th{background:#35393f!important;color:#fff!important;white-space:nowrap}
+            .ks6-api-grid{display:grid;grid-template-columns:1fr;gap:7px;margin-top:8px}
+            .ks6-api-item{padding:8px;border:1px solid #555b62;border-radius:5px;background:#31353a!important}
+            .ks6-api-item strong{display:block;color:#fff!important;font-size:10px!important;line-height:1.25}
+            .ks6-api-item p{margin:4px 0 0;color:#e7e8ea!important;font-size:9.5px!important;line-height:1.4;overflow-wrap:anywhere}
             .ks6-api-links{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
             .ks6-api-links a{padding:5px 7px;border:1px solid #5c6269;border-radius:4px;background:#34383e!important;color:#9ecbff!important;text-decoration:none!important;font-size:9px!important;font-weight:700!important}
             .ks6-api-consent{display:flex!important;align-items:flex-start!important;gap:8px!important;margin-top:10px!important;padding:8px;border:1px solid #8b7448;border-radius:5px;background:#40351f!important;color:#fff!important;font-weight:700!important}
@@ -2079,17 +2081,12 @@
                 </label>
                 <details class="ks6-api-disclosure" open>
                     <summary>Required API key and data disclosure</summary>
-                    <div class="ks6-api-table-wrap">
-                        <table class="ks6-api-table">
-                            <thead><tr><th>Data storage</th><th>Data sharing</th><th>Purpose of use</th><th>Key storage &amp; sharing</th><th>Key access level</th></tr></thead>
-                            <tbody><tr>
-                                <td>Key, settings, manual values, notes and cached FF/profile/status/travel data are stored locally in this Torn PDA webview until cleared or removed.</td>
-                                <td>Torn API receives the key. FFScouter receives the key and visible target IDs. Kingshade Suite has no server and its developer receives nothing.</td>
-                                <td>Display FF/EST values, map visible faction members, and show faction status/timers, filters and sorting.</td>
-                                <td>Stored locally by the Suite and sent over HTTPS only to Torn API and FFScouter. FFScouter separately handles registered keys/data under its own terms.</td>
-                                <td>Suite direct use: custom <strong>faction/basic</strong>. FFScouter requires its own custom selections as listed in its linked policy. Full access is not required by this Suite.</td>
-                            </tr></tbody>
-                        </table>
+                    <div class="ks6-api-grid">
+                        <div class="ks6-api-item"><strong>Data storage</strong><p>Key, settings, manual values, notes and cached FF/profile/status/travel data are stored locally in this Torn PDA webview until cleared or removed.</p></div>
+                        <div class="ks6-api-item"><strong>Data sharing</strong><p>Torn API receives the key. FFScouter receives the key and visible target IDs. Kingshade Suite has no server and its developer receives nothing.</p></div>
+                        <div class="ks6-api-item"><strong>Purpose of use</strong><p>Display FF/EST values, map visible faction members, and show faction status/timers, filters and sorting.</p></div>
+                        <div class="ks6-api-item"><strong>Key storage &amp; sharing</strong><p>Stored locally by the Suite and sent over HTTPS only to Torn API and FFScouter. FFScouter separately handles registered keys/data under its own terms.</p></div>
+                        <div class="ks6-api-item"><strong>Key access level</strong><p>Suite direct use: custom <strong>faction/basic</strong>. FFScouter requires its own custom selections as listed in its linked policy. Full access is not required by this Suite.</p></div>
                     </div>
                     <div class="ks6-api-links">
                         <a href="https://www.torn.com/api.html" target="_blank" rel="noopener noreferrer">Torn API terms</a>
@@ -2425,6 +2422,33 @@
         scanTimer = setTimeout(scan, delay);
     }
 
+    function stopStartupProbe() {
+        clearInterval(startupProbeTimer);
+        startupProbeTimer = null;
+    }
+
+    function startStartupProbe() {
+        stopStartupProbe();
+        if (destroyed || !isPageVisible() || !isFactionPath()) return;
+
+        let attempts = 0;
+        startupProbeTimer = setInterval(() => {
+            attempts += 1;
+
+            if (destroyed || !isPageVisible() || !isFactionPath() || attempts >= 60) {
+                stopStartupProbe();
+                return;
+            }
+
+            if (!hasFactionMemberList()) return;
+
+            ensurePanel();
+            scheduleScan(0);
+
+            if (document.querySelector(".ks6-fab")) stopStartupProbe();
+        }, 250);
+    }
+
     function connectObserver() {
         if (!observer || observerConnected || !document.body || !isPageVisible() || destroyed) return;
         observer.observe(document.body, OBSERVER_OPTIONS);
@@ -2455,6 +2479,7 @@
         updatePanelStatus("Visible and focused again · resuming scan…");
         if (hasFactionMemberList()) scheduleStatusRefresh(0);
         scheduleScan(resumeScanWhenVisible ? 0 : 80);
+        startStartupProbe();
     }
 
     function init() {
@@ -2486,26 +2511,28 @@
 
             const relevant = mutations.some(mutation =>
                 [...Array.from(mutation.addedNodes), ...Array.from(mutation.removedNodes)].some(node => {
-                    if (!(node instanceof Element)) return false;
+                    const isElement = node instanceof Element;
+                    const canQuery = isElement || node instanceof DocumentFragment;
+                    if (!canQuery) return false;
 
-                    if (node.matches(
+                    if (isElement && node.matches(
                         ".ks6-fab,.ks6-panel,.ks6-badge,.ks6-modal,.ks6-toast," +
                         ".kswt-timer,#kswt-toolbar,#kswt-timer-info,.kswt-info-text,.kswt-info-close," +
                         "[data-ks-suite-mutating]"
                     )) return false;
 
-                    if (node.closest?.(
+                    if (isElement && node.closest?.(
                         ".ks6-panel,.ks6-modal,#kswt-toolbar,#kswt-timer-info,[data-ks-suite-mutating]"
                     )) return false;
 
                     // Profile capture still needs to tolerate Torn's dynamic profile DOM.
                     if (isProfilePath()) return true;
 
-                    // On faction pages, only member-list changes justify a full scan.
+                    // Torn PDA may insert the first member list through a DocumentFragment.
                     return Boolean(
-                        node.matches(".members-list,.table-body,.table-row") ||
+                        (isElement && node.matches(".members-list,.table-body,.table-row")) ||
                         node.querySelector?.(".members-list,.table-body,.table-row") ||
-                        node.closest?.(".members-list .table-row")
+                        (isElement && node.closest?.(".members-list .table-row"))
                     );
                 })
             );
@@ -2525,6 +2552,7 @@
         window.addEventListener(STATUS_EVENT, onWarSettingsUpdate);
 
         scheduleScan(0);
+        startStartupProbe();
 
         window[INSTANCE_KEY] = {
             version: VERSION,
@@ -2553,6 +2581,7 @@
                 statusTimer = null;
                 clearTimeout(ffRetryTimer);
                 ffRetryTimer = null;
+                stopStartupProbe();
                 disconnectObserver();
                 abortActiveRequests();
                 document.removeEventListener("visibilitychange", onVisibilityChange);
