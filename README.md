@@ -66,7 +66,7 @@ The Control Center changes settings only. It performs no Torn actions.
 
 ### API key and data disclosure
 
-Network requests are disabled until the user opens **KS → Scout**, reads the disclosure and explicitly accepts it.
+Network requests are disabled until the user opens **KS → Scout**, reads the disclosure and explicitly accepts it. Requests then run only while the Torn page is visible and focused, and active requests are aborted on hide or blur.
 
 | Data storage | Data sharing | Purpose of use | Key storage & sharing | Key access level |
 |---|---|---|---|---|

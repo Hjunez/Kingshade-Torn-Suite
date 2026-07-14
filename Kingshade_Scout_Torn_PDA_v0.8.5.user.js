@@ -12,7 +12,7 @@
 // ==/UserScript==
 //
 // API key, data use and privacy disclosure:
-// - Network requests run only while the manually opened Torn page is visible; they pause when hidden.
+// - Network requests run only while the manually opened Torn page is visible and focused; they pause when hidden or unfocused.
 // - The entered key and visible faction-member IDs are sent over HTTPS to FFScouter for FF/estimate lookups.
 // - The entered key is also sent over HTTPS to Torn's official API for faction/basic member status and mapping.
 // - The Suite stores the key, settings, manual values, notes and caches only in this Torn PDA webview.
@@ -103,8 +103,16 @@
         }, 120);
     };
 
+    function pageHasFocus() {
+        try {
+            return typeof document.hasFocus !== "function" || document.hasFocus();
+        } catch {
+            return true;
+        }
+    }
+
     function isPageVisible() {
-        return document.visibilityState === "visible" && !document.hidden;
+        return document.visibilityState === "visible" && !document.hidden && pageHasFocus();
     }
 
     function isFactionPath() {
@@ -131,7 +139,7 @@
     }
 
     function hiddenPageError() {
-        const error = new Error("Kingshade Scout paused because the Torn page is not visible.");
+        const error = new Error("Kingshade Scout paused because the Torn page is not visible and focused.");
         error.code = "KS_PAGE_HIDDEN";
         return error;
     }
@@ -2383,7 +2391,7 @@
                 }
                 if (isHiddenPageError(error) || !isPageVisible()) {
                     resumeScanWhenVisible = true;
-                    updatePanelStatus("Paused while Torn is not visible.");
+                    updatePanelStatus("Paused while Torn is not visible or focused.");
                 } else {
                     updatePanelStatus(`${rows.size} member rows · FF request failed`);
                     showToast(error instanceof Error ? error.message : String(error));
@@ -2392,7 +2400,7 @@
         } catch (error) {
             if (isHiddenPageError(error) || !isPageVisible()) {
                 resumeScanWhenVisible = true;
-                updatePanelStatus("Paused while Torn is not visible.");
+                updatePanelStatus("Paused while Torn is not visible or focused.");
             } else {
                 showToast(error instanceof Error ? error.message : String(error));
             }
@@ -2439,12 +2447,12 @@
             ffRetryTimer = null;
             disconnectObserver();
             abortActiveRequests();
-            updatePanelStatus("Paused while Torn is not visible.");
+            updatePanelStatus("Paused while Torn is not visible or focused.");
             return;
         }
 
         connectObserver();
-        updatePanelStatus("Visible again · resuming scan…");
+        updatePanelStatus("Visible and focused again · resuming scan…");
         if (hasFactionMemberList()) scheduleStatusRefresh(0);
         scheduleScan(resumeScanWhenVisible ? 0 : 80);
     }
@@ -2507,6 +2515,8 @@
         connectObserver();
 
         document.addEventListener("visibilitychange", onVisibilityChange);
+        window.addEventListener("focus", onVisibilityChange);
+        window.addEventListener("blur", onVisibilityChange);
         window.addEventListener("hashchange", onRouteChange);
         window.addEventListener("popstate", onRouteChange);
         window.navigation?.addEventListener?.("currententrychange", onRouteChange);
@@ -2546,6 +2556,8 @@
                 disconnectObserver();
                 abortActiveRequests();
                 document.removeEventListener("visibilitychange", onVisibilityChange);
+                window.removeEventListener("focus", onVisibilityChange);
+                window.removeEventListener("blur", onVisibilityChange);
                 window.removeEventListener("hashchange", onRouteChange);
                 window.removeEventListener("popstate", onRouteChange);
                 window.navigation?.removeEventListener?.("currententrychange", onRouteChange);

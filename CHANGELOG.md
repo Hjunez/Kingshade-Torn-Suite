@@ -8,6 +8,7 @@ All notable changes to Kingshade Suite are documented here.
 
 - Added Torn API ToS table directly beside the API-key field.
 - Added explicit one-time acceptance before any new Torn API or FFScouter network request is allowed.
+- Added a focus guard that pauses and aborts requests when the Torn page is hidden or loses focus.
 - Documented local storage, external recipients, purposes, key transmission and required selections.
 - Added direct links to Torn API terms, Torn scripting rules, FFScouter terms/data policy, privacy policy and API documentation.
 - Clarified that Kingshade Suite has no server and its developer cannot access users' keys or data.
