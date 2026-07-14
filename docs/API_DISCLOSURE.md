@@ -12,7 +12,7 @@ This disclosure is also displayed directly beside the API-key input in Suite Con
 
 ## Network behavior
 
-- Requests run only while a manually opened Torn page is visible.
+- Requests run only while a manually opened Torn page is visible and focused; active requests are aborted on hide or blur.
 - FFScouter requests use the documented `GET /api/v1/get-stats` endpoint.
 - Torn requests use the official faction `basic` selection.
 - No attacks, clicks, travel, purchases, crimes or other Torn actions are automated.

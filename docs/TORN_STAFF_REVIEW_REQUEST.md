@@ -20,7 +20,8 @@ Repository:
 https://github.com/Hjunez/Kingshade-Torn-Suite
 
 Version / branch to review:
-Kingshade Suite 0.8.5 compliance-review branch or pull request (link will be added after upload).
+Kingshade Suite 0.8.5 draft compliance pull request:
+https://github.com/Hjunez/Kingshade-Torn-Suite/pull/7
 
 Scripts:
 - Kingshade Scout for Torn PDA
@@ -36,7 +37,7 @@ What it does not do:
 - No automatic attacks, clicks, travel, purchases, crimes or other Torn actions.
 - No non-API Torn page requests.
 - No scraping of pages that are not manually open and visible.
-- No requests or alerts while Torn is hidden/unfocused.
+- No requests or alerts while Torn is hidden or unfocused; active requests are aborted on visibility loss or window blur.
 - No CAPTCHA bypass.
 - No developer-operated server.
 
