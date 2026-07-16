@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kingshade Scout for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.8.4
+// @version      0.8.5
 // @description  Kingshade Suite Scout Core for Torn PDA with FF/EST, shared faction status data, and War Tools integration.
 // @author       Kingshade
 // @match        https://www.torn.com/*
@@ -11,13 +11,19 @@
 // @run-at       document-idle
 // ==/UserScript==
 //
-// Data use and privacy disclosure:
-// - Runs only while the Torn page is visible. Scanning and new network requests pause when hidden.
-// - Sends player IDs from the currently viewed faction member list, plus the entered key, to FF Scouter for FF/estimate lookups.
-// - While a faction member list is open, the entered key is sent to Torn's official faction/basic API for member status/timers and fallback member mapping.
-// - Stores the key, settings, manual FF/battle-stat values, notes, cached results, and captured profile estimates locally in this webview.
-// - Does not automate attacks, clicks, travel, purchases, or any other Torn action.
-// - This script has no developer-operated server; FF Scouter remains a separate external service.
+// API key, data use and privacy disclosure:
+// - Network requests run only while the manually opened Torn page is visible and focused; they pause when hidden or unfocused.
+// - The entered key and visible faction-member IDs are sent over HTTPS to FFScouter for FF/estimate lookups.
+// - The entered key is also sent over HTTPS to Torn's official API for faction/basic member status and mapping.
+// - The Suite stores the key, settings, manual values, notes and caches only in this Torn PDA webview.
+// - Kingshade Suite has no developer-operated server and its developer cannot access users' keys or data.
+// - FFScouter is an independent third-party service with its own terms, key storage and data policy.
+// - Direct Torn API use by this Suite is limited to faction/basic. Full-access keys are not required by this Suite.
+// - The Suite does not automate attacks, clicks, travel, purchases or any other Torn action.
+// - Torn API terms: https://www.torn.com/api.html
+// - Torn scripting rules: https://www.torn.com/rules.php
+// - FFScouter terms/data policy: https://ffscouter.com/
+// - FFScouter privacy policy: https://ffscouter.com/privacy
 
 (() => {
     "use strict";
@@ -29,7 +35,7 @@
 
     const NAME = "Kingshade Suite";
     const COMPONENT = "Scout Core";
-    const VERSION = "0.8.4";
+    const VERSION = "0.8.5";
     const API_BASE = "https://ffscouter.com/api/v1";
     const TORN_API_BASE = "https://api.torn.com";
     const PREFIX = "kingshade-scout:";
@@ -58,7 +64,8 @@
         buttonStyle: "crest",
         buttonX: null,
         buttonY: null,
-        controlTab: "overview"
+        controlTab: "overview",
+        apiDisclosureAccepted: false
     };
 
     let settings = loadSettings();
@@ -74,6 +81,7 @@
     let statusTimer = null;
     let statusRequestRunning = false;
     let ffRetryTimer = null;
+    let startupProbeTimer = null;
     let lastPanelStatus = "Waiting for faction scan…";
     const activeRequestAborts = new Set();
     const OBSERVER_OPTIONS = { childList: true, subtree: true };
@@ -93,11 +101,20 @@
             }
             scheduleScan(0);
             scheduleStatusRefresh(0);
+            startStartupProbe();
         }, 120);
     };
 
+    function pageHasFocus() {
+        try {
+            return typeof document.hasFocus !== "function" || document.hasFocus();
+        } catch {
+            return true;
+        }
+    }
+
     function isPageVisible() {
-        return document.visibilityState === "visible" && !document.hidden;
+        return document.visibilityState === "visible" && !document.hidden && pageHasFocus();
     }
 
     function isFactionPath() {
@@ -124,7 +141,7 @@
     }
 
     function hiddenPageError() {
-        const error = new Error("Kingshade Scout paused because the Torn page is not visible.");
+        const error = new Error("Kingshade Scout paused because the Torn page is not visible and focused.");
         error.code = "KS_PAGE_HIDDEN";
         return error;
     }
@@ -176,6 +193,16 @@
             if (clean) localStorage.setItem(API_KEY_STORAGE, clean);
             else localStorage.removeItem(API_KEY_STORAGE);
         } catch {}
+    }
+
+    function apiDisclosureAccepted() {
+        return Boolean(settings.apiDisclosureAccepted);
+    }
+
+    function requireApiDisclosureAcceptance() {
+        if (!apiDisclosureAccepted()) {
+            throw new Error("API disclosure acceptance is required. Open KS → Scout, read the disclosure, and tick the acceptance box.");
+        }
     }
 
     function getManual(playerId) {
@@ -451,7 +478,8 @@
         if (!missing.length) return result;
 
         const key = getApiKey();
-        if (!key) throw new Error("No FF Scouter API key is saved. Open KS and paste your key.");
+        if (!key) throw new Error("No Torn / FFScouter API key is saved. Open KS → Scout and paste your key.");
+        requireApiDisclosureAcceptance();
 
         result.ksTransientFailure = false;
         result.ksNeedsRetryIds = new Set();
@@ -1041,7 +1069,7 @@
         if (destroyed || statusRequestRunning || !isPageVisible() || !hasFactionMemberList()) return;
 
         const key = getApiKey();
-        if (!key) return;
+        if (!key || !apiDisclosureAccepted()) return;
 
         const existing = window[CORE_WINDOW_KEY];
         const now = Math.floor(Date.now() / 1000);
@@ -1147,7 +1175,7 @@
     async function fetchFactionDirectory() {
         requireVisiblePage();
         const key = getApiKey();
-        if (!key) return null;
+        if (!key || !apiDisclosureAccepted()) return null;
 
         const factionId = detectFactionId();
         const sharedDirectory = directoryFromStatusSnapshot(factionId);
@@ -1517,6 +1545,16 @@
             .ks6-wide-action{width:100%;margin-top:9px;padding:10px;border:1px solid #686d73;border-radius:6px;background:#3b3f44!important;color:#fff!important;font-weight:800!important;text-shadow:none!important}
             .ks6-wide-action:active{background:#50555c!important}
             .ks6-danger-action{border-color:#875050!important;background:#5d2e2e!important}
+            .ks6-api-disclosure{margin:9px 0;padding:8px;border:1px solid #666b72;border-radius:6px;background:#292c31!important}
+            .ks6-api-disclosure summary{cursor:pointer;color:#fff!important;font-weight:800!important}
+            .ks6-api-grid{display:grid;grid-template-columns:1fr;gap:7px;margin-top:8px}
+            .ks6-api-item{padding:8px;border:1px solid #555b62;border-radius:5px;background:#31353a!important}
+            .ks6-api-item strong{display:block;color:#fff!important;font-size:10px!important;line-height:1.25}
+            .ks6-api-item p{margin:4px 0 0;color:#e7e8ea!important;font-size:9.5px!important;line-height:1.4;overflow-wrap:anywhere}
+            .ks6-api-links{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+            .ks6-api-links a{padding:5px 7px;border:1px solid #5c6269;border-radius:4px;background:#34383e!important;color:#9ecbff!important;text-decoration:none!important;font-size:9px!important;font-weight:700!important}
+            .ks6-api-consent{display:flex!important;align-items:flex-start!important;gap:8px!important;margin-top:10px!important;padding:8px;border:1px solid #8b7448;border-radius:5px;background:#40351f!important;color:#fff!important;font-weight:700!important}
+            .ks6-api-consent input{flex:0 0 auto;margin-top:1px!important}
         `;
         (document.head || document.documentElement).appendChild(style);
     }
@@ -1927,6 +1965,7 @@
             warVersion,
             versionMatch: !warVersion || warVersion === VERSION,
             apiKeyConfigured: Boolean(getApiKey()),
+            apiDisclosureAccepted: apiDisclosureAccepted(),
             snapshotAge: formatSnapshotAge(snapshot?.updatedAt),
             members,
             factionId: Number(snapshot?.factionId) || null,
@@ -1975,7 +2014,11 @@
         set("scout", `Active · v${info.scoutVersion}`, "ok");
         set("war", info.warActive ? `Active · v${info.warVersion || "?"}` : "Not active on this page", info.warActive ? "ok" : "muted");
         set("versions", info.versionMatch ? "Versions match" : `Mismatch · Scout ${VERSION} / War ${info.warVersion}`, info.versionMatch ? "ok" : "warn");
-        set("api", info.apiKeyConfigured ? "Configured" : "Not configured", info.apiKeyConfigured ? "ok" : "warn");
+        set(
+            "api",
+            !info.apiKeyConfigured ? "Not configured" : info.apiDisclosureAccepted ? "Configured · accepted" : "Configured · acceptance required",
+            info.apiKeyConfigured && info.apiDisclosureAccepted ? "ok" : "warn"
+        );
         set("status", `${info.snapshotAge}${info.members ? ` · ${info.members} members` : ""}`, info.members ? "ok" : "muted");
         set("storage", `${info.data.cache} cache · ${info.data.manual} manual · ${info.data.profile} profile`, "muted");
         updateSuiteVersionWarning();
@@ -2033,8 +2076,28 @@
             </section>
 
             <section class="ks6-tab-page" data-ksp-page="scout" hidden>
-                <label>FF Scouter API key
-                    <input data-ksp="key" type="password" value="${escapeHtml(getApiKey())}">
+                <label>Torn / FFScouter API key
+                    <input data-ksp="key" type="password" value="${escapeHtml(getApiKey())}" autocomplete="off">
+                </label>
+                <details class="ks6-api-disclosure" open>
+                    <summary>Required API key and data disclosure</summary>
+                    <div class="ks6-api-grid">
+                        <div class="ks6-api-item"><strong>Data storage</strong><p>Key, settings, manual values, notes and cached FF/profile/status/travel data are stored locally in this Torn PDA webview until cleared or removed.</p></div>
+                        <div class="ks6-api-item"><strong>Data sharing</strong><p>Torn API receives the key. FFScouter receives the key and visible target IDs. Kingshade Suite has no server and its developer receives nothing.</p></div>
+                        <div class="ks6-api-item"><strong>Purpose of use</strong><p>Display FF/EST values, map visible faction members, and show faction status/timers, filters and sorting.</p></div>
+                        <div class="ks6-api-item"><strong>Key storage &amp; sharing</strong><p>Stored locally by the Suite and sent over HTTPS only to Torn API and FFScouter. FFScouter separately handles registered keys/data under its own terms.</p></div>
+                        <div class="ks6-api-item"><strong>Key access level</strong><p>Suite direct use: custom <strong>faction/basic</strong>. FFScouter requires its own custom selections as listed in its linked policy. Full access is not required by this Suite.</p></div>
+                    </div>
+                    <div class="ks6-api-links">
+                        <a href="https://www.torn.com/api.html" target="_blank" rel="noopener noreferrer">Torn API terms</a>
+                        <a href="https://www.torn.com/rules.php" target="_blank" rel="noopener noreferrer">Torn scripting rules</a>
+                        <a href="https://ffscouter.com/" target="_blank" rel="noopener noreferrer">FFScouter terms &amp; data policy</a>
+                        <a href="https://ffscouter.com/privacy" target="_blank" rel="noopener noreferrer">FFScouter privacy</a>
+                    </div>
+                </details>
+                <label class="ks6-api-consent">
+                    <input data-ksp="api-consent" type="checkbox" ${settings.apiDisclosureAccepted ? "checked" : ""}>
+                    <span>I have read and accept the disclosure above. Network requests remain disabled until this is checked.</span>
                 </label>
                 <label>Show players with no FF or estimate
                     <input data-ksp="unknown" type="checkbox" ${settings.showUnknown ? "checked" : ""}>
@@ -2082,10 +2145,11 @@
                 <details class="ks6-privacy" open>
                     <summary>Privacy &amp; data use</summary>
                     <div>
-                        <strong>Active page only:</strong> new requests pause whenever Torn is hidden.<br><br>
-                        <strong>FF Scouter:</strong> receives the entered key and IDs from the visible faction member list for FF/estimate lookups.<br><br>
-                        <strong>Torn API:</strong> receives the entered key for official faction/basic status data while a member list is open.<br><br>
-                        <strong>Stored locally:</strong> key, settings, manual values, notes, cached results, profile estimates and travel calibration. No developer-operated server and no automated Torn actions.
+                        <strong>Active page only:</strong> new requests pause whenever Torn is hidden or unfocused.<br><br>
+                        <strong>FFScouter:</strong> receives the entered key and IDs from the visible faction member list for documented <code>/api/v1/get-stats</code> lookups. FFScouter is independent and applies its own terms, storage and data policy.<br><br>
+                        <strong>Torn API:</strong> receives the entered key only for official <code>faction/basic</code> member status and mapping while a faction member list is open.<br><br>
+                        <strong>Stored locally by this Suite:</strong> key, settings, consent state, manual values, notes, cached results, profile estimates and travel calibration. Kingshade Suite operates no server and its developer cannot access this data.<br><br>
+                        <strong>Automation:</strong> no attacks, clicks, travel, purchases, crimes or other Torn actions are performed.
                     </div>
                 </details>
                 <div class="ks6-help">Clearing cache keeps the API key, preferences, manual FF values and notes. It removes cached FF/profile/status/travel data and reloads it.</div>
@@ -2123,9 +2187,11 @@
             const previousKey = getApiKey();
             const previousUnknown = settings.showUnknown;
             const previousStyle = settings.buttonStyle || "crest";
+            const previousConsent = apiDisclosureAccepted();
             const nextKey = panel.querySelector('[data-ksp="key"]').value.trim();
             const nextUnknown = panel.querySelector('[data-ksp="unknown"]').checked;
             const nextStyle = panel.querySelector('[data-ksp="style"]').value || "crest";
+            const nextConsent = panel.querySelector('[data-ksp="api-consent"]').checked;
             setApiKey(nextKey);
             if (previousKey !== nextKey) {
                 factionDirectoryCache.clear();
@@ -2133,9 +2199,10 @@
             }
             settings.showUnknown = nextUnknown;
             settings.buttonStyle = ["simple", "crest", "royal"].includes(nextStyle) ? nextStyle : "crest";
+            settings.apiDisclosureAccepted = Boolean(nextConsent);
             saveSettings();
             applyButtonTheme(button, settings.buttonStyle);
-            return previousKey !== nextKey || previousUnknown !== nextUnknown || previousStyle !== settings.buttonStyle;
+            return previousKey !== nextKey || previousUnknown !== nextUnknown || previousStyle !== settings.buttonStyle || previousConsent !== settings.apiDisclosureAccepted;
         };
 
         const persistWarSettings = () => updateWarSettings({
@@ -2321,7 +2388,7 @@
                 }
                 if (isHiddenPageError(error) || !isPageVisible()) {
                     resumeScanWhenVisible = true;
-                    updatePanelStatus("Paused while Torn is not visible.");
+                    updatePanelStatus("Paused while Torn is not visible or focused.");
                 } else {
                     updatePanelStatus(`${rows.size} member rows · FF request failed`);
                     showToast(error instanceof Error ? error.message : String(error));
@@ -2330,7 +2397,7 @@
         } catch (error) {
             if (isHiddenPageError(error) || !isPageVisible()) {
                 resumeScanWhenVisible = true;
-                updatePanelStatus("Paused while Torn is not visible.");
+                updatePanelStatus("Paused while Torn is not visible or focused.");
             } else {
                 showToast(error instanceof Error ? error.message : String(error));
             }
@@ -2355,6 +2422,33 @@
         scanTimer = setTimeout(scan, delay);
     }
 
+    function stopStartupProbe() {
+        clearInterval(startupProbeTimer);
+        startupProbeTimer = null;
+    }
+
+    function startStartupProbe() {
+        stopStartupProbe();
+        if (destroyed || !isPageVisible() || !isFactionPath()) return;
+
+        let attempts = 0;
+        startupProbeTimer = setInterval(() => {
+            attempts += 1;
+
+            if (destroyed || !isPageVisible() || !isFactionPath() || attempts >= 60) {
+                stopStartupProbe();
+                return;
+            }
+
+            if (!hasFactionMemberList()) return;
+
+            ensurePanel();
+            scheduleScan(0);
+
+            if (document.querySelector(".ks6-fab")) stopStartupProbe();
+        }, 250);
+    }
+
     function connectObserver() {
         if (!observer || observerConnected || !document.body || !isPageVisible() || destroyed) return;
         observer.observe(document.body, OBSERVER_OPTIONS);
@@ -2377,14 +2471,15 @@
             ffRetryTimer = null;
             disconnectObserver();
             abortActiveRequests();
-            updatePanelStatus("Paused while Torn is not visible.");
+            updatePanelStatus("Paused while Torn is not visible or focused.");
             return;
         }
 
         connectObserver();
-        updatePanelStatus("Visible again · resuming scan…");
+        updatePanelStatus("Visible and focused again · resuming scan…");
         if (hasFactionMemberList()) scheduleStatusRefresh(0);
         scheduleScan(resumeScanWhenVisible ? 0 : 80);
+        startStartupProbe();
     }
 
     function init() {
@@ -2416,26 +2511,28 @@
 
             const relevant = mutations.some(mutation =>
                 [...Array.from(mutation.addedNodes), ...Array.from(mutation.removedNodes)].some(node => {
-                    if (!(node instanceof Element)) return false;
+                    const isElement = node instanceof Element;
+                    const canQuery = isElement || node instanceof DocumentFragment;
+                    if (!canQuery) return false;
 
-                    if (node.matches(
+                    if (isElement && node.matches(
                         ".ks6-fab,.ks6-panel,.ks6-badge,.ks6-modal,.ks6-toast," +
                         ".kswt-timer,#kswt-toolbar,#kswt-timer-info,.kswt-info-text,.kswt-info-close," +
                         "[data-ks-suite-mutating]"
                     )) return false;
 
-                    if (node.closest?.(
+                    if (isElement && node.closest?.(
                         ".ks6-panel,.ks6-modal,#kswt-toolbar,#kswt-timer-info,[data-ks-suite-mutating]"
                     )) return false;
 
                     // Profile capture still needs to tolerate Torn's dynamic profile DOM.
                     if (isProfilePath()) return true;
 
-                    // On faction pages, only member-list changes justify a full scan.
+                    // Torn PDA may insert the first member list through a DocumentFragment.
                     return Boolean(
-                        node.matches(".members-list,.table-body,.table-row") ||
+                        (isElement && node.matches(".members-list,.table-body,.table-row")) ||
                         node.querySelector?.(".members-list,.table-body,.table-row") ||
-                        node.closest?.(".members-list .table-row")
+                        (isElement && node.closest?.(".members-list .table-row"))
                     );
                 })
             );
@@ -2445,6 +2542,8 @@
         connectObserver();
 
         document.addEventListener("visibilitychange", onVisibilityChange);
+        window.addEventListener("focus", onVisibilityChange);
+        window.addEventListener("blur", onVisibilityChange);
         window.addEventListener("hashchange", onRouteChange);
         window.addEventListener("popstate", onRouteChange);
         window.navigation?.addEventListener?.("currententrychange", onRouteChange);
@@ -2453,6 +2552,7 @@
         window.addEventListener(STATUS_EVENT, onWarSettingsUpdate);
 
         scheduleScan(0);
+        startStartupProbe();
 
         window[INSTANCE_KEY] = {
             version: VERSION,
@@ -2481,9 +2581,12 @@
                 statusTimer = null;
                 clearTimeout(ffRetryTimer);
                 ffRetryTimer = null;
+                stopStartupProbe();
                 disconnectObserver();
                 abortActiveRequests();
                 document.removeEventListener("visibilitychange", onVisibilityChange);
+                window.removeEventListener("focus", onVisibilityChange);
+                window.removeEventListener("blur", onVisibilityChange);
                 window.removeEventListener("hashchange", onRouteChange);
                 window.removeEventListener("popstate", onRouteChange);
                 window.navigation?.removeEventListener?.("currententrychange", onRouteChange);

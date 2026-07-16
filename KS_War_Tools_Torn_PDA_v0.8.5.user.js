@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KS War Tools for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.8.4
+// @version      0.8.5
 // @description  Kingshade Suite War Tools for faction filters, sorting, exact status timers, and marked travel ETA estimates.
 // @author       Kingshade
 // @match        https://www.torn.com/factions.php*
@@ -23,7 +23,7 @@
     const SCRIPT = Object.freeze({
         name: "Kingshade Suite",
         component: "War Tools",
-        version: "0.8.4",
+        version: "0.8.5",
         instanceKey: "__ksWarToolsActive",
         sharedCoreKey: "__kingshadeScoutCore",
         sharedStorageKey: "kingshade-scout:status-core",
