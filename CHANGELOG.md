@@ -2,6 +2,25 @@
 
 All notable changes to Kingshade Suite are documented here.
 
+## [0.8.5] — 2026-07-14 — Compliance review beta
+
+### API disclosure and consent
+
+- Added Torn API ToS table directly beside the API-key field.
+- Added explicit one-time acceptance before any new Torn API or FFScouter network request is allowed.
+- Added a focus guard that pauses and aborts requests when the Torn page is hidden or loses focus.
+- Added a startup probe and DocumentFragment-aware observer so the KS button appears on the first faction-page load.
+- Replaced the wide horizontal disclosure table with mobile-readable stacked cards.
+- Documented local storage, external recipients, purposes, key transmission and required selections.
+- Added direct links to Torn API terms, Torn scripting rules, FFScouter terms/data policy, privacy policy and API documentation.
+- Clarified that Kingshade Suite has no server and its developer cannot access users' keys or data.
+
+### Integration and repository
+
+- Documented use of FFScouter's public `GET /api/v1/get-stats` endpoint.
+- Added a prepared Torn staff review request and FFScouter-owner review request.
+- Advanced Scout and War Tools together to Suite version 0.8.5.
+
 ## [0.8.4] — 2026-07-14 — Beta
 
 ### Suite Control Center

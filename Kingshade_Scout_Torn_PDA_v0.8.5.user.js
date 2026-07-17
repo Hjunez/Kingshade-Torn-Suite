@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Kingshade Scout for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.8.4
-// @description  Kingshade Suite Scout Core for Torn PDA with FF/EST, shared faction status data, and War Tools integration.
+// @version      0.8.5
+// @description  Kingshade Suite Scout with Suite Control Center, guided API setup, FF/EST estimates, and faction status data.
 // @author       Kingshade
 // @match        https://www.torn.com/*
 // @connect      ffscouter.com
@@ -11,13 +11,19 @@
 // @run-at       document-idle
 // ==/UserScript==
 //
-// Data use and privacy disclosure:
-// - Runs only while the Torn page is visible. Scanning and new network requests pause when hidden.
-// - Sends player IDs from the currently viewed faction member list, plus the entered key, to FF Scouter for FF/estimate lookups.
-// - While a faction member list is open, the entered key is sent to Torn's official faction/basic API for member status/timers and fallback member mapping.
-// - Stores the key, settings, manual FF/battle-stat values, notes, cached results, and captured profile estimates locally in this webview.
-// - Does not automate attacks, clicks, travel, purchases, or any other Torn action.
-// - This script has no developer-operated server; FF Scouter remains a separate external service.
+// API key, data use and privacy disclosure:
+// - Network requests run only while the manually opened Torn page is visible and focused; they pause when hidden or unfocused.
+// - The entered key and visible faction-member IDs are sent over HTTPS to FFScouter for FF/estimate lookups.
+// - The entered key is also sent over HTTPS to Torn's official API for faction/basic member status and mapping.
+// - The Suite stores the key, settings, manual values, notes and caches only in this Torn PDA webview.
+// - Kingshade Suite has no developer-operated server and its developer cannot access users' keys or data.
+// - FFScouter is an independent third-party service with its own terms, key storage and data policy.
+// - Direct Torn API use by this Suite is limited to faction/basic. Full-access keys are not required by this Suite.
+// - The Suite does not automate attacks, clicks, travel, purchases or any other Torn action.
+// - Torn API terms: https://www.torn.com/api.html
+// - Torn scripting rules: https://www.torn.com/rules.php
+// - FFScouter terms/data policy: https://ffscouter.com/
+// - FFScouter privacy policy: https://ffscouter.com/privacy
 
 (() => {
     "use strict";
@@ -29,7 +35,7 @@
 
     const NAME = "Kingshade Suite";
     const COMPONENT = "Scout Core";
-    const VERSION = "0.8.4";
+    const VERSION = "0.8.5";
     const API_BASE = "https://ffscouter.com/api/v1";
     const TORN_API_BASE = "https://api.torn.com";
     const PREFIX = "kingshade-scout:";
@@ -58,7 +64,8 @@
         buttonStyle: "crest",
         buttonX: null,
         buttonY: null,
-        controlTab: "overview"
+        controlTab: "overview",
+        apiDisclosureAccepted: false
     };
 
     let settings = loadSettings();
@@ -74,7 +81,13 @@
     let statusTimer = null;
     let statusRequestRunning = false;
     let ffRetryTimer = null;
+    let startupProbeTimer = null;
     let lastPanelStatus = "Waiting for faction scan…";
+    let pendingControlTab = null;
+    let setupDisabledApplied = false;
+    let ffDataState = "idle";
+    let ffLoadedCount = 0;
+    let ffLoadedFactionId = null;
     const activeRequestAborts = new Set();
     const OBSERVER_OPTIONS = { childList: true, subtree: true };
     const onRouteChange = () => {
@@ -93,11 +106,20 @@
             }
             scheduleScan(0);
             scheduleStatusRefresh(0);
+            startStartupProbe();
         }, 120);
     };
 
+    function pageHasFocus() {
+        try {
+            return typeof document.hasFocus !== "function" || document.hasFocus();
+        } catch {
+            return true;
+        }
+    }
+
     function isPageVisible() {
-        return document.visibilityState === "visible" && !document.hidden;
+        return document.visibilityState === "visible" && !document.hidden && pageHasFocus();
     }
 
     function isFactionPath() {
@@ -124,7 +146,7 @@
     }
 
     function hiddenPageError() {
-        const error = new Error("Kingshade Scout paused because the Torn page is not visible.");
+        const error = new Error("Kingshade Scout paused because the Torn page is not visible and focused.");
         error.code = "KS_PAGE_HIDDEN";
         return error;
     }
@@ -176,6 +198,81 @@
             if (clean) localStorage.setItem(API_KEY_STORAGE, clean);
             else localStorage.removeItem(API_KEY_STORAGE);
         } catch {}
+    }
+
+    function apiDisclosureAccepted() {
+        return Boolean(settings.apiDisclosureAccepted);
+    }
+
+    function requireApiDisclosureAcceptance() {
+        if (!apiDisclosureAccepted()) {
+            throw new Error("API disclosure acceptance is required. Open KS → Scout, read the disclosure, and tick the acceptance box.");
+        }
+    }
+
+    function suiteDataEnabled() {
+        return Boolean(getApiKey() && apiDisclosureAccepted());
+    }
+
+    function removeApiDerivedStorage() {
+        const keys = [];
+        try {
+            for (let index = 0; index < localStorage.length; index++) {
+                const key = localStorage.key(index) || "";
+                if (
+                    key.startsWith(CACHE_PREFIX) ||
+                    key === STATUS_STORAGE_KEY ||
+                    key === TRAVEL_ACTIVE_KEY ||
+                    key === TRAVEL_HISTORY_KEY
+                ) keys.push(key);
+            }
+            keys.forEach(key => localStorage.removeItem(key));
+        } catch {}
+        return keys.length;
+    }
+
+    function disableSuiteDataDisplay({ purgeApiCache = true } = {}) {
+        clearTimeout(statusTimer);
+        statusTimer = null;
+        clearTimeout(ffRetryTimer);
+        ffRetryTimer = null;
+        abortActiveRequests();
+        memoryCache.clear();
+        factionDirectoryCache.clear();
+        if (purgeApiCache) removeApiDerivedStorage();
+        delete window[CORE_WINDOW_KEY];
+        ffDataState = "disabled";
+        ffLoadedCount = 0;
+        ffLoadedFactionId = null;
+        clearRendered();
+        updatePanelStatus("Setup required · FF/EST and status data are disabled.");
+        window.dispatchEvent(new CustomEvent(FF_EVENT, {
+            detail: { version: VERSION, enabled: false, factionId: detectFactionId() }
+        }));
+        window.dispatchEvent(new CustomEvent(STATUS_EVENT, {
+            detail: { version: VERSION, enabled: false, factionId: detectFactionId() }
+        }));
+        window.__ksWarToolsActive?.refresh?.();
+        updateControlCenterOverview();
+    }
+
+    function reconcileSuiteDataState({ purgeApiCache = true } = {}) {
+        const enabled = suiteDataEnabled();
+        if (!enabled) {
+            if (!setupDisabledApplied) {
+                setupDisabledApplied = true;
+                disableSuiteDataDisplay({ purgeApiCache });
+            } else {
+                // Torn can replace the member-list DOM while setup is disabled.
+                // Re-clear any newly inserted rows without repeatedly touching storage.
+                clearRendered();
+            }
+            return false;
+        }
+
+        setupDisabledApplied = false;
+        if (ffDataState === "disabled") ffDataState = "idle";
+        return true;
     }
 
     function getManual(playerId) {
@@ -432,6 +529,9 @@
 
     async function fetchPlayers(ids) {
         requireVisiblePage();
+        if (!suiteDataEnabled()) {
+            throw new Error("Suite setup is required before FF/EST data can be used.");
+        }
         const result = new Map();
         const stale = new Map();
         const missing = [];
@@ -451,7 +551,8 @@
         if (!missing.length) return result;
 
         const key = getApiKey();
-        if (!key) throw new Error("No FF Scouter API key is saved. Open KS and paste your key.");
+        if (!key) throw new Error("No Torn / FFScouter API key is saved. Open KS → Scout and paste your key.");
+        requireApiDisclosureAcceptance();
 
         result.ksTransientFailure = false;
         result.ksNeedsRetryIds = new Set();
@@ -986,6 +1087,10 @@
     }
 
     function loadPublishedStatusSnapshot() {
+        if (!suiteDataEnabled()) {
+            delete window[CORE_WINDOW_KEY];
+            return;
+        }
         const stored = readStoredJson(STATUS_STORAGE_KEY, null);
         if (stored?.members && typeof stored.members === "object") {
             window[CORE_WINDOW_KEY] = stored;
@@ -1041,7 +1146,7 @@
         if (destroyed || statusRequestRunning || !isPageVisible() || !hasFactionMemberList()) return;
 
         const key = getApiKey();
-        if (!key) return;
+        if (!key || !apiDisclosureAccepted()) return;
 
         const existing = window[CORE_WINDOW_KEY];
         const now = Math.floor(Date.now() / 1000);
@@ -1082,7 +1187,7 @@
     function scheduleStatusRefresh(delay = STATUS_REFRESH_MS) {
         clearTimeout(statusTimer);
         statusTimer = null;
-        if (destroyed || !isPageVisible() || !hasFactionMemberList()) return;
+        if (destroyed || !suiteDataEnabled() || !isPageVisible() || !hasFactionMemberList()) return;
         statusTimer = setTimeout(() => {
             statusTimer = null;
             refreshStatusCore(false);
@@ -1098,6 +1203,44 @@
         button.style.removeProperty("left");
         button.style.removeProperty("top");
         return true;
+    }
+
+    function revealPlacedButton(button) {
+        if (!button?.isConnected) return;
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                if (!button.isConnected) return;
+                button.style.removeProperty("visibility");
+                button.style.removeProperty("pointer-events");
+            });
+        });
+    }
+
+    function settleInitialButtonPlacement(button) {
+        if (!button?.isConnected) return;
+
+        const startedAt = performance.now();
+        const maxWaitMs = 1400;
+
+        const settle = () => {
+            if (!button.isConnected) return;
+
+            if (syncButtonDock()) {
+                revealPlacedButton(button);
+                return;
+            }
+
+            if (performance.now() - startedAt >= maxWaitMs) {
+                // War Tools may be disabled. In that case, reveal the already
+                // positioned floating button without ever exposing (0, 0).
+                revealPlacedButton(button);
+                return;
+            }
+
+            setTimeout(settle, 50);
+        };
+
+        settle();
     }
 
     function undockButton() {
@@ -1147,7 +1290,7 @@
     async function fetchFactionDirectory() {
         requireVisiblePage();
         const key = getApiKey();
-        if (!key) return null;
+        if (!key || !apiDisclosureAccepted()) return null;
 
         const factionId = detectFactionId();
         const sharedDirectory = directoryFromStatusSnapshot(factionId);
@@ -1517,6 +1660,16 @@
             .ks6-wide-action{width:100%;margin-top:9px;padding:10px;border:1px solid #686d73;border-radius:6px;background:#3b3f44!important;color:#fff!important;font-weight:800!important;text-shadow:none!important}
             .ks6-wide-action:active{background:#50555c!important}
             .ks6-danger-action{border-color:#875050!important;background:#5d2e2e!important}
+            .ks6-api-disclosure{margin:9px 0;padding:8px;border:1px solid #666b72;border-radius:6px;background:#292c31!important}
+            .ks6-api-disclosure summary{cursor:pointer;color:#fff!important;font-weight:800!important}
+            .ks6-api-grid{display:grid;grid-template-columns:1fr;gap:7px;margin-top:8px}
+            .ks6-api-item{padding:8px;border:1px solid #555b62;border-radius:5px;background:#31353a!important}
+            .ks6-api-item strong{display:block;color:#fff!important;font-size:10px!important;line-height:1.25}
+            .ks6-api-item p{margin:4px 0 0;color:#e7e8ea!important;font-size:9.5px!important;line-height:1.4;overflow-wrap:anywhere}
+            .ks6-api-links{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+            .ks6-api-links a{padding:5px 7px;border:1px solid #5c6269;border-radius:4px;background:#34383e!important;color:#9ecbff!important;text-decoration:none!important;font-size:9px!important;font-weight:700!important}
+            .ks6-api-consent{display:flex!important;align-items:flex-start!important;gap:8px!important;margin-top:10px!important;padding:8px;border:1px solid #8b7448;border-radius:5px;background:#40351f!important;color:#fff!important;font-weight:700!important}
+            .ks6-api-consent input{flex:0 0 auto;margin-top:1px!important}
         `;
         (document.head || document.documentElement).appendChild(style);
     }
@@ -1818,7 +1971,9 @@
     }
 
     function onWarToolsReady() {
-        syncButtonDock();
+        const docked = syncButtonDock();
+        const button = document.querySelector(".ks6-fab");
+        if (docked && button?.style.visibility === "hidden") revealPlacedButton(button);
         updateSuiteVersionWarning();
         updateControlCenterOverview();
     }
@@ -1915,7 +2070,10 @@
     }
 
     function suiteDiagnostics() {
-        const snapshot = window[CORE_WINDOW_KEY] || readStoredJson(STATUS_STORAGE_KEY, null);
+        const dataEnabled = suiteDataEnabled();
+        const snapshot = dataEnabled
+            ? (window[CORE_WINDOW_KEY] || readStoredJson(STATUS_STORAGE_KEY, null))
+            : null;
         const war = window.__ksWarToolsActive;
         const warVersion = String(war?.version || "");
         const members = snapshot?.members && typeof snapshot.members === "object"
@@ -1927,6 +2085,12 @@
             warVersion,
             versionMatch: !warVersion || warVersion === VERSION,
             apiKeyConfigured: Boolean(getApiKey()),
+            apiDisclosureAccepted: apiDisclosureAccepted(),
+            dataEnabled,
+            ffDataState,
+            ffLoadedCount,
+            ffLoadedFactionId,
+            panelStatus: lastPanelStatus,
             snapshotAge: formatSnapshotAge(snapshot?.updatedAt),
             members,
             factionId: Number(snapshot?.factionId) || null,
@@ -1975,7 +2139,11 @@
         set("scout", `Active · v${info.scoutVersion}`, "ok");
         set("war", info.warActive ? `Active · v${info.warVersion || "?"}` : "Not active on this page", info.warActive ? "ok" : "muted");
         set("versions", info.versionMatch ? "Versions match" : `Mismatch · Scout ${VERSION} / War ${info.warVersion}`, info.versionMatch ? "ok" : "warn");
-        set("api", info.apiKeyConfigured ? "Configured" : "Not configured", info.apiKeyConfigured ? "ok" : "warn");
+        set(
+            "api",
+            !info.apiKeyConfigured ? "Not configured" : info.apiDisclosureAccepted ? "Configured · accepted" : "Configured · acceptance required",
+            info.apiKeyConfigured && info.apiDisclosureAccepted ? "ok" : "warn"
+        );
         set("status", `${info.snapshotAge}${info.members ? ` · ${info.members} members` : ""}`, info.members ? "ok" : "muted");
         set("storage", `${info.data.cache} cache · ${info.data.manual} manual · ${info.data.profile} profile`, "muted");
         updateSuiteVersionWarning();
@@ -1987,12 +2155,19 @@
     }
 
     function ensurePanel() {
-        if (!hasFactionMemberList()) return;
-        if (document.querySelector(".ks6-fab")) return;
+        if (!hasFactionMemberList()) return null;
+
+        const existingButton = document.querySelector(".ks6-fab");
+        const existingPanel = document.querySelector(".ks6-panel");
+        if (existingButton && existingPanel) return existingPanel;
+        if (existingButton && !existingPanel) existingButton.remove();
+        if (!existingButton && existingPanel) existingPanel.remove();
 
         const button = document.createElement("button");
         button.className = "ks6-fab";
         button.title = `${NAME} Control Center`;
+        button.style.visibility = "hidden";
+        button.style.pointerEvents = "none";
         applyButtonTheme(button);
 
         const pos = buttonPosition();
@@ -2033,8 +2208,28 @@
             </section>
 
             <section class="ks6-tab-page" data-ksp-page="scout" hidden>
-                <label>FF Scouter API key
-                    <input data-ksp="key" type="password" value="${escapeHtml(getApiKey())}">
+                <label>Torn / FFScouter API key
+                    <input data-ksp="key" type="password" value="${escapeHtml(getApiKey())}" autocomplete="off">
+                </label>
+                <details class="ks6-api-disclosure" open>
+                    <summary>Required API key and data disclosure</summary>
+                    <div class="ks6-api-grid">
+                        <div class="ks6-api-item"><strong>Data storage</strong><p>Key, settings, manual values, notes and cached FF/profile/status/travel data are stored locally in this Torn PDA webview until cleared or removed.</p></div>
+                        <div class="ks6-api-item"><strong>Data sharing</strong><p>Torn API receives the key. FFScouter receives the key and visible target IDs. Kingshade Suite has no server and its developer receives nothing.</p></div>
+                        <div class="ks6-api-item"><strong>Purpose of use</strong><p>Display FF/EST values, map visible faction members, and show faction status/timers, filters and sorting.</p></div>
+                        <div class="ks6-api-item"><strong>Key storage &amp; sharing</strong><p>Stored locally by the Suite and sent over HTTPS only to Torn API and FFScouter. FFScouter separately handles registered keys/data under its own terms.</p></div>
+                        <div class="ks6-api-item"><strong>Key access level</strong><p>Suite direct use: custom <strong>faction/basic</strong>. FFScouter requires its own custom selections as listed in its linked policy. Full access is not required by this Suite.</p></div>
+                    </div>
+                    <div class="ks6-api-links">
+                        <a href="https://www.torn.com/api.html" target="_blank" rel="noopener noreferrer">Torn API terms</a>
+                        <a href="https://www.torn.com/rules.php" target="_blank" rel="noopener noreferrer">Torn scripting rules</a>
+                        <a href="https://ffscouter.com/" target="_blank" rel="noopener noreferrer">FFScouter terms &amp; data policy</a>
+                        <a href="https://ffscouter.com/privacy" target="_blank" rel="noopener noreferrer">FFScouter privacy</a>
+                    </div>
+                </details>
+                <label class="ks6-api-consent">
+                    <input data-ksp="api-consent" type="checkbox" ${settings.apiDisclosureAccepted ? "checked" : ""}>
+                    <span>I have read and accept the disclosure above. Network requests remain disabled until this is checked.</span>
                 </label>
                 <label>Show players with no FF or estimate
                     <input data-ksp="unknown" type="checkbox" ${settings.showUnknown ? "checked" : ""}>
@@ -2082,10 +2277,11 @@
                 <details class="ks6-privacy" open>
                     <summary>Privacy &amp; data use</summary>
                     <div>
-                        <strong>Active page only:</strong> new requests pause whenever Torn is hidden.<br><br>
-                        <strong>FF Scouter:</strong> receives the entered key and IDs from the visible faction member list for FF/estimate lookups.<br><br>
-                        <strong>Torn API:</strong> receives the entered key for official faction/basic status data while a member list is open.<br><br>
-                        <strong>Stored locally:</strong> key, settings, manual values, notes, cached results, profile estimates and travel calibration. No developer-operated server and no automated Torn actions.
+                        <strong>Active page only:</strong> new requests pause whenever Torn is hidden or unfocused.<br><br>
+                        <strong>FFScouter:</strong> receives the entered key and IDs from the visible faction member list for documented <code>/api/v1/get-stats</code> lookups. FFScouter is independent and applies its own terms, storage and data policy.<br><br>
+                        <strong>Torn API:</strong> receives the entered key only for official <code>faction/basic</code> member status and mapping while a faction member list is open.<br><br>
+                        <strong>Stored locally by this Suite:</strong> key, settings, consent state, manual values, notes, cached results, profile estimates and travel calibration. Kingshade Suite operates no server and its developer cannot access this data.<br><br>
+                        <strong>Automation:</strong> no attacks, clicks, travel, purchases, crimes or other Torn actions are performed.
                     </div>
                 </details>
                 <div class="ks6-help">Clearing cache keeps the API key, preferences, manual FF values and notes. It removes cached FF/profile/status/travel data and reloads it.</div>
@@ -2096,6 +2292,20 @@
         let dragging = false;
         let moved = false;
         let sx = 0, sy = 0, sl = 0, st = 0;
+
+        const apiKeyInput = panel.querySelector('[data-ksp="key"]');
+        const apiConsentInput = panel.querySelector('[data-ksp="api-consent"]');
+        let apiKeyDirty = false;
+        let apiConsentDirty = false;
+
+        const syncApiCredentialControls = () => {
+            if (apiKeyInput && !apiKeyDirty) apiKeyInput.value = getApiKey();
+            if (apiConsentInput && !apiConsentDirty) apiConsentInput.checked = apiDisclosureAccepted();
+        };
+
+        apiKeyInput?.addEventListener("input", () => { apiKeyDirty = true; });
+        apiKeyInput?.addEventListener("change", () => { apiKeyDirty = true; });
+        apiConsentInput?.addEventListener("change", () => { apiConsentDirty = true; });
 
         button.onpointerdown = event => {
             dragging = true;
@@ -2119,23 +2329,53 @@
             button.style.top = `${Math.max(70, Math.min(innerHeight - 145, st + dy))}px`;
         };
 
-        const persistScoutSettings = () => {
+        const persistScoutSettings = ({ forceApiCredentials = false } = {}) => {
             const previousKey = getApiKey();
             const previousUnknown = settings.showUnknown;
             const previousStyle = settings.buttonStyle || "crest";
-            const nextKey = panel.querySelector('[data-ksp="key"]').value.trim();
+            const previousConsent = apiDisclosureAccepted();
+            const nextKey = String(apiKeyInput?.value || "").trim();
             const nextUnknown = panel.querySelector('[data-ksp="unknown"]').checked;
             const nextStyle = panel.querySelector('[data-ksp="style"]').value || "crest";
-            setApiKey(nextKey);
-            if (previousKey !== nextKey) {
-                factionDirectoryCache.clear();
-                scheduleStatusRefresh(0);
+            const nextConsent = Boolean(apiConsentInput?.checked);
+
+            // Never let an untouched, temporarily blank password control erase
+            // a stored API key. Credentials are persisted only after an actual
+            // user edit, or an explicit onboarding save.
+            if (forceApiCredentials || apiKeyDirty) setApiKey(nextKey);
+            if (forceApiCredentials || apiConsentDirty) {
+                settings.apiDisclosureAccepted = nextConsent;
             }
+
+            const storedKey = getApiKey();
+            const wasEnabled = Boolean(previousKey && previousConsent);
+            const isEnabled = Boolean(storedKey && settings.apiDisclosureAccepted);
+            if (previousKey !== storedKey) factionDirectoryCache.clear();
+
             settings.showUnknown = nextUnknown;
             settings.buttonStyle = ["simple", "crest", "royal"].includes(nextStyle) ? nextStyle : "crest";
             saveSettings();
             applyButtonTheme(button, settings.buttonStyle);
-            return previousKey !== nextKey || previousUnknown !== nextUnknown || previousStyle !== settings.buttonStyle;
+
+            apiKeyDirty = false;
+            apiConsentDirty = false;
+            syncApiCredentialControls();
+
+            if (!isEnabled) {
+                setupDisabledApplied = false;
+                reconcileSuiteDataState({ purgeApiCache: true });
+            } else if (!wasEnabled && isEnabled) {
+                setupDisabledApplied = false;
+                ffDataState = "idle";
+                scheduleStatusRefresh(0);
+                scheduleScan(0);
+                window.__ksWarToolsActive?.refresh?.();
+            }
+
+            return previousKey !== storedKey ||
+                previousUnknown !== nextUnknown ||
+                previousStyle !== settings.buttonStyle ||
+                previousConsent !== settings.apiDisclosureAccepted;
         };
 
         const persistWarSettings = () => updateWarSettings({
@@ -2160,6 +2400,7 @@
                 const rect = button.getBoundingClientRect();
                 settings.buttonX = rect.left; settings.buttonY = rect.top; saveSettings();
             } else if (panel.hidden) {
+                syncApiCredentialControls();
                 panel.hidden = false;
                 updateControlCenterOverview(panel);
             } else closePanel();
@@ -2200,10 +2441,47 @@
             updateControlCenterOverview(panel);
         };
 
+        panel.__ks6SyncApiCredentialControls = syncApiCredentialControls;
         document.body.append(button, panel);
         setControlTab(panel, settings.controlTab || "overview");
-        syncButtonDock();
+        settleInitialButtonPlacement(button);
         updateControlCenterOverview(panel);
+
+        if (pendingControlTab) {
+            const requestedTab = pendingControlTab;
+            pendingControlTab = null;
+            syncApiCredentialControls();
+            setControlTab(panel, requestedTab);
+            panel.hidden = false;
+            updateControlCenterOverview(panel);
+        }
+
+        return panel;
+    }
+
+    function ensureControlCenter() {
+        const panel = ensurePanel();
+        return Boolean(panel && document.querySelector(".ks6-fab"));
+    }
+
+    function openControlCenter(tab = "overview") {
+        const validTab = ["overview", "scout", "war", "data"].includes(tab) ? tab : "overview";
+        pendingControlTab = validTab;
+
+        if (!isFactionPath()) return false;
+        const panel = ensurePanel();
+        if (!panel) {
+            scheduleScan(0);
+            startStartupProbe();
+            return true;
+        }
+
+        panel.__ks6SyncApiCredentialControls?.();
+        setControlTab(panel, validTab);
+        panel.hidden = false;
+        pendingControlTab = null;
+        updateControlCenterOverview(panel);
+        return true;
     }
 
     function removePanel() {
@@ -2237,7 +2515,6 @@
 
         try {
             requireVisiblePage();
-            captureProfileEstimate();
 
             if (!isFactionPath()) {
                 clearRendered();
@@ -2246,6 +2523,25 @@
                 statusTimer = null;
                 return;
             }
+
+            if (!hasFactionMemberList()) {
+                clearRendered();
+                removePanel();
+                clearTimeout(statusTimer);
+                statusTimer = null;
+                return;
+            }
+
+            ensurePanel();
+            syncButtonDock();
+
+            if (!reconcileSuiteDataState({ purgeApiCache: true })) {
+                window.__ksWarToolsActive?.refresh?.();
+                return;
+            }
+
+            captureProfileEstimate();
+            scheduleStatusRefresh(0);
 
             const result = await findRows();
             requireVisiblePage();
@@ -2259,10 +2555,10 @@
                 return;
             }
 
-            ensurePanel();
-            syncButtonDock();
-            scheduleStatusRefresh(0);
-            updatePanelStatus(`${rows.size}/${result.candidateRows} members mapped · ${result.directIds} XID · ${result.nameIds} name`);
+            ffDataState = "loading";
+            ffLoadedCount = 0;
+            ffLoadedFactionId = detectFactionId();
+            updatePanelStatus(`${rows.size}/${result.candidateRows} members identified · Loading FF/EST data…`);
 
             if (!rows.size) return;
 
@@ -2305,13 +2601,18 @@
                 }));
 
                 if (data.ksTransientFailure) {
-                    updatePanelStatus(`${rows.size}/${result.candidateRows} members · FF Scouter temporarily unavailable · using cache`);
+                    ffDataState = "degraded";
+                    ffLoadedCount = 0;
+                    updatePanelStatus(`${rows.size}/${result.candidateRows} members · FFScouter temporarily unavailable`);
                     clearTimeout(ffRetryTimer);
                     ffRetryTimer = setTimeout(() => {
                         ffRetryTimer = null;
                         scheduleScan(0);
                     }, 5000);
                 } else {
+                    ffDataState = "loaded";
+                    ffLoadedCount = rows.size;
+                    ffLoadedFactionId = detectFactionId();
                     updatePanelStatus(`${rows.size}/${result.candidateRows} members · FF/EST data loaded`);
                 }
             } catch (error) {
@@ -2321,8 +2622,10 @@
                 }
                 if (isHiddenPageError(error) || !isPageVisible()) {
                     resumeScanWhenVisible = true;
-                    updatePanelStatus("Paused while Torn is not visible.");
+                    updatePanelStatus("Paused while Torn is not visible or focused.");
                 } else {
+                    ffDataState = "error";
+                    ffLoadedCount = 0;
                     updatePanelStatus(`${rows.size} member rows · FF request failed`);
                     showToast(error instanceof Error ? error.message : String(error));
                 }
@@ -2330,7 +2633,7 @@
         } catch (error) {
             if (isHiddenPageError(error) || !isPageVisible()) {
                 resumeScanWhenVisible = true;
-                updatePanelStatus("Paused while Torn is not visible.");
+                updatePanelStatus("Paused while Torn is not visible or focused.");
             } else {
                 showToast(error instanceof Error ? error.message : String(error));
             }
@@ -2355,6 +2658,33 @@
         scanTimer = setTimeout(scan, delay);
     }
 
+    function stopStartupProbe() {
+        clearInterval(startupProbeTimer);
+        startupProbeTimer = null;
+    }
+
+    function startStartupProbe() {
+        stopStartupProbe();
+        if (destroyed || !isPageVisible() || !isFactionPath()) return;
+
+        let attempts = 0;
+        startupProbeTimer = setInterval(() => {
+            attempts += 1;
+
+            if (destroyed || !isPageVisible() || !isFactionPath() || attempts >= 60) {
+                stopStartupProbe();
+                return;
+            }
+
+            if (!hasFactionMemberList()) return;
+
+            ensurePanel();
+            scheduleScan(0);
+
+            if (document.querySelector(".ks6-fab")) stopStartupProbe();
+        }, 250);
+    }
+
     function connectObserver() {
         if (!observer || observerConnected || !document.body || !isPageVisible() || destroyed) return;
         observer.observe(document.body, OBSERVER_OPTIONS);
@@ -2377,14 +2707,15 @@
             ffRetryTimer = null;
             disconnectObserver();
             abortActiveRequests();
-            updatePanelStatus("Paused while Torn is not visible.");
+            updatePanelStatus("Paused while Torn is not visible or focused.");
             return;
         }
 
         connectObserver();
-        updatePanelStatus("Visible again · resuming scan…");
+        updatePanelStatus("Visible and focused again · resuming scan…");
         if (hasFactionMemberList()) scheduleStatusRefresh(0);
         scheduleScan(resumeScanWhenVisible ? 0 : 80);
+        startStartupProbe();
     }
 
     function init() {
@@ -2407,6 +2738,7 @@
             row.style.removeProperty("box-shadow");
         });
 
+        reconcileSuiteDataState({ purgeApiCache: true });
         loadPublishedStatusSnapshot();
         ensureStyles();
 
@@ -2416,26 +2748,28 @@
 
             const relevant = mutations.some(mutation =>
                 [...Array.from(mutation.addedNodes), ...Array.from(mutation.removedNodes)].some(node => {
-                    if (!(node instanceof Element)) return false;
+                    const isElement = node instanceof Element;
+                    const canQuery = isElement || node instanceof DocumentFragment;
+                    if (!canQuery) return false;
 
-                    if (node.matches(
+                    if (isElement && node.matches(
                         ".ks6-fab,.ks6-panel,.ks6-badge,.ks6-modal,.ks6-toast," +
                         ".kswt-timer,#kswt-toolbar,#kswt-timer-info,.kswt-info-text,.kswt-info-close," +
                         "[data-ks-suite-mutating]"
                     )) return false;
 
-                    if (node.closest?.(
+                    if (isElement && node.closest?.(
                         ".ks6-panel,.ks6-modal,#kswt-toolbar,#kswt-timer-info,[data-ks-suite-mutating]"
                     )) return false;
 
                     // Profile capture still needs to tolerate Torn's dynamic profile DOM.
                     if (isProfilePath()) return true;
 
-                    // On faction pages, only member-list changes justify a full scan.
+                    // Torn PDA may insert the first member list through a DocumentFragment.
                     return Boolean(
-                        node.matches(".members-list,.table-body,.table-row") ||
+                        (isElement && node.matches(".members-list,.table-body,.table-row")) ||
                         node.querySelector?.(".members-list,.table-body,.table-row") ||
-                        node.closest?.(".members-list .table-row")
+                        (isElement && node.closest?.(".members-list .table-row"))
                     );
                 })
             );
@@ -2445,6 +2779,8 @@
         connectObserver();
 
         document.addEventListener("visibilitychange", onVisibilityChange);
+        window.addEventListener("focus", onVisibilityChange);
+        window.addEventListener("blur", onVisibilityChange);
         window.addEventListener("hashchange", onRouteChange);
         window.addEventListener("popstate", onRouteChange);
         window.navigation?.addEventListener?.("currententrychange", onRouteChange);
@@ -2453,6 +2789,7 @@
         window.addEventListener(STATUS_EVENT, onWarSettingsUpdate);
 
         scheduleScan(0);
+        startStartupProbe();
 
         window[INSTANCE_KEY] = {
             version: VERSION,
@@ -2460,15 +2797,8 @@
             getStatusSnapshot: () => window[CORE_WINDOW_KEY] || null,
             getSettings: () => ({ ...settings }),
             getSuiteStatus: suiteDiagnostics,
-            openControlCenter: (tab = "overview") => {
-                ensurePanel();
-                const panel = document.querySelector(".ks6-panel");
-                if (!panel) return false;
-                setControlTab(panel, tab);
-                panel.hidden = false;
-                updateControlCenterOverview(panel);
-                return true;
-            },
+            ensureControlCenter,
+            openControlCenter,
             refreshStatus: () => refreshStatusCore(false),
             forceStatusRefresh: () => refreshStatusCore(true),
             syncButtonDock,
@@ -2481,9 +2811,12 @@
                 statusTimer = null;
                 clearTimeout(ffRetryTimer);
                 ffRetryTimer = null;
+                stopStartupProbe();
                 disconnectObserver();
                 abortActiveRequests();
                 document.removeEventListener("visibilitychange", onVisibilityChange);
+                window.removeEventListener("focus", onVisibilityChange);
+                window.removeEventListener("blur", onVisibilityChange);
                 window.removeEventListener("hashchange", onRouteChange);
                 window.removeEventListener("popstate", onRouteChange);
                 window.navigation?.removeEventListener?.("currententrychange", onRouteChange);
@@ -2500,4 +2833,402 @@
     }
 
     init();
+})();
+
+// First-load recovery and guided API onboarding.
+(() => {
+    "use strict";
+
+    for (const oldKey of [
+        "__ksSuiteOnboardingPatchTest",
+        "__ksSuiteOnboardingIntegratedTest",
+        "__ksSuiteOnboarding"
+    ]) {
+        if (window[oldKey]?.destroy) {
+            try { window[oldKey].destroy(); } catch {}
+        }
+    }
+
+    const INSTANCE_KEY = "__ksSuiteOnboarding";
+
+    const STYLE_ID = "ksob-style";
+    const PROMPT_ID = "ksob-prompt";
+    const GUIDE_ID = "ksob-guide";
+    const PROBE_MS = 250;
+    const OPEN_TIMEOUT_MS = 12000;
+
+    let destroyed = false;
+    let probeTimer = null;
+    let sessionDismissed = false;
+    let setupOpening = false;
+    let openGeneration = 0;
+    let lastRoute = "";
+
+    function pageVisible() {
+        try {
+            return document.visibilityState === "visible" &&
+                !document.hidden &&
+                (typeof document.hasFocus !== "function" || document.hasFocus());
+        } catch {
+            return true;
+        }
+    }
+
+    function isFactionPath() {
+        return /\/factions\.php\/?$/i.test(location.pathname);
+    }
+
+    function memberListVisible() {
+        if (!isFactionPath()) return false;
+        return Array.from(document.querySelectorAll(".members-list")).some(list => {
+            if (!(list instanceof HTMLElement) || !list.querySelector(".table-body")) return false;
+            const rect = list.getBoundingClientRect();
+            const style = getComputedStyle(list);
+            return style.display !== "none" &&
+                style.visibility !== "hidden" &&
+                rect.width > 0 &&
+                rect.height > 0;
+        });
+    }
+
+    function runtime() {
+        const value = window.__kingshadeScoutActive;
+        return value && typeof value.openControlCenter === "function" ? value : null;
+    }
+
+    function status() {
+        try {
+            return runtime()?.getSuiteStatus?.() || {};
+        } catch {
+            return {};
+        }
+    }
+
+    function ensureStyles() {
+        if (document.getElementById(STYLE_ID)) return;
+        const style = document.createElement("style");
+        style.id = STYLE_ID;
+        style.textContent = `
+            #${PROMPT_ID}{
+                position:fixed;left:12px;right:12px;bottom:92px;z-index:2147483647;
+                max-width:430px;margin:0 auto;padding:12px;border:1px solid #c99d4c;
+                border-radius:10px;background:#24272b!important;color:#fff!important;
+                box-shadow:0 8px 28px rgba(0,0,0,.62);font:13px/1.4 Arial,sans-serif
+            }
+            #${PROMPT_ID} strong{display:block;font-size:15px;color:#ffe2a2!important}
+            #${PROMPT_ID} p{margin:6px 0 10px;color:#e7e8ea!important}
+            #${PROMPT_ID} .ksob-actions{display:flex;gap:8px}
+            #${PROMPT_ID} button{
+                flex:1;padding:10px 8px;border:1px solid #666d75;border-radius:6px;
+                background:#3c4147!important;color:#fff!important;font-weight:800!important;
+                text-shadow:none!important
+            }
+            #${PROMPT_ID} button[data-x="setup"]{
+                border-color:#c99d4c;background:#5b451b!important;color:#ffe5a5!important
+            }
+            #${PROMPT_ID} button:disabled{opacity:.72!important}
+            #${GUIDE_ID}{
+                position:relative;margin:0 0 10px;padding:10px;border:1px solid #c99d4c;
+                border-radius:7px;background:#3b321f!important;color:#fff!important
+            }
+            #${GUIDE_ID} strong{display:block;font-size:13px;color:#ffe2a2!important}
+            #${GUIDE_ID} ol{margin:7px 0 9px;padding-left:20px}
+            #${GUIDE_ID} li{margin:3px 0}
+            #${GUIDE_ID} .ksob-guide-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+            #${GUIDE_ID} button{
+                min-width:0;padding:9px 6px;border:1px solid #696f76;border-radius:5px;
+                background:#3b3f44!important;color:#fff!important;font-weight:800!important;
+                text-shadow:none!important
+            }
+            #${GUIDE_ID} button[data-x="save"]{border-color:#4f8f5f;background:#2c653b!important}
+            #${GUIDE_ID} .ksob-feedback{margin-top:8px;color:#ffd9a0!important;font-weight:700}
+            .ksob-highlight{outline:3px solid rgba(235,184,78,.9)!important;outline-offset:3px!important;border-radius:5px!important}
+        `;
+        (document.head || document.documentElement).appendChild(style);
+    }
+
+    function removePrompt() {
+        document.getElementById(PROMPT_ID)?.remove();
+    }
+
+    function removeGuide() {
+        document.getElementById(GUIDE_ID)?.remove();
+        document.querySelectorAll(".ksob-highlight").forEach(element => element.classList.remove("ksob-highlight"));
+    }
+
+    function scrollInsidePanel(element, block = "center") {
+        if (!element) return;
+        try { element.scrollIntoView({ behavior: "smooth", block }); }
+        catch { element.scrollIntoView?.(); }
+    }
+
+    function ensureKsButton() {
+        const core = runtime();
+        if (!core || !memberListVisible()) return false;
+        try { return Boolean(core.ensureControlCenter?.() || document.querySelector(".ks6-fab")); }
+        catch { return false; }
+    }
+
+    function injectGuide(panel) {
+        const existing = document.getElementById(GUIDE_ID);
+        if (existing) return existing;
+
+        const scoutPage = panel?.querySelector('[data-ksp-page="scout"]');
+        if (!scoutPage) return null;
+
+        const guide = document.createElement("div");
+        guide.id = GUIDE_ID;
+        guide.innerHTML = `
+            <strong>First-time setup</strong>
+            <ol>
+                <li>Paste your Torn / FFScouter API key.</li>
+                <li>Read the disclosure.</li>
+                <li>Tick acceptance, then save and load data.</li>
+            </ol>
+            <div class="ksob-guide-actions">
+                <button type="button" data-x="consent">Go to acceptance</button>
+                <button type="button" data-x="save">Save &amp; load data</button>
+            </div>
+            <div class="ksob-feedback" hidden></div>
+        `;
+        scoutPage.prepend(guide);
+
+        guide.querySelector('[data-x="consent"]').onclick = () => {
+            const consent = panel.querySelector('[data-ksp="api-consent"]');
+            consent?.closest("label")?.classList.add("ksob-highlight");
+            scrollInsidePanel(consent?.closest("label"), "center");
+        };
+
+        guide.querySelector('[data-x="save"]').onclick = () => {
+            const key = panel.querySelector('[data-ksp="key"]');
+            const consent = panel.querySelector('[data-ksp="api-consent"]');
+            const feedback = guide.querySelector(".ksob-feedback");
+            const saveButton = guide.querySelector('[data-x="save"]');
+            const keyValue = String(key?.value || "").trim();
+
+            if (!keyValue) {
+                feedback.hidden = false;
+                feedback.textContent = "Paste your API key first.";
+                key?.classList.add("ksob-highlight");
+                scrollInsidePanel(key, "center");
+                key?.focus?.();
+                return;
+            }
+
+            if (!consent?.checked) {
+                feedback.hidden = false;
+                feedback.textContent = "Read the disclosure and tick the acceptance box.";
+                consent?.closest("label")?.classList.add("ksob-highlight");
+                scrollInsidePanel(consent?.closest("label"), "center");
+                return;
+            }
+
+            feedback.hidden = false;
+            feedback.textContent = "Saving and loading Suite data…";
+            saveButton.disabled = true;
+            key?.dispatchEvent(new Event("input", { bubbles: true }));
+            consent?.dispatchEvent(new Event("change", { bubbles: true }));
+            panel.querySelector('[data-ksp="rescan"]')?.click();
+
+            const startedAt = Date.now();
+            let retriedAfterHttp400 = false;
+
+            const finishSetup = () => {
+                if (destroyed || !guide.isConnected) return;
+                const info = status();
+                const toast = document.querySelector(".ks6-toast");
+                const toastText = String(toast?.textContent || "").trim();
+
+                if (/FF\s*Scouter returned HTTP 400/i.test(toastText)) {
+                    if (!retriedAfterHttp400) {
+                        retriedAfterHttp400 = true;
+                        feedback.textContent = "FFScouter did not accept the first request · retrying once…";
+                        toast?.remove();
+                        setTimeout(() => {
+                            panel.querySelector('[data-ksp="rescan"]')?.click();
+                            setTimeout(finishSetup, 700);
+                        }, 800);
+                        return;
+                    }
+                    feedback.textContent = "FFScouter could not load data (HTTP 400). Verify the API key, then retry.";
+                    saveButton.disabled = false;
+                    saveButton.textContent = "Retry FFScouter";
+                    return;
+                }
+
+                if (info.dataEnabled && info.ffDataState === "loaded" && Number(info.ffLoadedCount) > 0) {
+                    feedback.textContent = `Setup complete · ${Number(info.ffLoadedCount)} members loaded.`;
+                    removePrompt();
+                    setTimeout(removeGuide, 2500);
+                    return;
+                }
+
+                if (Date.now() - startedAt >= 20000) {
+                    feedback.textContent = info.dataEnabled
+                        ? "Setup saved, but FF/EST did not load. Tap Retry FFScouter."
+                        : "Setup was not saved. Check the API key and acceptance box.";
+                    saveButton.disabled = false;
+                    saveButton.textContent = info.dataEnabled ? "Retry FFScouter" : "Save & load data";
+                    return;
+                }
+
+                setTimeout(finishSetup, 400);
+            };
+
+            setTimeout(finishSetup, 400);
+        };
+
+        return guide;
+    }
+
+    function openSetup(setupButton = null) {
+        if (setupOpening) return;
+        setupOpening = true;
+        sessionDismissed = true;
+        const generation = ++openGeneration;
+        const startedAt = Date.now();
+
+        if (setupButton) {
+            setupButton.disabled = true;
+            setupButton.textContent = "Opening setup…";
+        }
+
+        const attempt = () => {
+            if (destroyed || generation !== openGeneration) return;
+            const core = runtime();
+            if (core && memberListVisible()) {
+                try { core.openControlCenter("scout"); } catch {}
+            }
+
+            const panel = document.querySelector(".ks6-panel");
+            if (panel && !panel.hidden) {
+                removePrompt();
+                injectGuide(panel);
+                const key = panel.querySelector('[data-ksp="key"]');
+                key?.classList.add("ksob-highlight");
+                scrollInsidePanel(document.getElementById(GUIDE_ID) || key, "start");
+                setTimeout(() => key?.focus?.(), 200);
+                setupOpening = false;
+                sessionDismissed = false;
+                return;
+            }
+
+            if (Date.now() - startedAt >= OPEN_TIMEOUT_MS) {
+                setupOpening = false;
+                sessionDismissed = false;
+                if (setupButton?.isConnected) {
+                    setupButton.disabled = false;
+                    setupButton.textContent = "Try setup again";
+                }
+                const prompt = document.getElementById(PROMPT_ID);
+                const message = prompt?.querySelector("p");
+                if (message) message.textContent = "Suite is still loading. Tap Try setup again.";
+                return;
+            }
+
+            ensureKsButton();
+            setTimeout(attempt, 100);
+        };
+
+        attempt();
+    }
+
+    function showPrompt() {
+        if (sessionDismissed || setupOpening || document.getElementById(PROMPT_ID)) return;
+        const info = status();
+        if (info.dataEnabled) return;
+
+        const missingKey = !info.apiKeyConfigured;
+        const missingConsent = !info.apiDisclosureAccepted;
+        const promptMessage = missingKey && missingConsent
+            ? "Add your API key and accept the disclosure before FF/EST data can load."
+            : missingKey
+                ? "Your API key is missing. Add it before FF/EST data can load."
+                : "Your API key is saved, but the required disclosure has not been accepted.";
+        const setupLabel = missingKey ? "Set up API key" : "Review disclosure";
+
+        const prompt = document.createElement("div");
+        prompt.id = PROMPT_ID;
+        prompt.innerHTML = `
+            <strong>Kingshade Suite setup required</strong>
+            <p>${promptMessage}</p>
+            <div class="ksob-actions">
+                <button type="button" data-x="later">Later</button>
+                <button type="button" data-x="setup">${setupLabel}</button>
+            </div>
+        `;
+
+        prompt.querySelector('[data-x="later"]').onclick = event => {
+            event.stopPropagation();
+            sessionDismissed = true;
+            removePrompt();
+        };
+        prompt.querySelector('[data-x="setup"]').onclick = event => {
+            event.stopPropagation();
+            openSetup(event.currentTarget);
+        };
+
+        document.body.appendChild(prompt);
+    }
+
+    function probe() {
+        if (destroyed || !document.body) return;
+
+        const route = `${location.pathname}${location.search}${location.hash}`;
+        if (route !== lastRoute) {
+            lastRoute = route;
+            openGeneration += 1;
+            setupOpening = false;
+            sessionDismissed = false;
+            removePrompt();
+            removeGuide();
+        }
+
+        if (!pageVisible() || !memberListVisible()) {
+            removePrompt();
+            return;
+        }
+
+        const core = runtime();
+        if (!core) return;
+        ensureKsButton();
+
+        const panel = document.querySelector(".ks6-panel");
+        if (panel && !panel.hidden) {
+            removePrompt();
+            return;
+        }
+
+        const info = status();
+        if (!info.dataEnabled) showPrompt();
+        else removePrompt();
+    }
+
+    function start() {
+        if (!document.body) {
+            setTimeout(start, 100);
+            return;
+        }
+        ensureStyles();
+        clearInterval(probeTimer);
+        probeTimer = setInterval(probe, PROBE_MS);
+        probe();
+    }
+
+    window[INSTANCE_KEY] = {
+        version: "0.8.5",
+        openSetup,
+        destroy() {
+            destroyed = true;
+            openGeneration += 1;
+            clearInterval(probeTimer);
+            probeTimer = null;
+            removePrompt();
+            removeGuide();
+            document.getElementById(STYLE_ID)?.remove();
+            delete window[INSTANCE_KEY];
+        }
+    };
+
+    start();
 })();
