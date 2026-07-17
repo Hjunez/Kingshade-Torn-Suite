@@ -2,6 +2,8 @@
 // @name         KS War Tools for Torn PDA
 // @namespace    https://kingshade.tools/
 // @version      0.8.5
+// @downloadURL  https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_War_Tools_Torn_PDA_v0.8.5.user.js
+// @updateURL    https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_War_Tools_Torn_PDA_v0.8.5.user.js
 // @description  Kingshade Suite War Tools for faction filters, sorting, exact status timers, and marked travel ETA estimates.
 // @author       Kingshade
 // @match        https://www.torn.com/factions.php*

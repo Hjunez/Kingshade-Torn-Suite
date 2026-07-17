@@ -2,6 +2,8 @@
 // @name         Kingshade Scout for Torn PDA
 // @namespace    https://kingshade.tools/
 // @version      0.8.5
+// @downloadURL  https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/Kingshade_Scout_Torn_PDA_v0.8.5.user.js
+// @updateURL    https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/Kingshade_Scout_Torn_PDA_v0.8.5.user.js
 // @description  Kingshade Suite Scout with Suite Control Center, guided API setup, FF/EST estimates, and faction status data.
 // @author       Kingshade
 // @match        https://www.torn.com/*
