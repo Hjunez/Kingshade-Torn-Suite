@@ -5,8 +5,7 @@
   "compatibility_date": "2026-07-18",
   "kv_namespaces": [
     {
-      "binding": "DIBS_KV",
-"binding": "DIBS_KV"
+      "binding": "DIBS_KV"
     }
   ]
 }
