@@ -1,0 +1,46 @@
+name: Deploy KS Live Dibs Backend
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - worker.js
+      - wrangler.jsonc
+      - .github/workflows/ks-live-dibs-deploy.yml
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Build deployment configuration
+        run: |
+          cat > wrangler.deploy.jsonc <<'EOF'
+          {
+            "$schema": "node_modules/wrangler/config-schema.json",
+            "name": "lingering-field-a409",
+            "main": "worker.js",
+            "compatibility_date": "2026-07-18",
+            "kv_namespaces": [
+              {
+                "binding": "DIBS_KV",
+                "id": "${{ secrets.CLOUDFLARE_KV_NAMESPACE_ID }}"
+              }
+            ]
+          }
+          EOF
+
+      - name: Deploy Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "4"
+          command: deploy --config wrangler.deploy.jsonc
