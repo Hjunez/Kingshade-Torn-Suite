@@ -1,0 +1,83 @@
+name: Publish KSBA v5.2.6 faction test
+
+on:
+  push:
+    branches:
+      - release/ksba-v5.2.6-faction-test
+    paths:
+      - ".github/workflows/publish-ksba-v526.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    if: github.event.head_commit.message == 'Trigger KSBA v5.2.6 publication'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out faction-test branch
+        uses: actions/checkout@v4
+        with:
+          ref: release/ksba-v5.2.6-faction-test
+          fetch-depth: 0
+
+      - name: Rebuild, verify and extract package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OUT="faction-tests/KSBA/v5.2.6"
+          STAGE=".publish/ksba-v5.2.6"
+          ZIP="$OUT/KSBA_v5.2.6_FACTION_TEST_PACKAGE.zip"
+          TMP="$(mktemp -d)"
+
+          rm -rf "$OUT"
+          mkdir -p "$OUT"
+
+          cat "$STAGE"/chunk-*.b64 | tr -d '\r\n' | base64 --decode > "$ZIP"
+          echo "589d01ae231ceb16cfd2d0aab9297441630e92d85e3be7486c6d2d38dddf6f78  $ZIP" | sha256sum -c -
+
+          unzip -q "$ZIP" -d "$TMP"
+          cp -a "$TMP/KSBA_v5.2.6_FACTION_TEST_PACKAGE/." "$OUT/"
+
+          (
+            cd "$OUT"
+            sha256sum -c MANIFEST_SHA256.txt
+          )
+
+          grep -Eq '^// @version[[:space:]]+5\.2\.6$' "$OUT/01_Kingshades_Bootlegging_Advisor_v5.2.6_FACTION_TEST.txt"
+
+          cat > "$OUT/README.md" <<'EOF'
+          # KSBA v5.2.6 — Faction Test
+
+          **Status:** Faction test candidate  
+          **Platform:** Torn PDA first  
+          **Stable main build:** unchanged
+
+          ## Installation
+
+          1. Download `KSBA_v5.2.6_FACTION_TEST_PACKAGE.zip` or open `01_Kingshades_Bootlegging_Advisor_v5.2.6_FACTION_TEST.txt`.
+          2. Read `00_READ_ME_FIRST.txt`.
+          3. In Torn PDA, enable only one Bootlegging Advisor version.
+          4. Set injection time to **START**.
+          5. Follow `03_FACTION_TEST_PLAN.txt` and use `04_BUG_REPORT_TEMPLATE.txt` for reports.
+
+          The supplied package is preserved byte-for-byte. The extracted files are verified against `MANIFEST_SHA256.txt`.
+
+          ## Integrity
+
+          - ZIP SHA-256: `589d01ae231ceb16cfd2d0aab9297441630e92d85e3be7486c6d2d38dddf6f78`
+          - Script SHA-256: `e6e195f0447ce83dcf88e3f141732fc9fd116ed6f4918b241f9ff8c3f3a703bc`
+          EOF
+
+          rm -rf "$STAGE"
+
+      - name: Commit published faction-test package
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Publish KSBA v5.2.6 faction test package"
+          git push origin HEAD:release/ksba-v5.2.6-faction-test
