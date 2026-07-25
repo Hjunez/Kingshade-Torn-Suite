@@ -1,0 +1,45 @@
+name: Add KSBA v5.2.6 faction-test ZIP
+
+on:
+  push:
+    branches:
+      - release/ksba-v5.2.6-faction-test
+    paths:
+      - ".github/workflows/add-ksba-v526-zip.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  publish-zip:
+    if: github.event.head_commit.message == 'Trigger KSBA v5.2.6 ZIP publication'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out faction-test branch
+        uses: actions/checkout@v4
+        with:
+          ref: release/ksba-v5.2.6-faction-test
+          fetch-depth: 0
+
+      - name: Rebuild and verify ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          STAGE=".publish/ksba-v5.2.6"
+          ZIP="faction-tests/KSBA/v5.2.6/KSBA_v5.2.6_FACTION_TEST_PACKAGE.zip"
+          cat "$STAGE"/chunk-*.b64 | tr -d '\r\n' | base64 --decode > "$ZIP"
+          echo "589d01ae231ceb16cfd2d0aab9297441630e92d85e3be7486c6d2d38dddf6f78  $ZIP" | sha256sum -c -
+          unzip -tq "$ZIP"
+          rm -rf "$STAGE"
+
+      - name: Commit ZIP and remove staging files
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP="faction-tests/KSBA/v5.2.6/KSBA_v5.2.6_FACTION_TEST_PACKAGE.zip"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git add -f "$ZIP"
+          git commit -m "Add KSBA v5.2.6 faction test ZIP"
+          git push origin HEAD:release/ksba-v5.2.6-faction-test
