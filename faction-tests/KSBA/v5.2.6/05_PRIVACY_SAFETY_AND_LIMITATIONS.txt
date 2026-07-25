@@ -1,0 +1,60 @@
+KSBA v5.2.6 — PRIVACY, SAFETY AND LIMITATIONS
+
+READ-ONLY GUIDANCE
+
+The Advisor does not:
+- click genre tiles
+- start copying
+- choose a batch size
+- sell DVDs
+- spend nerve
+- modify Torn's native Sell action
+- contact external services
+- require an API key
+- collect player identity
+
+Every game action remains manual.
+
+COMMUNITY-BASED BENEFITS
+
+Community guides and player experience generally suggest that larger,
+balanced stocks may:
+- improve cash returns from successful sales
+- allow more DVDs to be sold in one action
+- improve Bootlegging Crime Skill efficiency per nerve
+
+These are community observations, not guaranteed results or a published Torn formula.
+
+The script does not claim:
+- guaranteed profit
+- guaranteed successful sales
+- a fixed Crime Skill gain
+- increased hidden Crime Experience
+- that the default ratios are mathematically optimal for every account
+
+DEFAULT TARGETS
+
+Action 100
+Comedy 70
+Drama 55
+Fantasy 70
+Horror 30
+Romance 30
+Thriller 40
+Sci-Fi 20
+
+The targets are planning proportions. They are not a requirement to reach every full target before selling.
+
+FAIL-SAFE BEHAVIOR
+
+The Advisor waits for all eight genres and stable visible values.
+When the page is incomplete, it should pause rather than guess.
+
+TORN CHANGES
+
+Torn can change Bootlegging mechanics or page layout.
+Stop following the recommendation and report the issue if:
+- displayed values do not match Torn
+- the wrong genre is highlighted
+- original Torn controls are blocked
+- the interface overlaps or duplicates
