@@ -7,6 +7,12 @@ on:
     paths:
       - '.ksma-upload/**'
       - '.github/workflows/assemble-ksma-v0.9.3.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.ksma-upload/**'
+      - '.github/workflows/assemble-ksma-v0.9.3.yml'
 
 permissions:
   contents: write
