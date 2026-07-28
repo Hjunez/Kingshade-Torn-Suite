@@ -1,0 +1,43 @@
+name: Assemble KSMA v0.9.3
+
+on:
+  push:
+    branches:
+      - release/ksma-v0.9.3
+    paths:
+      - '.ksma-upload/**'
+      - '.github/workflows/assemble-ksma-v0.9.3.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  assemble:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/ksma-v0.9.3
+          fetch-depth: 0
+
+      - name: Assemble and verify release
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .ksma-upload/part-*.b64 | base64 --decode | bzip2 --decompress > Kingshades_Market_Advisor_v0.9.3.user.js
+          echo "0369fdb34c502a7d3f61bcefaf7af7c6ea933ba74dfdaea6832b5dcfe2eac33b  Kingshades_Market_Advisor_v0.9.3.user.js" | sha256sum --check --strict
+          grep -q '^// ==UserScript==$' Kingshades_Market_Advisor_v0.9.3.user.js
+          grep -q '^// @version      0.9.3$' Kingshades_Market_Advisor_v0.9.3.user.js
+          grep -q '^  const VERSION_LABEL = "RELEASE";$' Kingshades_Market_Advisor_v0.9.3.user.js
+
+      - name: Commit release file
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .ksma-upload
+          rm -f .github/workflows/assemble-ksma-v0.9.3.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Publish Kingshade's Market Advisor v0.9.3"
+          git push origin HEAD:release/ksma-v0.9.3
