@@ -1,9 +1,11 @@
 // ==UserScript==
 // @name         Kingshade's Market Advisor
-// @namespace    https://kingshade.tools/
-// @version      0.9.3
-// @description  Kingshade's Market Advisor v0.9.3 release verification build based on approved RC5 with no functional changes.
+// @namespace    https://kingshade.tools/market-advisor
+// @version      0.9.3.1
+// @description  Kingshade's Market Advisor for Torn PDA — Item Market and Bazaar comparison with Happy Jump route planning.
 // @author       Kingshade
+// @downloadURL  https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/Kingshades_Market_Advisor_v0.9.3.user.js
+// @updateURL    https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/Kingshades_Market_Advisor_v0.9.3.user.js
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
 // @run-at       document-idle
