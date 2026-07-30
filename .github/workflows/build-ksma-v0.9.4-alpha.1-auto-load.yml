@@ -1,0 +1,47 @@
+name: Build KSMA v0.9.4 alpha 1 auto load
+
+on:
+  push:
+    branches:
+      - feature-ksma-v0-9-4-alpha-1-auto-load
+    paths:
+      - '.github/workflows/build-ksma-v0.9.4-alpha.1-auto-load.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature-ksma-v0-9-4-alpha-1-auto-load
+          fetch-depth: 0
+
+      - name: Build automatic item loading test
+        shell: bash
+        run: |
+          set -euo pipefail
+          python .github/scripts/build_ksma_v0_9_4_alpha_1_auto_load.py
+          node --check KSMA_v0.9.4-alpha.1_AUTO_ITEM_LOAD_TEST.txt
+          test "$(head -n 1 KSMA_v0.9.4-alpha.1_AUTO_ITEM_LOAD_TEST.txt)" = '// ==UserScript=='
+          grep -q '^// @version      0.9.4-alpha.1$' KSMA_v0.9.4-alpha.1_AUTO_ITEM_LOAD_TEST.txt
+          grep -q '^  const VERSION_LABEL = "TEST";$' KSMA_v0.9.4-alpha.1_AUTO_ITEM_LOAD_TEST.txt
+          grep -q '^  function scheduleAutoItemLoad' KSMA_v0.9.4-alpha.1_AUTO_ITEM_LOAD_TEST.txt
+          grep -q 'document.visibilityState !== "visible"' KSMA_v0.9.4-alpha.1_AUTO_ITEM_LOAD_TEST.txt
+          grep -q 'runRefresh({ trigger: "auto", expectedItemId: itemId })' KSMA_v0.9.4-alpha.1_AUTO_ITEM_LOAD_TEST.txt
+          ! grep -q 'setInterval' KSMA_v0.9.4-alpha.1_AUTO_ITEM_LOAD_TEST.txt
+          ! grep -q 'location.reload' KSMA_v0.9.4-alpha.1_AUTO_ITEM_LOAD_TEST.txt
+
+      - name: Commit verified test file
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/build-ksma-v0.9.4-alpha.1-auto-load.yml
+          rm -f .github/scripts/build_ksma_v0_9_4_alpha_1_auto_load.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Build KSMA v0.9.4 alpha 1 automatic item loading test"
+          git push origin HEAD:feature-ksma-v0-9-4-alpha-1-auto-load
