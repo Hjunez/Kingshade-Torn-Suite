@@ -1,10 +1,15 @@
 name: Build KSMA v0.9.4 alpha 1 auto load
 
 on:
-  push:
+  pull_request:
     branches:
-      - feature-ksma-v0-9-4-alpha-1-auto-load
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
     paths:
+      - '.github/scripts/build_ksma_v0_9_4_alpha_1_auto_load.py'
       - '.github/workflows/build-ksma-v0.9.4-alpha.1-auto-load.yml'
 
 permissions:
@@ -12,11 +17,12 @@ permissions:
 
 jobs:
   build:
+    if: startsWith(github.head_ref, 'feature-ksma-v0-9-4-alpha-1-auto-load')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: feature-ksma-v0-9-4-alpha-1-auto-load
+          ref: ${{ github.head_ref }}
           fetch-depth: 0
 
       - name: Build automatic item loading test
@@ -36,6 +42,8 @@ jobs:
 
       - name: Commit verified test file
         shell: bash
+        env:
+          HEAD_BRANCH: ${{ github.head_ref }}
         run: |
           set -euo pipefail
           rm -f .github/workflows/build-ksma-v0.9.4-alpha.1-auto-load.yml
@@ -44,4 +52,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -m "Build KSMA v0.9.4 alpha 1 automatic item loading test"
-          git push origin HEAD:feature-ksma-v0-9-4-alpha-1-auto-load
+          git push origin HEAD:"${HEAD_BRANCH}"
