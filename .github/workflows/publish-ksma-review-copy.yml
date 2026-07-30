@@ -1,0 +1,38 @@
+name: Publish KSMA review copy
+
+on:
+  push:
+    branches:
+      - docs-ksma-code-review-link
+    paths:
+      - '.github/workflows/publish-ksma-review-copy.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: docs-ksma-code-review-link
+          fetch-depth: 0
+
+      - name: Create readable text copy
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp Kingshades_Market_Advisor_v0.9.3.user.js Kingshades_Market_Advisor_v0.9.3_CODE_REVIEW.txt
+          cmp -s Kingshades_Market_Advisor_v0.9.3.user.js Kingshades_Market_Advisor_v0.9.3_CODE_REVIEW.txt
+
+      - name: Commit review copy
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/publish-ksma-review-copy.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "docs: add KSMA code review text copy"
+          git push origin HEAD:docs-ksma-code-review-link
