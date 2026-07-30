@@ -3,7 +3,7 @@ name: Build KSMA v0.9.4 alpha 1 auto load
 on:
   push:
     branches:
-      - feature-ksma-v0-9-4-alpha-1-auto-load
+      - feature-ksma-v0-9-4-alpha-1-auto-load-v2
     paths:
       - '.github/workflows/build-ksma-v0.9.4-alpha.1-auto-load.yml'
 
@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: feature-ksma-v0-9-4-alpha-1-auto-load
+          ref: feature-ksma-v0-9-4-alpha-1-auto-load-v2
           fetch-depth: 0
 
       - name: Build automatic item loading test
@@ -44,4 +44,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -m "Build KSMA v0.9.4 alpha 1 automatic item loading test"
-          git push origin HEAD:feature-ksma-v0-9-4-alpha-1-auto-load
+          git push origin HEAD:feature-ksma-v0-9-4-alpha-1-auto-load-v2
