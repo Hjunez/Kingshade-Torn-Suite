@@ -1,0 +1,254 @@
+from pathlib import Path
+
+SOURCE = Path("Kingshades_Market_Advisor_v0.9.3.user.js")
+TARGET = Path("KSMA_v0.9.4-alpha.1_AUTO_ITEM_LOAD_TEST.txt")
+
+s = SOURCE.read_text(encoding="utf-8")
+
+
+def once(old: str, new: str, label: str) -> None:
+    global s
+    count = s.count(old)
+    if count != 1:
+        raise SystemExit(f"{label}: expected exactly one match, found {count}")
+    s = s.replace(old, new, 1)
+
+
+once("// @name         Kingshade's Market Advisor", "// @name         Kingshade's Market Advisor AUTO LOAD TEST", "metadata name")
+once("// @version      0.9.3", "// @version      0.9.4-alpha.1", "metadata version")
+once(
+    "// @description  Kingshade's Market Advisor v0.9.3 release verification build based on approved RC5 with no functional changes.",
+    "// @description  PDA test build: automatically loads market data after the user manually opens or changes a visible Item Market item.",
+    "metadata description",
+)
+once('  const VERSION = "0.9.3";', '  const VERSION = "0.9.4-alpha.1";', "runtime version")
+once('  const VERSION_LABEL = "RELEASE";', '  const VERSION_LABEL = "TEST";', "version label")
+once('  const BUILD_LABEL = "Release";', '  const BUILD_LABEL = "Automatic item loading";', "build label")
+once('  const INSTANCE_KEY = "__ksma093ReleaseController";', '  const INSTANCE_KEY = "__ksma094Alpha1AutoLoadController";', "instance key")
+
+once(
+    "  const LIVE_BAZAAR_CAPTURE_DEBOUNCE_MS = 350;\n",
+    "  const LIVE_BAZAAR_CAPTURE_DEBOUNCE_MS = 350;\n"
+    "  const AUTO_ITEM_LOAD_DEBOUNCE_MS = 450;\n"
+    "  const AUTO_ITEM_LOAD_CACHE_TTL_MS = 30 * 1000;\n",
+    "auto-load constants",
+)
+
+once(
+    "    liveBazaarCaptureTimer: 0,\n"
+    "    liveBazaarCaptureSignature: null,\n"
+    "    lastLiveBazaarCaptureAt: 0,\n",
+    "    liveBazaarCaptureTimer: 0,\n"
+    "    liveBazaarCaptureSignature: null,\n"
+    "    lastLiveBazaarCaptureAt: 0,\n"
+    "    autoItemLoadTimer: 0,\n"
+    "    autoItemLoadRouteKey: null,\n"
+    "    autoItemLoadInFlightItemId: null,\n"
+    "    autoItemLoadCompletedAtByItem: new Map(),\n",
+    "auto-load state",
+)
+
+once(
+    "      INSTANCE_KEY,\n"
+    '      "__ksma093Rc5Controller",\n',
+    "      INSTANCE_KEY,\n"
+    '      "__ksma093ReleaseController",\n'
+    '      "__ksma093Rc5Controller",\n',
+    "prior release stop key",
+)
+
+once(
+    '        window.removeEventListener("hashchange", onRouteChange);\n'
+    '        window.removeEventListener("popstate", onRouteChange);\n',
+    '        window.removeEventListener("hashchange", onRouteChange);\n'
+    '        window.removeEventListener("popstate", onRouteChange);\n'
+    '        document.removeEventListener("visibilitychange", onVisibilityChange);\n',
+    "visibility cleanup",
+)
+
+once(
+    "        if (state.liveBazaarCaptureTimer) clearTimeout(state.liveBazaarCaptureTimer);\n"
+    "        state.liveBazaarCaptureTimer = 0;\n",
+    "        if (state.liveBazaarCaptureTimer) clearTimeout(state.liveBazaarCaptureTimer);\n"
+    "        state.liveBazaarCaptureTimer = 0;\n"
+    "        cancelAutoItemLoad();\n",
+    "auto timer cleanup",
+)
+
+once(
+    '    window.addEventListener("hashchange", onRouteChange, { passive: true });\n'
+    '    window.addEventListener("popstate", onRouteChange, { passive: true });\n',
+    '    window.addEventListener("hashchange", onRouteChange, { passive: true });\n'
+    '    window.addEventListener("popstate", onRouteChange, { passive: true });\n'
+    '    document.addEventListener("visibilitychange", onVisibilityChange, { passive: true });\n',
+    "visibility listener",
+)
+
+once(
+    "  function onRouteChange() {\n"
+    "    state.refreshToken += 1;\n"
+    "    state.plannerToken += 1;\n",
+    "  function onRouteChange() {\n"
+    "    state.refreshToken += 1;\n"
+    "    state.plannerToken += 1;\n"
+    "    cancelAutoItemLoad();\n"
+    "    state.autoItemLoadRouteKey = null;\n",
+    "route-change cancellation",
+)
+
+once(
+    "    const changed = routeKey !== state.routeKey;\n"
+    "    state.routeKey = routeKey;\n\n"
+    '    state.nodes.context.textContent = context.itemName || "Current item";\n',
+    "    const changed = routeKey !== state.routeKey;\n"
+    "    state.routeKey = routeKey;\n"
+    "    const autoLoadScheduled = scheduleAutoItemLoad(scope, { changed });\n\n"
+    '    state.nodes.context.textContent = context.itemName || "Current item";\n',
+    "schedule from context update",
+)
+
+once(
+    "    if (changed && state.lastResult && !resultMatches) {\n"
+    "      removeInlineAdvice();\n"
+    '      setStatus(`Saved market data belongs to ${state.lastResult.itemName}. Press REFRESH MARKET DATA for this item.`, "warning");\n'
+    "      renderResultMismatch(context);\n",
+    "    if (changed && state.lastResult && !resultMatches) {\n"
+    "      removeInlineAdvice();\n"
+    "      setStatus(autoLoadScheduled\n"
+    '        ? `Loading market data automatically for ${context.itemName || `Item ${context.itemId}`}…`\n'
+    '        : `Saved market data belongs to ${state.lastResult.itemName}. Press REFRESH MARKET DATA for this item.`, autoLoadScheduled ? "neutral" : "warning");\n'
+    "      renderResultMismatch(context);\n",
+    "mismatch status",
+)
+
+marker = "  function findReturnRouteAnchor() {\n"
+if s.count(marker) != 1:
+    raise SystemExit("auto-load function insertion marker mismatch")
+
+helpers = r'''  function cancelAutoItemLoad() {
+    if (state.autoItemLoadTimer) clearTimeout(state.autoItemLoadTimer);
+    state.autoItemLoadTimer = 0;
+  }
+
+  function onVisibilityChange() {
+    if (document.visibilityState !== "visible") {
+      cancelAutoItemLoad();
+      state.refreshToken += 1;
+      return;
+    }
+    scheduleGuardSync();
+    scheduleRebind();
+    const scope = evaluateScope();
+    if (scope.valid) scheduleAutoItemLoad(scope, { changed: true });
+  }
+
+  function scheduleAutoItemLoad(scope = evaluateScope(), options = {}) {
+    if (state.destroyed || !scope?.valid) return false;
+    if (document.visibilityState !== "visible" || !document.hasFocus()) return false;
+    if (state.activeWorkspace !== WORKSPACE_ITEM) return false;
+
+    const itemId = String(scope.context?.itemId || "");
+    if (!/^\d+$/.test(itemId)) return false;
+    const apiKey = state.nodes?.apiKey?.value?.trim() || readString(API_KEY_STORAGE_KEY, "");
+    if (!apiKey) return false;
+
+    const now = Date.now();
+    const resultFresh = state.lastResult
+      && String(state.lastResult.itemId || "") === itemId
+      && now - Number(state.lastResult.capturedAt || 0) < AUTO_ITEM_LOAD_CACHE_TTL_MS;
+    const completedAt = Number(state.autoItemLoadCompletedAtByItem.get(itemId) || 0);
+    if (resultFresh || now - completedAt < AUTO_ITEM_LOAD_CACHE_TTL_MS) return false;
+    if (state.autoItemLoadInFlightItemId === itemId) return false;
+
+    const routeKey = `${itemId}|${scope.context?.itemName || ""}`;
+    if (!options.changed && state.autoItemLoadRouteKey === routeKey && state.autoItemLoadTimer) return false;
+
+    cancelAutoItemLoad();
+    state.autoItemLoadRouteKey = routeKey;
+    state.autoItemLoadTimer = setTimeout(() => {
+      state.autoItemLoadTimer = 0;
+      if (state.destroyed || document.visibilityState !== "visible" || !document.hasFocus()) return;
+      if (state.activeWorkspace !== WORKSPACE_ITEM || state.busy) return;
+      const currentScope = evaluateScope();
+      if (!currentScope.valid || String(currentScope.context.itemId || "") !== itemId) return;
+      runRefresh({ trigger: "auto", expectedItemId: itemId });
+    }, AUTO_ITEM_LOAD_DEBOUNCE_MS);
+    return true;
+  }
+
+'''
+s = s.replace(marker, helpers + marker, 1)
+
+once(
+    "  async function runRefresh() {\n"
+    "    if (state.busy) return;\n"
+    "    setActiveWorkspace(WORKSPACE_ITEM);\n",
+    "  async function runRefresh(options = {}) {\n"
+    '    const trigger = options?.trigger === "auto" ? "auto" : "manual";\n'
+    "    if (state.busy) return;\n"
+    '    if (trigger === "manual") setActiveWorkspace(WORKSPACE_ITEM);\n',
+    "refresh trigger support",
+)
+
+once(
+    "    const context = scope.context;\n"
+    '    const apiKey = state.nodes.apiKey.value.trim() || readString(API_KEY_STORAGE_KEY, "");\n'
+    "    if (!apiKey) {\n"
+    "      state.collapsed = false;\n"
+    "      writeBoolean(COLLAPSED_STORAGE_KEY, false);\n"
+    "      applyCollapsedState(false);\n"
+    '      setStatus("Save a Public Torn API key before refreshing.", "error");\n'
+    "      state.nodes.apiKey.focus({ preventScroll: true });\n"
+    "      return;\n"
+    "    }\n",
+    "    const context = scope.context;\n"
+    '    const apiKey = state.nodes.apiKey.value.trim() || readString(API_KEY_STORAGE_KEY, "");\n'
+    "    if (!apiKey) {\n"
+    '      if (trigger === "auto") return;\n'
+    "      state.collapsed = false;\n"
+    "      writeBoolean(COLLAPSED_STORAGE_KEY, false);\n"
+    "      applyCollapsedState(false);\n"
+    '      setStatus("Save a Public Torn API key before refreshing.", "error");\n'
+    "      state.nodes.apiKey.focus({ preventScroll: true });\n"
+    "      return;\n"
+    "    }\n",
+    "auto missing-key behavior",
+)
+
+once(
+    "    const refreshToken = ++state.refreshToken;\n"
+    "    const requestedItemId = String(context.itemId);\n"
+    "    state.busy = true;\n",
+    "    const refreshToken = ++state.refreshToken;\n"
+    "    const requestedItemId = String(context.itemId);\n"
+    '    if (trigger === "auto" && options.expectedItemId && String(options.expectedItemId) !== requestedItemId) return;\n'
+    '    if (trigger === "auto") state.autoItemLoadInFlightItemId = requestedItemId;\n'
+    "    state.busy = true;\n",
+    "auto in-flight guard",
+)
+
+once(
+    "      state.refreshCount += 1;\n"
+    "      state.lastResult = result;\n",
+    "      state.refreshCount += 1;\n"
+    "      state.lastResult = result;\n"
+    '      if (trigger === "auto") state.autoItemLoadCompletedAtByItem.set(requestedItemId, capturedAt);\n',
+    "auto completion cache",
+)
+
+once(
+    "    } finally {\n"
+    "      state.busy = false;\n"
+    "      if (state.host?.isConnected && evaluateScope().valid) setBusyUi(false);\n"
+    "    }\n"
+    "  }\n",
+    "    } finally {\n"
+    '      if (trigger === "auto" && state.autoItemLoadInFlightItemId === requestedItemId) state.autoItemLoadInFlightItemId = null;\n'
+    "      state.busy = false;\n"
+    "      if (state.host?.isConnected && evaluateScope().valid) setBusyUi(false);\n"
+    "    }\n"
+    "  }\n",
+    "auto in-flight cleanup",
+)
+
+TARGET.write_text(s, encoding="utf-8")
