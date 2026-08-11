@@ -1,37 +1,40 @@
 # Kingshade Torn Suite
 
 ![Platform](https://img.shields.io/badge/Platform-Torn%20PDA-blue)
-![Suite](https://img.shields.io/badge/Kingshade%20Suite-0.8.5%20Beta-orange)
-![Status](https://img.shields.io/badge/Status-Faction%20testing-yellow)
+![Suite](https://img.shields.io/badge/Kingshade%20Suite-0.8.6-green)
+![Status](https://img.shields.io/badge/Status-Release-brightgreen)
 
 A compact collection of read-only Torn PDA userscripts by **Kingshade**. The scripts add information, filtering and visual guidance without performing Torn actions for the player.
 
-## Kingshade Suite 0.8.5 Beta
+## Kingshade Suite 0.8.6
 
 Scout and War Tools are one coordinated suite. They must always use the **same version number**.
 
-### Kingshade Scout 0.8.5
+### Kingshade Scout 0.8.6
 
 Faction-member intelligence, shared data core and the Suite Control Center.
 
-- FF Scouter Fair Fight values
-- Estimated battle-stat fallback when FF is unavailable
-- Full-row FF colour scale
+- FFScouter Fair Fight values and estimated battle-stat fallback when FF is unavailable
+- Full-row FF colour scale with readable status text while preserving Torn player-name/banner styling
 - Manual FF, battle-stat values and notes
 - Shared faction status data for War Tools
 - Exact Hospital, Jail and Federal end timestamps when Torn exposes them
-- Marked travel-time estimates when Torn does not expose an exact arrival timestamp
-- Active-page-only network requests
+- FFScouter Premium flight landing estimate, landing window and travel method when available
+- Marked travel-time fallback when Premium flight data is unavailable
+- Custom Torn API-key creation link with least-privilege selections
+- Explicit, user-triggered FFScouter key registration and registration-status checking
+- Consent-off cleanup that immediately removes Suite API-derived styling/status overlays
+- Active-page-only network requests with hide/blur aborts
 - Reduced rescanning and smoother scrolling on long member lists
 - Tabbed Suite Control Center for overview, Scout, War Tools and local-data controls
 
-**Repository file:** `Kingshade_Scout_Torn_PDA_v0.8.5.user.js`
+**Repository file:** `Kingshade_Scout_Torn_PDA_v0.8.6.user.js`
 
 **Raw installation URL:**
 
-`https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/Kingshade_Scout_Torn_PDA_v0.8.5.user.js`
+`https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/Kingshade_Scout_Torn_PDA_v0.8.6.user.js`
 
-### KS War Tools 0.8.5
+### KS War Tools 0.8.6
 
 Mobile faction filters, sorting and status timers powered by Scout.
 
@@ -39,38 +42,41 @@ Mobile faction filters, sorting and status timers powered by Scout.
 - Configurable maximum FF and SOON window
 - Sorting by original order, FF, status and ending time
 - Exact Hospital, Jail and Federal countdowns
-- Travel estimates clearly prefixed with `~`
-- `TRAVEL ~?` when no trustworthy ETA can be produced
+- FFScouter flight timers when Scout supplies Premium flight data
+- Marked travel estimates/fallbacks when no exact Torn arrival timestamp exists
 - Clickable attacker names only when Torn exposes a verifiable profile ID
 - Version-mismatch warning when Scout and War Tools do not match
 - No independent API requests and no automated Torn actions
 - Public settings/status interface used by the Suite Control Center
 
-**Repository file:** `KS_War_Tools_Torn_PDA_v0.8.5.user.js`
+**Repository file:** `KS_War_Tools_Torn_PDA_v0.8.6.user.js`
 
 **Raw installation URL:**
 
-`https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_War_Tools_Torn_PDA_v0.8.5.user.js`
+`https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_War_Tools_Torn_PDA_v0.8.6.user.js`
 
 ### Suite Control Center
 
 Open the **KS** button on a faction member list to manage the coordinated Suite from one panel.
 
-- **Overview:** component state, version match, API-key state, status snapshot and local-data counts
-- **Scout:** Torn / FFScouter key, mandatory API disclosure consent, unknown-player display, button style, rescan and position reset
+- **Overview:** component state, version match, API-key state, FF/EST load state, status snapshot and local-data counts
+- **Scout:** Torn / FFScouter key, mandatory API disclosure consent, custom-key creation, FFScouter registration, display preferences and rescan controls
 - **War Tools:** default filter, sorting, Easy max FF, SOON window and collapsed state
 - **Data:** privacy disclosure and cache reset that preserves manual values, notes, key and preferences
 
 The Control Center changes settings only. It performs no Torn actions.
 
-
 ### API key and data disclosure
 
-Network requests are disabled until the user opens **KS → Scout**, reads the disclosure and explicitly accepts it. Requests then run only while the Torn page is visible and focused, and active requests are aborted on hide or blur.
+Network requests are disabled until the user opens **KS → Scout**, reads the disclosure and explicitly accepts it. Requests then run only while the manually opened Torn page is visible and focused, and active requests are aborted on hide or blur.
 
-| Data storage | Data sharing | Purpose of use | Key storage & sharing | Key access level |
-|---|---|---|---|---|
-| Key, consent, settings, manual values, notes and cached FF/profile/status/travel data are stored locally in the Torn PDA webview until cleared or removed. | Torn API receives the key. FFScouter receives the key and visible target IDs. Kingshade Suite has no server and its developer receives no keys or user data. | FF/EST values, visible faction-member mapping, faction status/timers, filtering and sorting. | The Suite stores the key locally and sends it over HTTPS only to Torn API and FFScouter. FFScouter separately handles registered keys/data under its own terms. | Suite direct use is limited to custom `faction/basic`. FFScouter's separate custom selections are listed in its policy. Full access is not required by Kingshade Suite. |
+| Category | Disclosure |
+|---|---|
+| Data storage | Key, consent, settings, manual values, notes and cached FF/EST, available-estimate, Premium/distribution/spy, status and travel data are stored locally in the Torn PDA webview until cleared or removed. |
+| Data sharing | Torn API receives the key. FFScouter receives the key and visible target player IDs where required by its documented endpoints. Kingshade Suite has no developer-operated server and its developer receives no keys or user data. |
+| Purpose of use | FF/EST values, visible faction-member mapping, faction status/timers, flight estimates, filtering and sorting. |
+| Key storage & sharing | The Suite stores the key locally and sends it over HTTPS only to Torn API and FFScouter. FFScouter independently handles registered keys/data under its own terms. |
+| Key access level | Suite direct Torn use is limited to custom `faction/basic`. Full access is not required by Kingshade Suite. FFScouter may require its own documented selections for its services. |
 
 Required references:
 
@@ -80,12 +86,12 @@ Required references:
 - [FFScouter privacy policy](https://ffscouter.com/privacy)
 - [FFScouter API documentation](https://ffscouter.com/api-docs)
 
-The FFScouter integration uses the documented `GET /api/v1/get-stats` endpoint. Kingshade Suite itself does not register keys with FFScouter and does not operate a server.
+The FFScouter integration uses its documented `/register`, `/check-key`, `/get-stats` and `/player-flights` flows. Registration is performed only after an explicit user action in the Scout panel.
 
 ### Timer accuracy
 
 - **Hospital, Jail and Federal:** exact countdowns based on Torn's exposed end timestamp.
-- **Traveling:** estimates only. Torn does not expose another player's exact departure or arrival timestamp.
+- **Traveling:** FFScouter Premium landing/window/method data is shown when available; otherwise the Suite uses clearly marked estimates. Torn does not expose another player's exact arrival timestamp through the Suite's direct Torn API selection.
 - **Abroad:** no countdown because the player is stationary abroad.
 
 ## Kingshade's Bootlegging Clean 4.1.1
@@ -106,21 +112,21 @@ Standalone visual guidance for the Bootlegging crime. It keeps its own version n
 
 ## Installation in Torn PDA
 
-1. Open the raw installation URL for each required script.
-2. Add the script to Torn PDA's userscript manager.
-3. Enable both Scout and War Tools.
-4. Open **KS → Scout**, read the API disclosure and tick the acceptance checkbox.
-5. Confirm that both display version **0.8.5** and that the KS button opens **Suite Control Center**.
-6. Disable older Scout and War Tools versions.
+1. Open the raw installation URL for each required Suite script.
+2. Add/enable both Scout and War Tools in Torn PDA.
+3. Open **KS → Scout**, create or enter the API key, read the disclosure and accept it.
+4. If FFScouter reports the key as unregistered, use **Register this key with FFScouter** after reviewing FFScouter's linked terms/data policy.
+5. Confirm that both components display version **0.8.6**, `Versions match`, and FF/EST loads on the faction member list.
+6. Disable/remove older active Scout and War Tools versions.
 
-## Feedback for faction testing
+## Feedback
 
 Include:
 
 - Scout and War Tools version numbers
 - Torn PDA and Android versions
-- A screenshot of the faction member list and War Tools panel
-- The active filter or sort mode
+- A screenshot or short video of the faction member list and relevant Suite panel
+- The active filter or sort mode when relevant
 - Whether the problem remains after one page reload
 
 Never include an API key in screenshots, reports or issues.
