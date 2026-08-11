@@ -2,6 +2,35 @@
 
 All notable changes to Kingshade Suite are documented here.
 
+## [0.8.6] — 2026-08-11 — Release
+
+### FFScouter integration
+
+- Added FFScouter Premium flight data with landing midpoint, landing window and travel method when available.
+- Kept clearly marked travel estimates as fallback when Premium flight data is unavailable.
+- Added explicit, user-triggered FFScouter key registration and registration-status checking.
+- Updated disclosure for the documented `/register`, `/check-key`, `/get-stats` and `/player-flights` flows.
+
+### Reliability and compliance
+
+- Hardened active-page visibility/focus lifecycle behavior and request aborts when Torn is hidden or unfocused.
+- Consent removal now immediately clears Suite API-derived row styling, FF/EST overlays and status/travel timers.
+- Improved first-load/onboarding and KS-panel reliability on Torn PDA.
+- Preserved read-only behavior: no attacks, clicks, travel, purchases, crimes or other Torn actions are automated.
+
+### UI and status
+
+- Improved full-row readability with stronger white Level/Days/Status/Travel text while preserving Torn player-name/banner styling.
+- Updated the shared collapsed panel label to `Suite Status`.
+- Fixed Overview so completed FF/EST loads show `FF/EST data loaded` instead of remaining on a loading state.
+- Kept Scout and War Tools version identity synchronized throughout the Suite.
+
+### Validation
+
+- Passed Torn PDA regression tests covering fresh start, app switching, consent cleanup, full faction-list rendering and Suite tabs.
+- Compared multiple Premium flight landing/window/method results directly with FFScouter and matched the displayed values.
+- Passed RC1 and final v0.8.6 release smoke tests.
+
 ## [0.8.5] — 2026-07-14 — Compliance review beta
 
 ### API disclosure and consent
