@@ -1,0 +1,47 @@
+name: Publish Kingshade Suite v0.8.6 GitHub release
+
+on:
+  push:
+    branches:
+      - release/v0.8.6-github-release
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view v0.8.6 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo 'v0.8.6 already exists'
+            exit 0
+          fi
+          cat > /tmp/release-notes.md <<'EOF'
+          Kingshade Suite v0.8.6 for Torn PDA.
+
+          Highlights:
+          - FFScouter Premium flight landing/window/method integration
+          - explicit FFScouter registration flow and updated API/data disclosure
+          - active-page lifecycle hardening and consent cleanup
+          - improved faction-list readability and Suite status UI
+          - synchronized Scout + War Tools release pair
+
+          Both userscripts are required and must use the same version.
+          EOF
+          gh release create v0.8.6 \
+            Kingshade_Scout_Torn_PDA_v0.8.6.user.js \
+            KS_War_Tools_Torn_PDA_v0.8.6.user.js \
+            --repo "$GITHUB_REPOSITORY" \
+            --target main \
+            --title 'Kingshade Suite v0.8.6' \
+            --notes-file /tmp/release-notes.md
