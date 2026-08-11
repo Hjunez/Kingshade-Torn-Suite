@@ -1,10 +1,8 @@
 // ==UserScript==
 // @name         KS War Tools for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.8.5
-// @downloadURL  https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_War_Tools_Torn_PDA_v0.8.5.user.js
-// @updateURL    https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_War_Tools_Torn_PDA_v0.8.5.user.js
-// @description  Kingshade Suite War Tools for faction filters, sorting, exact status timers, and marked travel ETA estimates.
+// @version      0.8.6
+// @description  Kingshade Suite War Tools for Torn PDA.
 // @author       Kingshade
 // @match        https://www.torn.com/factions.php*
 // @match        https://torn.com/factions.php*
@@ -16,7 +14,7 @@
 // - Kingshade Scout Core owns FF/EST data and faction status polling.
 // - This script reads the shared Scout snapshot and renders the war UI.
 // - Hospital/Jail timers use Torn's exact status.until timestamp.
-// - Travel timers are prefixed with ~ because Torn does not expose an exact arrival timestamp.
+// - Travel timers are prefixed with ~ because flight windows remain estimates rather than exact Torn arrival timestamps.
 // - Makes no network requests and automates no Torn actions.
 
 (() => {
@@ -25,10 +23,13 @@
     const SCRIPT = Object.freeze({
         name: "Kingshade Suite",
         component: "War Tools",
-        version: "0.8.5",
+        toolbarLabel: "Suite Status",
+        version: "0.8.6",
         instanceKey: "__ksWarToolsActive",
         sharedCoreKey: "__kingshadeScoutCore",
         sharedStorageKey: "kingshade-scout:status-core",
+        scoutSettingsKey: "kingshade-scout:settings",
+        scoutApiKeyKey: "kingshade-scout:ff-api-key",
         sharedEvent: "kingshade-scout:status-update",
         ffEvent: "kingshade-scout:ff-update",
         readyEvent: "kingshade-war-tools:ready",
@@ -58,9 +59,20 @@
         try { previous.destroy(); } catch {}
     }
 
+    function readSuiteDataEnabled() {
+        try {
+            const key = String(localStorage.getItem(SCRIPT.scoutApiKeyKey) || "").trim();
+            const settings = JSON.parse(localStorage.getItem(SCRIPT.scoutSettingsKey) || "{}");
+            return Boolean(key && settings?.apiDisclosureAccepted);
+        } catch {
+            return false;
+        }
+    }
+
     const state = {
         destroyed: false,
         observer: null,
+        observerConnected: false,
         scanTimer: null,
         clockTimer: null,
         infoTimer: null,
@@ -73,7 +85,8 @@
         scrolling: false,
         scrollTimer: null,
         tickRaf: null,
-        lastToolbarTick: 0
+        lastToolbarTick: 0,
+        suiteDataEnabled: readSuiteDataEnabled()
     };
 
     function normalizeSettings(value = {}, base = DEFAULTS) {
@@ -153,8 +166,34 @@
         }
     }
 
+    function pageHasFocus() {
+        try {
+            return typeof document.hasFocus !== "function" || document.hasFocus();
+        } catch {
+            return false;
+        }
+    }
+
     function isVisiblePage() {
-        return document.visibilityState === "visible" && !document.hidden;
+        return document.visibilityState === "visible" && !document.hidden && pageHasFocus();
+    }
+
+    function connectObserver() {
+        if (
+            state.destroyed ||
+            state.observerConnected ||
+            !state.observer ||
+            !document.body ||
+            !isVisiblePage()
+        ) return;
+
+        state.observer.observe(document.body, { childList: true, subtree: true });
+        state.observerConnected = true;
+    }
+
+    function disconnectObserver() {
+        state.observer?.disconnect();
+        state.observerConnected = false;
     }
 
     function isFactionPage() {
@@ -504,6 +543,15 @@
         return `${minutes}m ${String(secs).padStart(2, "0")}s`;
     }
 
+    function formatTctClock(timestamp) {
+        const value = positiveNumber(timestamp);
+        if (!value) return "";
+        const date = new Date(value * 1000);
+        const hours = String(date.getUTCHours()).padStart(2, "0");
+        const minutes = String(date.getUTCMinutes()).padStart(2, "0");
+        return `${hours}:${minutes}`;
+    }
+
     function rowInfo(row, originalIndex = 0, snapshot = null) {
         const playerId = playerIdFromRow(row);
         const core = resolveCoreValues(playerId, row);
@@ -586,6 +634,34 @@
             return [info.description, info.details, "Exact Torn status end time"].filter(Boolean).join(" · ");
         }
         if (info.timerKind === "estimate") {
+            if (info.travel?.estimateSource === "ffscouter-flight") {
+                const eta = positiveNumber(info.travel?.eta);
+                const landingEta = positiveNumber(info.travel?.landingEta) ?? eta;
+                const low = positiveNumber(info.travel?.etaLow);
+                const high = positiveNumber(info.travel?.etaHigh);
+                const method = normalizeText(info.travel?.travelMethod);
+                const book = info.travel?.bookLikelyBeingUsed;
+                const landing = landingEta ? `landing ~${formatTctClock(landingEta)} TCT` : "";
+                const window = low && high
+                    ? `window ${formatTctClock(low)}–${formatTctClock(high)} TCT`
+                    : "";
+                const methodText = method ? `method ${method}` : "";
+                const bookText = book === true
+                    ? "Book likely active"
+                    : book === false
+                        ? "Book likely not active"
+                        : "";
+                return [
+                    info.description,
+                    "FFScouter flight estimate",
+                    landing,
+                    window,
+                    methodText,
+                    bookText,
+                    "Estimated from public game data; not an exact Torn arrival timestamp"
+                ].filter(Boolean).join(" · ");
+            }
+
             const source = info.travel?.estimateSource === "observed-history"
                 ? `Route time learned from ${Number(info.travel?.historyCount) || 1} observed flight(s)`
                 : "Published route time";
@@ -762,6 +838,14 @@
 
     function applyRows() {
         if (state.destroyed || state.applying || !isVisiblePage() || !isFactionPage()) return;
+        state.suiteDataEnabled = readSuiteDataEnabled();
+        if (!state.suiteDataEnabled) {
+            state.activeSnapshot = null;
+            state.lastInfos = [];
+            clearRowChanges();
+            updateToolbar([]);
+            return;
+        }
         state.applying = true;
         const allInfo = [];
         state.activeSnapshot = getStatusSnapshot();
@@ -1027,7 +1111,7 @@
             <div class="kswt-head">
                 <div>
                     <div class="kswt-title">${SCRIPT.name} ${SCRIPT.version}</div>
-                    <div class="kswt-component">${SCRIPT.component}</div>
+                    <div class="kswt-component">${SCRIPT.toolbarLabel}</div>
                     <div class="kswt-status" data-kswt="status">Waiting for Scout Core…</div>
                     <div class="kswt-version-warning" data-kswt="version-warning" hidden></div>
                 </div>
@@ -1186,47 +1270,86 @@
     }
 
     function closeInfoOnOutsidePointer(event) {
+        if (!isVisiblePage()) return;
         const info = document.getElementById(SCRIPT.infoId);
         if (!info || info.contains(event.target) || event.target?.closest?.(".kswt-timer")) return;
         closeTimerInfo();
     }
 
     function handleScroll() {
+        if (!isVisiblePage()) return;
         closeTimerInfo();
         state.scrolling = true;
         clearTimeout(state.scrollTimer);
         state.scrollTimer = setTimeout(() => {
             state.scrollTimer = null;
             state.scrolling = false;
-            tickTimers(true);
+            if (isVisiblePage()) tickTimers(true);
         }, 160);
     }
 
-    function handleVisibility() {
-        closeTimerInfo();
-        if (isVisiblePage()) {
+    function handleVisibility(event) {
+        const active = event?.type !== "blur" && isVisiblePage();
+        if (active) {
+            closeTimerInfo();
+            ensureStyles();
+            ensureToolbar();
+            connectObserver();
             window.__kingshadeScoutActive?.refreshStatus?.();
             scheduleApply(0);
-        } else {
-            clearTimeout(state.scanTimer);
-            state.scanTimer = null;
-            clearInterval(state.clockTimer);
-            state.clockTimer = null;
+            return;
         }
+
+        clearTimeout(state.scanTimer);
+        state.scanTimer = null;
+        clearInterval(state.clockTimer);
+        state.clockTimer = null;
+        clearTimeout(state.scrollTimer);
+        state.scrollTimer = null;
+        state.scrolling = false;
+        if (state.tickRaf) cancelAnimationFrame(state.tickRaf);
+        state.tickRaf = null;
+        disconnectObserver();
     }
 
-    function onCoreStatusUpdate() {
+    function onCoreStatusUpdate(event) {
+        if (!isVisiblePage()) return;
+        state.suiteDataEnabled = typeof event?.detail?.enabled === "boolean"
+            ? event.detail.enabled
+            : readSuiteDataEnabled();
+        if (!state.suiteDataEnabled) {
+            state.activeSnapshot = null;
+            state.lastInfos = [];
+            closeTimerInfo();
+            clearRowChanges();
+            updateToolbar([]);
+            return;
+        }
         state.activeSnapshot = getStatusSnapshot();
         scheduleApply(0);
     }
 
-    function onCoreFfUpdate() {
+    function onCoreFfUpdate(event) {
+        if (!isVisiblePage()) return;
+        state.suiteDataEnabled = typeof event?.detail?.enabled === "boolean"
+            ? event.detail.enabled
+            : readSuiteDataEnabled();
+        if (!state.suiteDataEnabled) {
+            state.activeSnapshot = null;
+            state.lastInfos = [];
+            closeTimerInfo();
+            clearRowChanges();
+            updateToolbar([]);
+            return;
+        }
         scheduleApply(0);
     }
 
     function onRouteChange() {
+        if (!isVisiblePage()) return;
         closeTimerInfo();
         setTimeout(() => {
+            if (!isVisiblePage()) return;
             if (!isFactionPage() || !findMemberLists().length) {
                 clearRowChanges();
                 document.getElementById(SCRIPT.toolbarId)?.remove();
@@ -1241,15 +1364,19 @@
     }
 
     function getStatus() {
-        const snapshot = state.activeSnapshot && snapshotMatchesCurrent(state.activeSnapshot)
-            ? state.activeSnapshot
-            : getStatusSnapshot();
+        const focused = isVisiblePage();
+        const snapshot = focused
+            ? (state.activeSnapshot && snapshotMatchesCurrent(state.activeSnapshot)
+                ? state.activeSnapshot
+                : getStatusSnapshot())
+            : state.activeSnapshot;
         const counts = countsFor(state.lastInfos);
         return {
             active: !state.destroyed,
+            focused,
             version: SCRIPT.version,
             component: SCRIPT.component,
-            toolbarPresent: Boolean(document.getElementById(SCRIPT.toolbarId)),
+            toolbarPresent: focused && Boolean(document.getElementById(SCRIPT.toolbarId)),
             factionId: positiveNumber(snapshot?.factionId),
             snapshotUpdatedAt: positiveNumber(snapshot?.updatedAt),
             settings: getSettings(),
@@ -1258,6 +1385,7 @@
     }
 
     function onSettingsCommand(event) {
+        if (!isVisiblePage()) return;
         const detail = event?.detail;
         if (!detail || typeof detail !== "object") return;
         if (detail.reset) resetSettings();
@@ -1270,20 +1398,19 @@
             return;
         }
 
-        ensureStyles();
-        ensureToolbar();
         state.observer = new MutationObserver(mutations => {
-            if (state.destroyed || state.applying) return;
+            if (state.destroyed || state.applying || !isVisiblePage()) return;
             const relevant = mutations.some(mutation =>
                 [...Array.from(mutation.addedNodes), ...Array.from(mutation.removedNodes)].some(relevantMutationNode)
             );
             if (relevant) scheduleApply();
         });
-        state.observer.observe(document.body, { childList: true, subtree: true });
 
         document.addEventListener("pointerdown", closeInfoOnOutsidePointer, true);
         document.addEventListener("scroll", handleScroll, { capture: true, passive: true });
         document.addEventListener("visibilitychange", handleVisibility);
+        window.addEventListener("focus", handleVisibility);
+        window.addEventListener("blur", handleVisibility);
         window.addEventListener(SCRIPT.sharedEvent, onCoreStatusUpdate);
         window.addEventListener(SCRIPT.ffEvent, onCoreFfUpdate);
         window.addEventListener(SCRIPT.settingsCommandEvent, onSettingsCommand);
@@ -1291,8 +1418,13 @@
         window.addEventListener("popstate", onRouteChange);
         window.navigation?.addEventListener?.("currententrychange", onRouteChange);
 
-        window.__kingshadeScoutActive?.refreshStatus?.();
-        scheduleApply(0);
+        if (isVisiblePage()) {
+            ensureStyles();
+            ensureToolbar();
+            connectObserver();
+            window.__kingshadeScoutActive?.refreshStatus?.();
+            scheduleApply(0);
+        }
 
         window[SCRIPT.instanceKey] = {
             version: SCRIPT.version,
@@ -1301,7 +1433,18 @@
             updateSettings,
             resetSettings,
             getStatus,
-            refresh: () => scheduleApply(0),
+            refresh: () => {
+                state.suiteDataEnabled = readSuiteDataEnabled();
+                if (!state.suiteDataEnabled) {
+                    state.activeSnapshot = null;
+                    state.lastInfos = [];
+                    closeTimerInfo();
+                    clearRowChanges();
+                    updateToolbar([]);
+                    return;
+                }
+                if (isVisiblePage()) scheduleApply(0);
+            },
             destroy
         };
     }
@@ -1316,10 +1459,12 @@
         state.scrollTimer = null;
         state.tickRaf = null;
         closeTimerInfo();
-        state.observer?.disconnect();
+        disconnectObserver();
         document.removeEventListener("pointerdown", closeInfoOnOutsidePointer, true);
         document.removeEventListener("scroll", handleScroll, true);
         document.removeEventListener("visibilitychange", handleVisibility);
+        window.removeEventListener("focus", handleVisibility);
+        window.removeEventListener("blur", handleVisibility);
         window.removeEventListener(SCRIPT.sharedEvent, onCoreStatusUpdate);
         window.removeEventListener(SCRIPT.ffEvent, onCoreFfUpdate);
         window.removeEventListener(SCRIPT.settingsCommandEvent, onSettingsCommand);

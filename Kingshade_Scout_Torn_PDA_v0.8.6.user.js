@@ -1,12 +1,10 @@
 // ==UserScript==
 // @name         Kingshade Scout for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.8.5
-// @downloadURL  https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/Kingshade_Scout_Torn_PDA_v0.8.5.user.js
-// @updateURL    https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/Kingshade_Scout_Torn_PDA_v0.8.5.user.js
-// @description  Kingshade Suite Scout with Suite Control Center, guided API setup, FF/EST estimates, and faction status data.
+// @version      0.8.6
+// @description  Kingshade Suite Scout for Torn PDA with FF/EST, faction status and FFScouter flight estimates.
 // @author       Kingshade
-// @match        https://www.torn.com/*
+// @match        https://www.torn.com/factions.php*
 // @connect      ffscouter.com
 // @connect      api.torn.com
 // @grant        GM_xmlhttpRequest
@@ -15,11 +13,11 @@
 //
 // API key, data use and privacy disclosure:
 // - Network requests run only while the manually opened Torn page is visible and focused; they pause when hidden or unfocused.
-// - The entered key and visible faction-member IDs are sent over HTTPS to FFScouter for FF/estimate lookups.
+// - The entered key is sent over HTTPS to FFScouter for a user-triggered /register request and documented /check-key, /get-stats and /player-flights requests; visible target IDs are sent where those lookups require them.
 // - The entered key is also sent over HTTPS to Torn's official API for faction/basic member status and mapping.
 // - The Suite stores the key, settings, manual values, notes and caches only in this Torn PDA webview.
 // - Kingshade Suite has no developer-operated server and its developer cannot access users' keys or data.
-// - FFScouter is an independent third-party service with its own terms, key storage and data policy.
+// - FFScouter is an independent third-party service and may store/use registered keys and related data under its own terms and data policy.
 // - Direct Torn API use by this Suite is limited to faction/basic. Full-access keys are not required by this Suite.
 // - The Suite does not automate attacks, clicks, travel, purchases or any other Torn action.
 // - Torn API terms: https://www.torn.com/api.html
@@ -37,14 +35,14 @@
 
     const NAME = "Kingshade Suite";
     const COMPONENT = "Scout Core";
-    const VERSION = "0.8.5";
+    const VERSION = "0.8.6";
     const API_BASE = "https://ffscouter.com/api/v1";
     const TORN_API_BASE = "https://api.torn.com";
     const PREFIX = "kingshade-scout:";
     const SETTINGS_KEY = `${PREFIX}settings`;
     const API_KEY_STORAGE = `${PREFIX}ff-api-key`;
     const MANUAL_PREFIX = `${PREFIX}manual:`;
-    const PROFILE_EST_PREFIX = `${PREFIX}profile-estimate:`;
+    const LEGACY_PROFILE_EST_PREFIX = `${PREFIX}profile-estimate:`;
     const CACHE_PREFIX = `${PREFIX}cache:`;
     const STATUS_STORAGE_KEY = `${PREFIX}status-core`;
     const TRAVEL_ACTIVE_KEY = `${PREFIX}travel-active`;
@@ -52,6 +50,7 @@
     const CORE_WINDOW_KEY = "__kingshadeScoutCore";
     const STATUS_EVENT = "kingshade-scout:status-update";
     const FF_EVENT = "kingshade-scout:ff-update";
+    const SUITE_DISABLED_ATTR = "data-ks6-suite-data-disabled";
     const WAR_READY_EVENT = "kingshade-war-tools:ready";
     const WAR_SETTINGS_KEY = "kingshade-war-tools:settings";
     const WAR_SETTINGS_EVENT = "kingshade-war-tools:settings-update";
@@ -59,6 +58,10 @@
     const CACHE_MS = 60 * 60 * 1000;
     const FACTION_DIRECTORY_MS = 5 * 60 * 1000;
     const STATUS_REFRESH_MS = 30 * 1000;
+    const FF_KEY_STATUS_MS = 5 * 60 * 1000;
+    const FF_FLIGHT_CACHE_MS = 60 * 1000;
+    const FF_FLIGHT_ERROR_CACHE_MS = 15 * 1000;
+    const FF_FLIGHT_CONCURRENCY = 4;
     const OLD_ESTIMATE_SECONDS = 14 * 24 * 60 * 60;
 
     const DEFAULTS = {
@@ -90,6 +93,8 @@
     let ffDataState = "idle";
     let ffLoadedCount = 0;
     let ffLoadedFactionId = null;
+    let ffKeyStatusCache = { key: "", expires: 0, isRegistered: false, isPremium: false };
+    const ffFlightCache = new Map();
     const activeRequestAborts = new Set();
     const OBSERVER_OPTIONS = { childList: true, subtree: true };
     const onRouteChange = () => {
@@ -114,9 +119,9 @@
 
     function pageHasFocus() {
         try {
-            return typeof document.hasFocus !== "function" || document.hasFocus();
+            return typeof document.hasFocus === "function" && document.hasFocus();
         } catch {
-            return true;
+            return false;
         }
     }
 
@@ -126,10 +131,6 @@
 
     function isFactionPath() {
         return /\/factions\.php\/?$/i.test(location.pathname);
-    }
-
-    function isProfilePath() {
-        return /\/profiles\.php\/?$/i.test(location.pathname);
     }
 
     function factionMemberLists() {
@@ -216,6 +217,15 @@
         return Boolean(getApiKey() && apiDisclosureAccepted());
     }
 
+    function setSuiteDataDisplayDisabled(disabled) {
+        try {
+            const root = document.documentElement;
+            if (!root) return;
+            if (disabled) root.setAttribute(SUITE_DISABLED_ATTR, "1");
+            else root.removeAttribute(SUITE_DISABLED_ATTR);
+        } catch {}
+    }
+
     function removeApiDerivedStorage() {
         const keys = [];
         try {
@@ -234,6 +244,7 @@
     }
 
     function disableSuiteDataDisplay({ purgeApiCache = true } = {}) {
+        setSuiteDataDisplayDisabled(true);
         clearTimeout(statusTimer);
         statusTimer = null;
         clearTimeout(ffRetryTimer);
@@ -241,6 +252,8 @@
         abortActiveRequests();
         memoryCache.clear();
         factionDirectoryCache.clear();
+        ffFlightCache.clear();
+        ffKeyStatusCache = { key: "", expires: 0, isRegistered: false, isPremium: false };
         if (purgeApiCache) removeApiDerivedStorage();
         delete window[CORE_WINDOW_KEY];
         ffDataState = "disabled";
@@ -273,6 +286,7 @@
         }
 
         setupDisabledApplied = false;
+        setSuiteDataDisplayDisabled(false);
         if (ffDataState === "disabled") ffDataState = "idle";
         return true;
     }
@@ -309,42 +323,6 @@
         const text = String(value || "").replace(/\s+/g, " ").trim();
         const match = text.match(/(?:<\s*)?\d+(?:[.,]\d+)?\s*[KMB](?:\s*(?:-|–|to)\s*\d+(?:[.,]\d+)?\s*[KMB])?/i);
         return normalizeEstimateText(match?.[0] || "");
-    }
-
-    function getProfileEstimate(playerId) {
-        try {
-            const parsed = JSON.parse(localStorage.getItem(`${PROFILE_EST_PREFIX}${playerId}`) || "null");
-            return parsed?.human ? parsed : null;
-        } catch {
-            return null;
-        }
-    }
-
-    function setProfileEstimate(playerId, human, source = "profile") {
-        const clean = extractEstimateFragment(human);
-        if (!playerId || !clean) return;
-        try {
-            localStorage.setItem(`${PROFILE_EST_PREFIX}${playerId}`, JSON.stringify({
-                human: clean,
-                source,
-                capturedAt: Date.now()
-            }));
-        } catch {}
-    }
-
-    function captureProfileEstimate() {
-        if (!isPageVisible()) return;
-        if (!/\/profiles\.php\/?$/i.test(location.pathname)) return;
-
-        const playerId = playerIdFromUrl(location.href);
-        if (!playerId) return;
-
-        const text = String(document.body?.innerText || "");
-        const detailed = text.match(/(?:^|\n)\s*>?\s*Estimated stats:\s*([^\n]+)/i);
-        const header = text.match(/(?:^|\n)\s*\(EST\)\s*([^\n]+)/i);
-        const human = extractEstimateFragment(detailed?.[1] || header?.[1] || "");
-
-        if (human) setProfileEstimate(playerId, human, detailed ? "FF Scouter profile" : "profile header");
     }
 
     function compactParts(total) {
@@ -455,6 +433,106 @@
         }
     }
 
+    async function httpPostJson(url, payload) {
+        requireVisiblePage();
+        const body = JSON.stringify(payload ?? {});
+
+        if (typeof GM_xmlhttpRequest === "function") {
+            return new Promise((resolve, reject) => {
+                let settled = false;
+                let request = null;
+
+                const finish = (callback, value) => {
+                    if (settled) return;
+                    settled = true;
+                    activeRequestAborts.delete(abort);
+                    callback(value);
+                };
+
+                const abort = () => {
+                    if (settled) return;
+                    try { request?.abort?.(); } catch {}
+                    finish(reject, hiddenPageError());
+                };
+
+                activeRequestAborts.add(abort);
+                request = GM_xmlhttpRequest({
+                    method: "POST",
+                    url,
+                    headers: { "Content-Type": "application/json" },
+                    data: body,
+                    timeout: 30000,
+                    onload: response => {
+                        if (!isPageVisible()) {
+                            abort();
+                            return;
+                        }
+                        finish(resolve, normalizeResponse(response));
+                    },
+                    onerror: error => finish(reject, error instanceof Error ? error : new Error("Network request failed")),
+                    ontimeout: () => finish(reject, new Error("Request timed out")),
+                    onabort: () => finish(reject, hiddenPageError())
+                });
+            });
+        }
+
+        const controller = new AbortController();
+        let settled = false;
+        const abort = () => {
+            if (settled) return;
+            controller.abort();
+        };
+        activeRequestAborts.add(abort);
+
+        try {
+            const response = await fetch(url, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                credentials: "omit",
+                body,
+                signal: controller.signal
+            });
+            requireVisiblePage();
+            return { status: response.status, responseText: await response.text() };
+        } catch (error) {
+            if (controller.signal.aborted || !isPageVisible()) throw hiddenPageError();
+            throw error;
+        } finally {
+            settled = true;
+            activeRequestAborts.delete(abort);
+        }
+    }
+
+    async function registerFfScouterKey(key) {
+        const cleanKey = String(key || "").trim();
+        if (!/^[A-Za-z0-9]{16}$/.test(cleanKey)) {
+            throw new Error("Enter a valid 16-character Torn API key first.");
+        }
+
+        const response = await httpPostJson(`${API_BASE}/register`, {
+            key: cleanKey,
+            agree_to_data_policy: true,
+            signup_source: "KingshadeScout"
+        });
+
+        let payload = null;
+        try { payload = JSON.parse(response.responseText || "null"); } catch {}
+
+        if (response.status === 200 && payload?.success) {
+            ffKeyStatusCache = { key: "", expires: 0, isRegistered: false, isPremium: false };
+            return "FFScouter registration complete.";
+        }
+
+        if (response.status === 409 && Number(payload?.code) === 8) {
+            ffKeyStatusCache = { key: "", expires: 0, isRegistered: false, isPremium: false };
+            return "This key is already registered with FFScouter.";
+        }
+
+        const message = String(payload?.error || payload?.message || `FFScouter registration failed (HTTP ${response.status || 0}).`);
+        throw new Error(message);
+    }
+
+
     async function getFfScouterResponse(url) {
         let lastError = null;
         const delays = [0, 700, 1800];
@@ -475,6 +553,207 @@
 
         if (lastError) throw lastError;
         return { status: 0, responseText: "" };
+    }
+
+
+    async function ffPremiumAvailable(key) {
+        const cleanKey = String(key || "").trim();
+        if (!cleanKey) return false;
+
+        const now = Date.now();
+        if (ffKeyStatusCache.key === cleanKey && ffKeyStatusCache.expires > now) {
+            return Boolean(ffKeyStatusCache.isRegistered && ffKeyStatusCache.isPremium);
+        }
+
+        try {
+            const query = new URLSearchParams({ key: cleanKey });
+            const response = await getFfScouterResponse(`${API_BASE}/check-key?${query}`);
+            if (response.status !== 200) {
+                ffKeyStatusCache = {
+                    key: cleanKey,
+                    expires: now + FF_FLIGHT_ERROR_CACHE_MS,
+                    isRegistered: false,
+                    isPremium: false
+                };
+                return false;
+            }
+
+            const payload = JSON.parse(response.responseText || "null");
+            const isRegistered = Boolean(payload?.is_registered);
+            const isPremium = Boolean(payload?.is_premium);
+            ffKeyStatusCache = {
+                key: cleanKey,
+                expires: now + FF_KEY_STATUS_MS,
+                isRegistered,
+                isPremium
+            };
+            return Boolean(isRegistered && isPremium);
+        } catch (error) {
+            if (isHiddenPageError(error)) throw error;
+            ffKeyStatusCache = {
+                key: cleanKey,
+                expires: now + FF_FLIGHT_ERROR_CACHE_MS,
+                isRegistered: false,
+                isPremium: false
+            };
+            return false;
+        }
+    }
+
+    function flightRouteMatches(tornDescription, ffDescription) {
+        const torn = parseTravelDescription(tornDescription);
+        const ff = parseTravelDescription(ffDescription);
+        const tornDestination = normalizeDestination(torn.destination).toLowerCase();
+        const ffDestination = normalizeDestination(ff.destination).toLowerCase();
+
+        if (tornDestination && ffDestination && tornDestination !== ffDestination) return false;
+        if (
+            torn.direction !== "unknown" &&
+            ff.direction !== "unknown" &&
+            torn.direction !== ff.direction
+        ) return false;
+        return true;
+    }
+
+    function ffFlightTravelValue(playerId, tornTravel, current, fetchedAt) {
+        if (!current || typeof current !== "object") return null;
+
+        const statusDescription = String(current.status_description || "").trim();
+        const tornDescription = String(tornTravel?.description || "").trim();
+        if (statusDescription && tornDescription && !flightRouteMatches(tornDescription, statusDescription)) {
+            return null;
+        }
+
+        const now = Math.floor(Date.now() / 1000);
+        const earliest = Number(current.earliest_arrival_time) || 0;
+        const latest = Number(current.latest_arrival_time) || 0;
+        if (!earliest && !latest) return null;
+        if (latest && latest <= now) return null;
+
+        const low = earliest || latest;
+        const high = latest || earliest;
+        const landingEta = low && high ? Math.round((low + high) / 2) : (low || high);
+        let eta = landingEta;
+        if (eta <= now && high > now) eta = high;
+        if (!eta || eta <= now) return null;
+
+        const takeoff = Number(current.takeoff_time) || null;
+        const route = parseTravelDescription(statusDescription || tornDescription);
+        const uncertainty = low && high ? Math.max(30, Math.round((high - low) / 2)) : 60;
+        const travelMethod = String(current.travel_method || "Unknown").trim() || "Unknown";
+        const book = typeof current.book_likely_being_used === "boolean"
+            ? current.book_likely_being_used
+            : null;
+
+        return {
+            ...(tornTravel || {}),
+            playerId,
+            description: tornDescription || statusDescription,
+            destination: tornTravel?.destination || route.destination,
+            direction: tornTravel?.direction || route.direction,
+            departedAt: takeoff,
+            departureSource: "ffscouter-flight",
+            eta,
+            landingEta: landingEta || null,
+            etaLow: low || null,
+            etaHigh: high || null,
+            estimateSource: "ffscouter-flight",
+            unavailableReason: "",
+            durationSeconds: takeoff && eta > takeoff ? eta - takeoff : null,
+            uncertaintySeconds: uncertainty,
+            confidence: "ffscouter-window",
+            exact: false,
+            travelMethod,
+            bookLikelyBeingUsed: book,
+            ffscouterFetchedAt: Math.floor(fetchedAt / 1000)
+        };
+    }
+
+    async function fetchFfFlightTravel(playerId, tornTravel, key) {
+        const cacheKey = `${key}:${playerId}`;
+        const routeDescription = String(tornTravel?.description || "").trim();
+        const cached = ffFlightCache.get(cacheKey);
+        const nowMs = Date.now();
+
+        if (
+            cached &&
+            cached.expires > nowMs &&
+            cached.routeDescription === routeDescription
+        ) {
+            return cached.value;
+        }
+
+        try {
+            requireVisiblePage();
+            const query = new URLSearchParams({ key, target: String(playerId) });
+            const response = await getFfScouterResponse(`${API_BASE}/player-flights?${query}`);
+
+            if (response.status === 403) {
+                ffKeyStatusCache = {
+                    key,
+                    expires: nowMs + FF_FLIGHT_ERROR_CACHE_MS,
+                    isRegistered: true,
+                    isPremium: false
+                };
+            }
+
+            if (response.status !== 200) {
+                ffFlightCache.set(cacheKey, {
+                    expires: nowMs + FF_FLIGHT_ERROR_CACHE_MS,
+                    routeDescription,
+                    value: null
+                });
+                return null;
+            }
+
+            const payload = JSON.parse(response.responseText || "null");
+            const value = ffFlightTravelValue(playerId, tornTravel, payload?.current, nowMs);
+            ffFlightCache.set(cacheKey, {
+                expires: nowMs + (value ? FF_FLIGHT_CACHE_MS : FF_FLIGHT_ERROR_CACHE_MS),
+                routeDescription,
+                value
+            });
+            return value;
+        } catch (error) {
+            if (isHiddenPageError(error)) throw error;
+            ffFlightCache.set(cacheKey, {
+                expires: nowMs + FF_FLIGHT_ERROR_CACHE_MS,
+                routeDescription,
+                value: null
+            });
+            return null;
+        }
+    }
+
+    async function runWithConcurrency(items, limit, worker) {
+        let index = 0;
+        const count = Math.max(1, Math.min(Number(limit) || 1, items.length || 1));
+        const runners = Array.from({ length: count }, async () => {
+            while (index < items.length) {
+                const currentIndex = index++;
+                await worker(items[currentIndex]);
+            }
+        });
+        await Promise.all(runners);
+    }
+
+    async function enrichSnapshotWithFfFlights(snapshot) {
+        if (!snapshot?.members || typeof snapshot.members !== "object") return snapshot;
+        const travelers = Object.values(snapshot.members).filter(member =>
+            String(member?.status?.state || "").toLowerCase() === "traveling"
+        );
+        if (!travelers.length) return snapshot;
+
+        const key = getApiKey();
+        if (!key || !apiDisclosureAccepted()) return snapshot;
+        if (!(await ffPremiumAvailable(key))) return snapshot;
+
+        await runWithConcurrency(travelers, FF_FLIGHT_CONCURRENCY, async member => {
+            requireVisiblePage();
+            const ffTravel = await fetchFfFlightTravel(member.id, member.travel, key);
+            if (ffTravel) member.travel = ffTravel;
+        });
+        return snapshot;
     }
 
     function readCacheRecord(playerId) {
@@ -1177,7 +1456,10 @@
             const currentFactionId = detectFactionId();
             if (factionId && currentFactionId && Number(factionId) !== Number(currentFactionId)) return;
 
-            publishStatusSnapshot(processFactionStatusPayload(payload, factionId));
+            const snapshot = processFactionStatusPayload(payload, factionId);
+            await enrichSnapshotWithFfFlights(snapshot);
+            if (!isPageVisible() || !hasFactionMemberList()) return;
+            publishStatusSnapshot(snapshot);
         } catch {
             // Status failures never interrupt FF/EST rendering.
         } finally {
@@ -1451,7 +1733,11 @@
         else if (value <= 4.5) label = "DIFFICULT";
         else label = "MAY BE IMPOSSIBLE";
 
-        return { color: FF_PALETTE[index] || "#666", label };
+        return {
+            color: FF_PALETTE[index] || "#666",
+            label,
+            darkText: index >= 2 && index <= 7
+        };
     }
 
     function positiveNumber(value) {
@@ -1480,8 +1766,6 @@
             case "premium": return "PREMIUM";
             case "bss": return "BSS";
             case "manual": return "MANUAL";
-            case "ff scouter profile": return "PROFILE";
-            case "profile header": return "PROFILE";
             default: return String(source || "FFS").toUpperCase();
         }
     }
@@ -1589,6 +1873,13 @@
             }
             .ks6-privacy div strong{font-size:10.5px!important;color:#fff!important}
 
+            html[${SUITE_DISABLED_ATTR}="1"] .ks6-badge{display:none!important}
+            html[${SUITE_DISABLED_ATTR}="1"] .ks6-colored-row,
+            html[${SUITE_DISABLED_ATTR}="1"] .ks6-colored-row > *,
+            html[${SUITE_DISABLED_ATTR}="1"] .ks6-colored-row [class*='table-cell'],
+            html[${SUITE_DISABLED_ATTR}="1"] .ks6-colored-row [class*='cell___']{
+                background-color:transparent!important;box-shadow:none!important
+            }
             .ks6-colored-row{
                 --ks6-row-color:#666;
                 --ks6-row-tint:rgba(102,102,102,.18);
@@ -1600,6 +1891,16 @@
             .ks6-colored-row [class*='cell___']{
                 background-color:var(--ks6-row-tint)!important
             }
+            .ks6-colored-row > *:not(:has(.ks6-name-host)),
+            .ks6-colored-row > *:not(:has(.ks6-name-host)) *{
+                color:#fff!important;
+                font-weight:700!important;
+                text-shadow:0 1px 2px rgba(0,0,0,.9)!important
+            }
+            .ks6-colored-row .kswt-status-host,
+            .ks6-colored-row .kswt-status-host::before,
+            .ks6-colored-row .kswt-timer{font-weight:800!important}
+            .ks6-colored-row .ks6-badge{color:#fff!important;text-shadow:none!important;font-weight:800!important}
             .ks6-name-host{position:relative!important;overflow:visible!important}
             .ks6-badge{
                 position:absolute!important;right:2px;bottom:1px;display:inline-flex!important;
@@ -1719,7 +2020,6 @@
 
         const manual = getManual(entry.id);
         const resolved = resolveEstimate(ffsData);
-        const profileEstimate = getProfileEstimate(entry.id);
         const bs = compactParts(manual?.battleStats || resolved.battleStats);
         const playerName = getPlayerDisplayName(entry);
         const age = estimateAge(resolved.lastUpdated);
@@ -1732,14 +2032,11 @@
         const estimateHuman =
             resolved.battleStatsHuman ||
             (resolved.battleStats ? formatCompact(resolved.battleStats) : "") ||
-            profileEstimate?.human ||
             "No estimate";
 
         const estimateSource = resolved.battleStats || resolved.battleStatsHuman
             ? source
-            : profileEstimate
-                ? sourceLabel(profileEstimate.source)
-                : "";
+            : "";
 
         const modal = document.createElement("div");
         modal.className = "ks6-modal";
@@ -1831,7 +2128,7 @@
         row.removeAttribute("data-ks6-applied");
         row.removeAttribute("data-ks6-pending");
         row.removeAttribute("data-ks6-retry");
-        row.classList.remove("ks6-colored-row");
+        row.classList.remove("ks6-colored-row", "ks6-dark-text");
         row.style.removeProperty("--ks6-row-color");
         row.style.removeProperty("--ks6-row-tint");
         row.style.removeProperty("box-shadow");
@@ -1861,7 +2158,6 @@
 
         const manual = getManual(entry.id);
         const resolved = resolveEstimate(data);
-        const profileEstimate = getProfileEstimate(entry.id);
         const manualFF = positiveNumber(manual?.ff);
         const activeFF = manualFF ?? resolved.fairFight;
         const hasManualFF = Boolean(manualFF);
@@ -1873,13 +2169,13 @@
         const fallbackEstimate =
             manualEstimateHuman ||
             apiEstimateHuman ||
-            profileEstimate?.human ||
             "";
 
         let color = "#666";
         let tint = "rgba(102,102,102,.10)";
         let title = "";
         let colorRow = false;
+        let darkText = false;
 
         if (activeFF) {
             const style = ffStyle(activeFF);
@@ -1887,6 +2183,7 @@
             color = style.color;
             tint = hexToRgba(style.color, 0.34);
             colorRow = true;
+            darkText = Boolean(style.darkText);
             badge.textContent = hasManualFF
                 ? `MAN ${activeFF.toFixed(2)}`
                 : `FF ${activeFF.toFixed(2)}${age.old ? "?" : ""}`;
@@ -1907,7 +2204,7 @@
             colorRow = true;
             title = [
                 `Estimated stats ${fallbackEstimate}`,
-                manualEstimateHuman ? "MANUAL" : apiEstimateHuman ? sourceLabel(resolved.source) : profileEstimate ? sourceLabel(profileEstimate.source) : "",
+                manualEstimateHuman ? "MANUAL" : apiEstimateHuman ? sourceLabel(resolved.source) : "",
                 manual?.note || ""
             ].filter(Boolean).join(" · ");
         } else {
@@ -1921,10 +2218,11 @@
 
         if (colorRow) {
             entry.row.classList.add("ks6-colored-row");
+            entry.row.classList.toggle("ks6-dark-text", darkText);
             entry.row.style.setProperty("--ks6-row-color", color);
             entry.row.style.setProperty("--ks6-row-tint", tint);
         } else {
-            entry.row.classList.remove("ks6-colored-row");
+            entry.row.classList.remove("ks6-colored-row", "ks6-dark-text");
             entry.row.style.removeProperty("--ks6-row-tint");
         }
 
@@ -2023,7 +2321,7 @@
     }
 
     function localDataCounts() {
-        const counts = { cache: 0, manual: 0, profile: 0, suite: 0 };
+        const counts = { cache: 0, manual: 0, suite: 0 };
         try {
             for (let index = 0; index < localStorage.length; index++) {
                 const key = localStorage.key(index) || "";
@@ -2031,7 +2329,6 @@
                 counts.suite += 1;
                 if (key.startsWith(CACHE_PREFIX)) counts.cache += 1;
                 if (key.startsWith(MANUAL_PREFIX)) counts.manual += 1;
-                if (key.startsWith(PROFILE_EST_PREFIX)) counts.profile += 1;
             }
         } catch {}
         return counts;
@@ -2044,7 +2341,7 @@
                 const key = localStorage.key(index) || "";
                 if (
                     key.startsWith(CACHE_PREFIX) ||
-                    key.startsWith(PROFILE_EST_PREFIX) ||
+                    key.startsWith(LEGACY_PROFILE_EST_PREFIX) ||
                     key === STATUS_STORAGE_KEY ||
                     key === TRAVEL_ACTIVE_KEY ||
                     key === TRAVEL_HISTORY_KEY
@@ -2147,7 +2444,7 @@
             info.apiKeyConfigured && info.apiDisclosureAccepted ? "ok" : "warn"
         );
         set("status", `${info.snapshotAge}${info.members ? ` · ${info.members} members` : ""}`, info.members ? "ok" : "muted");
-        set("storage", `${info.data.cache} cache · ${info.data.manual} manual · ${info.data.profile} profile`, "muted");
+        set("storage", `${info.data.cache} cache · ${info.data.manual} manual`, "muted");
         updateSuiteVersionWarning();
         syncWarControls(panel);
     }
@@ -2216,13 +2513,14 @@
                 <details class="ks6-api-disclosure" open>
                     <summary>Required API key and data disclosure</summary>
                     <div class="ks6-api-grid">
-                        <div class="ks6-api-item"><strong>Data storage</strong><p>Key, settings, manual values, notes and cached FF/profile/status/travel data are stored locally in this Torn PDA webview until cleared or removed.</p></div>
-                        <div class="ks6-api-item"><strong>Data sharing</strong><p>Torn API receives the key. FFScouter receives the key and visible target IDs. Kingshade Suite has no server and its developer receives nothing.</p></div>
-                        <div class="ks6-api-item"><strong>Purpose of use</strong><p>Display FF/EST values, map visible faction members, and show faction status/timers, filters and sorting.</p></div>
-                        <div class="ks6-api-item"><strong>Key storage &amp; sharing</strong><p>Stored locally by the Suite and sent over HTTPS only to Torn API and FFScouter. FFScouter separately handles registered keys/data under its own terms.</p></div>
-                        <div class="ks6-api-item"><strong>Key access level</strong><p>Suite direct use: custom <strong>faction/basic</strong>. FFScouter requires its own custom selections as listed in its linked policy. Full access is not required by this Suite.</p></div>
+                        <div class="ks6-api-item"><strong>Data storage</strong><p>Kingshade Suite stores the key, settings, manual values, notes, cached FF/EST response data (including estimate/source/spy metadata), status data and travel data locally in this Torn PDA webview until cleared or removed. FFScouter separately stores/uses registered key data under its own policy.</p></div>
+                        <div class="ks6-api-item"><strong>Data sharing</strong><p>Torn API receives the key for faction/basic. FFScouter receives the key for a registration request you explicitly trigger, plus /check-key, /get-stats and /player-flights; visible target IDs are included for stats and flight lookups. Kingshade Suite has no server and its developer receives nothing.</p></div>
+                        <div class="ks6-api-item"><strong>Purpose of use</strong><p>Register a new key with FFScouter only when you press the registration button; display FF/EST values; check FFScouter registration status/premium entitlement; show estimated flight landing/window/method; map visible faction members; and show faction status/timers, filters and sorting.</p></div>
+                        <div class="ks6-api-item"><strong>Key storage &amp; sharing</strong><p>The Suite stores the key locally and sends it over HTTPS only to Torn API and FFScouter. FFScouter key storage/access is governed by its own terms and data policy.</p></div>
+                        <div class="ks6-api-item"><strong>Key access level</strong><p>Custom key selections: user/basic, battlestats, hof, attacks, personalstats and faction/basic. Limited or Full access is not required.</p></div>
                     </div>
                     <div class="ks6-api-links">
+                        <a href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&amp;title=Kingshade%20Scout%20FFScouter&amp;user=basic,battlestats,hof,attacks,personalstats&amp;faction=basic" target="_blank" rel="noopener noreferrer">Create custom API key</a>
                         <a href="https://www.torn.com/api.html" target="_blank" rel="noopener noreferrer">Torn API terms</a>
                         <a href="https://www.torn.com/rules.php" target="_blank" rel="noopener noreferrer">Torn scripting rules</a>
                         <a href="https://ffscouter.com/" target="_blank" rel="noopener noreferrer">FFScouter terms &amp; data policy</a>
@@ -2231,8 +2529,10 @@
                 </details>
                 <label class="ks6-api-consent">
                     <input data-ksp="api-consent" type="checkbox" ${settings.apiDisclosureAccepted ? "checked" : ""}>
-                    <span>I have read and accept the disclosure above. Network requests remain disabled until this is checked.</span>
+                    <span>I have read the disclosure above and the linked FFScouter terms/data policy, and I agree to this data use. Network requests remain disabled until this is checked.</span>
                 </label>
+                <button type="button" class="ks6-wide-action" data-ksp="ff-register">Register this key with FFScouter</button>
+                <div class="ks6-help" data-ksp="ff-register-status">Required once for a new key. The button sends one user-triggered registration request to FFScouter.</div>
                 <label>Show players with no FF or estimate
                     <input data-ksp="unknown" type="checkbox" ${settings.showUnknown ? "checked" : ""}>
                 </label>
@@ -2280,13 +2580,13 @@
                     <summary>Privacy &amp; data use</summary>
                     <div>
                         <strong>Active page only:</strong> new requests pause whenever Torn is hidden or unfocused.<br><br>
-                        <strong>FFScouter:</strong> receives the entered key and IDs from the visible faction member list for documented <code>/api/v1/get-stats</code> lookups. FFScouter is independent and applies its own terms, storage and data policy.<br><br>
+                        <strong>FFScouter:</strong> receives the entered key for a user-triggered <code>/api/v1/register</code> request when you press the registration button, documented <code>/api/v1/check-key</code> registration-status/premium checks, <code>/api/v1/get-stats</code> FF/EST lookups and Premium <code>/api/v1/player-flights</code> travel estimates. Visible target IDs are sent where stats/flight lookups require them. FFScouter is independent and applies its own terms, key storage and data policy.<br><br>
                         <strong>Torn API:</strong> receives the entered key only for official <code>faction/basic</code> member status and mapping while a faction member list is open.<br><br>
-                        <strong>Stored locally by this Suite:</strong> key, settings, consent state, manual values, notes, cached results, profile estimates and travel calibration. Kingshade Suite operates no server and its developer cannot access this data.<br><br>
+                        <strong>Stored locally by this Suite:</strong> key, settings, consent state, manual values, notes, cached FF/EST response data (including estimate/source/spy metadata), status data and travel calibration. Kingshade Suite operates no server and its developer cannot access this data.<br><br>
                         <strong>Automation:</strong> no attacks, clicks, travel, purchases, crimes or other Torn actions are performed.
                     </div>
                 </details>
-                <div class="ks6-help">Clearing cache keeps the API key, preferences, manual FF values and notes. It removes cached FF/profile/status/travel data and reloads it.</div>
+                <div class="ks6-help">Clearing cache keeps the API key, preferences, manual FF values and notes. It removes cached FF/status/travel data and reloads it.</div>
                 <button type="button" class="ks6-wide-action ks6-danger-action" data-ksp="clear-cache">Clear cached Suite data</button>
             </section>
         `;
@@ -2380,6 +2680,15 @@
                 previousConsent !== settings.apiDisclosureAccepted;
         };
 
+        const runScoutRescan = ({ forceApiCredentials = false } = {}) => {
+            persistScoutSettings({ forceApiCredentials });
+            memoryCache.clear();
+            clearRendered();
+            scheduleStatusRefresh(0);
+            scheduleScan(0);
+            return true;
+        };
+
         const persistWarSettings = () => updateWarSettings({
             filter: panel.querySelector('[data-ksp="war-filter"]').value,
             sort: panel.querySelector('[data-ksp="war-sort"]').value,
@@ -2424,7 +2733,40 @@
             updateControlCenterOverview(panel);
         };
         panel.querySelector('[data-ksp="rescan"]').onclick = () => {
-            persistScoutSettings(); memoryCache.clear(); clearRendered(); scheduleStatusRefresh(0); scheduleScan(0);
+            runScoutRescan();
+        };
+        panel.querySelector('[data-ksp="ff-register"]').onclick = async event => {
+            const control = event.currentTarget;
+            const status = panel.querySelector('[data-ksp="ff-register-status"]');
+            const cleanKey = String(apiKeyInput?.value || "").trim();
+            const consentAccepted = Boolean(apiConsentInput?.checked);
+
+            if (!consentAccepted) {
+                showToast("Read and accept the disclosure and linked FFScouter terms/data policy first.");
+                return;
+            }
+            if (!/^[A-Za-z0-9]{16}$/.test(cleanKey)) {
+                showToast("Enter a valid 16-character Torn API key first.");
+                return;
+            }
+
+            // This click performs exactly one network action: the explicit
+            // FFScouter registration. Key/consent persistence and data loading
+            // remain a separate user action through Rescan/close.
+            control.disabled = true;
+            if (status) status.textContent = "Registering this key with FFScouter…";
+            try {
+                const message = await registerFfScouterKey(cleanKey);
+                if (status) status.textContent = `${message} Use Rescan faction member list to load data.`;
+                showToast(message);
+                updateControlCenterOverview(panel);
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                if (status) status.textContent = `Registration failed: ${message}`;
+                showToast(message);
+            } finally {
+                control.disabled = false;
+            }
         };
         panel.querySelector('[data-ksp="reset"]').onclick = () => {
             persistScoutSettings(); settings.buttonX = null; settings.buttonY = null; saveSettings();
@@ -2444,6 +2786,7 @@
         };
 
         panel.__ks6SyncApiCredentialControls = syncApiCredentialControls;
+        panel.__ks6RunScoutRescan = runScoutRescan;
         document.body.append(button, panel);
         setControlTab(panel, settings.controlTab || "overview");
         settleInitialButtonPlacement(button);
@@ -2464,6 +2807,12 @@
     function ensureControlCenter() {
         const panel = ensurePanel();
         return Boolean(panel && document.querySelector(".ks6-fab"));
+    }
+
+    function saveSetupAndRescan() {
+        const panel = ensurePanel();
+        if (!panel?.__ks6RunScoutRescan) return false;
+        return Boolean(panel.__ks6RunScoutRescan({ forceApiCredentials: true }));
     }
 
     function openControlCenter(tab = "overview") {
@@ -2500,6 +2849,9 @@
         document.querySelectorAll(".ks6-badge").forEach(element => element.remove());
         document.querySelectorAll(".ks6-name-host").forEach(host => host.classList.remove("ks6-name-host"));
         document.querySelectorAll(".ks6-colored-row,[data-ks6-applied],[data-ks6-pending]").forEach(clearRowVisuals);
+        for (const list of factionMemberLists()) {
+            list.querySelectorAll(".table-body > .table-row, .enemy, .your").forEach(clearRowVisuals);
+        }
     }
 
     async function scan() {
@@ -2542,7 +2894,6 @@
                 return;
             }
 
-            captureProfileEstimate();
             scheduleStatusRefresh(0);
 
             const result = await findRows();
@@ -2574,7 +2925,13 @@
                 fresh.push(entry);
             }
 
-            if (!fresh.length) return;
+            if (!fresh.length) {
+                ffDataState = "loaded";
+                ffLoadedCount = rows.size;
+                ffLoadedFactionId = detectFactionId();
+                updatePanelStatus(`${rows.size}/${result.candidateRows} members · FF/EST data loaded`);
+                return;
+            }
 
             try {
                 const data = await fetchPlayers(fresh.map(entry => entry.id));
@@ -2746,7 +3103,7 @@
 
         observer = new MutationObserver(mutations => {
             if (!isPageVisible()) return;
-            if (!isFactionPath() && !isProfilePath()) return;
+            if (!isFactionPath()) return;
 
             const relevant = mutations.some(mutation =>
                 [...Array.from(mutation.addedNodes), ...Array.from(mutation.removedNodes)].some(node => {
@@ -2764,8 +3121,6 @@
                         ".ks6-panel,.ks6-modal,#kswt-toolbar,#kswt-timer-info,[data-ks-suite-mutating]"
                     )) return false;
 
-                    // Profile capture still needs to tolerate Torn's dynamic profile DOM.
-                    if (isProfilePath()) return true;
 
                     // Torn PDA may insert the first member list through a DocumentFragment.
                     return Boolean(
@@ -2801,6 +3156,7 @@
             getSuiteStatus: suiteDiagnostics,
             ensureControlCenter,
             openControlCenter,
+            saveSetupAndRescan,
             refreshStatus: () => refreshStatusCore(false),
             forceStatusRefresh: () => refreshStatusCore(true),
             syncButtonDock,
@@ -2870,9 +3226,10 @@
         try {
             return document.visibilityState === "visible" &&
                 !document.hidden &&
-                (typeof document.hasFocus !== "function" || document.hasFocus());
+                typeof document.hasFocus === "function" &&
+                document.hasFocus();
         } catch {
-            return true;
+            return false;
         }
     }
 
@@ -3028,9 +3385,12 @@
             feedback.hidden = false;
             feedback.textContent = "Saving and loading Suite data…";
             saveButton.disabled = true;
-            key?.dispatchEvent(new Event("input", { bubbles: true }));
-            consent?.dispatchEvent(new Event("change", { bubbles: true }));
-            panel.querySelector('[data-ksp="rescan"]')?.click();
+            const core = runtime();
+            if (!core?.saveSetupAndRescan?.()) {
+                feedback.textContent = "Suite could not start the setup load. Close the panel and retry.";
+                saveButton.disabled = false;
+                return;
+            }
 
             const startedAt = Date.now();
             let retriedAfterHttp400 = false;
@@ -3047,7 +3407,11 @@
                         feedback.textContent = "FFScouter did not accept the first request · retrying once…";
                         toast?.remove();
                         setTimeout(() => {
-                            panel.querySelector('[data-ksp="rescan"]')?.click();
+                            if (!runtime()?.saveSetupAndRescan?.()) {
+                                feedback.textContent = "Suite could not retry the setup load.";
+                                saveButton.disabled = false;
+                                return;
+                            }
                             setTimeout(finishSetup, 700);
                         }, 800);
                         return;
@@ -3218,7 +3582,7 @@
     }
 
     window[INSTANCE_KEY] = {
-        version: "0.8.5",
+        version: "0.8.6",
         openSetup,
         destroy() {
             destroyed = true;
