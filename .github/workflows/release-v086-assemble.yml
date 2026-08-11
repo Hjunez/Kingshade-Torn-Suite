@@ -1,0 +1,45 @@
+name: Assemble Kingshade Suite v0.8.6
+
+on:
+  push:
+    branches:
+      - release/v0.8.6-publish
+
+permissions:
+  contents: write
+
+jobs:
+  assemble:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/v0.8.6-publish
+
+      - name: Assemble and validate release
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .release_tmp/scout.gz.b64.* | base64 -d | gzip -d > Kingshade_Scout_Torn_PDA_v0.8.6.user.js
+          cat .release_tmp/war.gz.b64.* | base64 -d | gzip -d > KS_War_Tools_Torn_PDA_v0.8.6.user.js
+          rm -f Kingshade_Scout_Torn_PDA_v0.8.5.user.js
+          rm -f KS_War_Tools_Torn_PDA_v0.8.5.user.js
+          printf '0.8.6\n' > VERSION
+          rm -rf .release_tmp
+          rm -f .github/workflows/release-v086-assemble.yml
+          cp Kingshade_Scout_Torn_PDA_v0.8.6.user.js /tmp/scout.js
+          cp KS_War_Tools_Torn_PDA_v0.8.6.user.js /tmp/war.js
+          node --check /tmp/scout.js
+          node --check /tmp/war.js
+          bash tools/validate-suite.sh
+
+      - name: Commit release
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Release Kingshade Suite v0.8.6'
+          git push origin HEAD:release/v0.8.6-publish
