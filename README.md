@@ -32,7 +32,7 @@ Faction-member intelligence, shared data core and the Suite Control Center.
 
 **Raw installation URL:**
 
-`https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/Kingshade_Scout_Torn_PDA_v0.8.6.user.js`
+`https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/Kingshade_Scout_Torn_PDA.user.js`
 
 ### KS War Tools 0.8.6
 
@@ -53,7 +53,11 @@ Mobile faction filters, sorting and status timers powered by Scout.
 
 **Raw installation URL:**
 
-`https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_War_Tools_Torn_PDA_v0.8.6.user.js`
+`https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_War_Tools_Torn_PDA.user.js`
+
+### Stable update channel
+
+All new installs use the unversioned raw URLs above. Scout and War Tools embed those same URLs as `@updateURL` and `@downloadURL`, so Torn PDA can update an existing installation in place when a newer Suite version is published. Permanent v0.8.5 compatibility endpoints are retained so users already on v0.8.5 can migrate by pressing **Update** once; the updated script then switches itself to the stable channel.
 
 ### Suite Control Center
 
