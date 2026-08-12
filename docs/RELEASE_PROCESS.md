@@ -34,3 +34,11 @@ Do not commit:
 - Diagnostic userscripts
 - Duplicate userscript copies
 - API keys or sensitive logs
+
+## Userscript update channel
+
+- `Kingshade_Scout_Torn_PDA.user.js` and `KS_War_Tools_Torn_PDA.user.js` are permanent stable update endpoints.
+- Every released Scout/War Tools file must set both `@updateURL` and `@downloadURL` to its matching stable endpoint.
+- The stable endpoint files must be byte-identical to the current versioned release files.
+- The legacy v0.8.5 endpoint filenames remain present and byte-identical to the current release so existing v0.8.5 installations can migrate through Torn PDA's Update action.
+- Release validation must fail if any of those files, URLs or versions drift.
