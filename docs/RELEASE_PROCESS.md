@@ -15,7 +15,7 @@
 For every Suite release:
 
 1. Update `VERSION`.
-2. Rename both userscript files to include the same version.
+2. Create new versioned release snapshots for both scripts with the same version; retain older published versioned snapshots as immutable historical URLs.
 3. Update each userscript `@version`.
 4. Update README and CHANGELOG.
 5. Run `bash tools/validate-suite.sh`.
@@ -32,7 +32,7 @@ Do not commit:
 - ZIP archives
 - Temporary test notes
 - Diagnostic userscripts
-- Duplicate userscript copies
+- Temporary duplicate userscript copies (published historical versioned snapshots are allowed)
 - API keys or sensitive logs
 
 ## Userscript update channel
@@ -41,4 +41,6 @@ Do not commit:
 - Every released Scout/War Tools file must set both `@updateURL` and `@downloadURL` to its matching stable endpoint.
 - The stable endpoint files must be byte-identical to the current versioned release files.
 - The legacy v0.8.5 endpoint filenames remain present and byte-identical to the current release so existing v0.8.5 installations can migrate through Torn PDA's Update action.
+- Older published versioned release snapshots may remain for link stability; their embedded `@version` must match their filename and their updater metadata must still point to the permanent stable endpoint.
+- After the new stable files reach `main`, verify the real Torn PDA Update flow from the previous public version to the new version before marking the updater migration gate complete.
 - Release validation must fail if any of those files, URLs or versions drift.

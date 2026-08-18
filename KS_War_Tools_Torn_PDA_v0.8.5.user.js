@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KS War Tools for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.8.6
+// @version      0.8.7
 // @downloadURL  https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_War_Tools_Torn_PDA.user.js
 // @updateURL    https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_War_Tools_Torn_PDA.user.js
 // @description  Kingshade Suite War Tools for Torn PDA.
@@ -26,7 +26,7 @@
         name: "Kingshade Suite",
         component: "War Tools",
         toolbarLabel: "Suite Status",
-        version: "0.8.6",
+        version: "0.8.7",
         instanceKey: "__ksWarToolsActive",
         sharedCoreKey: "__kingshadeScoutCore",
         sharedStorageKey: "kingshade-scout:status-core",
@@ -77,6 +77,9 @@
         observerConnected: false,
         scanTimer: null,
         clockTimer: null,
+        tctClockObserver: null,
+        tctClockNode: null,
+        lastTctSecond: null,
         infoTimer: null,
         settings: loadSettings(),
         originalOrder: new WeakMap(),
@@ -178,6 +181,103 @@
 
     function isVisiblePage() {
         return document.visibilityState === "visible" && !document.hidden && pageHasFocus();
+    }
+
+    // Exact status timers use the same integer second the player sees in Torn's
+    // visible TCT clock. Device diagnostics verified that getCurrentTimestamp()
+    // leads that visible clock by 500 ms in Torn PDA and must not be used as the
+    // phase source for DIBS/hit timing.
+    function tctDisplayedSecond() {
+        const clock = document.querySelector(".tc-clock-tooltip");
+        const text = normalizeText(clock?.textContent || "");
+        const match = text.match(/(?:^|\s)(\d{2}):(\d{2}):(\d{2})\s*-\s*(\d{2})\/(\d{2})\/(\d{2,4})(?:\s|$)/);
+        if (match) {
+            const [, hh, mm, ss, dd, mo, yyRaw] = match;
+            const yy = Number(yyRaw);
+            const year = yy < 100 ? 2000 + yy : yy;
+            const epoch = Date.UTC(year, Number(mo) - 1, Number(dd), Number(hh), Number(mm), Number(ss)) / 1000;
+            if (Number.isFinite(epoch)) return epoch;
+        }
+
+        // Fail-safe only. The diagnostic device tracked the visible TCT
+        // transition with Date.now() within about 59 ms.
+        return Math.floor(Date.now() / 1000);
+    }
+
+    function timerNow(kind) {
+        return kind === "exact" ? tctDisplayedSecond() : Math.floor(Date.now() / 1000);
+    }
+
+    function infoNow(info) {
+        return timerNow(info?.timerKind);
+    }
+
+    function disconnectTctClockObserver() {
+        state.tctClockObserver?.disconnect();
+        state.tctClockObserver = null;
+        state.tctClockNode = null;
+        state.lastTctSecond = null;
+    }
+
+    function updateExactTimersAt(now) {
+        if (state.destroyed || !isVisiblePage() || !Number.isFinite(now)) return;
+
+        let expired = false;
+        document.querySelectorAll('.kswt-timer[data-until][data-kind="exact"]').forEach(timer => {
+            const until = Number(timer.dataset.until);
+            const remaining = until - now;
+
+            if (!Number.isFinite(until) || remaining <= 0) {
+                timer.remove();
+                expired = true;
+                return;
+            }
+
+            const nextText = formatCountdown(remaining);
+            if (timer.textContent !== nextText) timer.textContent = nextText;
+        });
+
+        if (state.settings.filter === "soon") {
+            for (const info of state.lastInfos) {
+                if (matchesFilter(info)) info.row.style.removeProperty("display");
+                else info.row.style.setProperty("display", "none", "important");
+            }
+        }
+
+        if (expired) {
+            window.__kingshadeScoutActive?.forceStatusRefresh?.();
+            scheduleApply(100);
+        }
+    }
+
+    function connectTctClockObserver() {
+        if (state.destroyed || !isVisiblePage()) return false;
+        const clock = document.querySelector(".tc-clock-tooltip");
+        if (!clock) {
+            disconnectTctClockObserver();
+            return false;
+        }
+
+        if (state.tctClockObserver && state.tctClockNode === clock) return true;
+
+        disconnectTctClockObserver();
+        state.tctClockNode = clock;
+        state.lastTctSecond = tctDisplayedSecond();
+        state.tctClockObserver = new MutationObserver(() => {
+            if (state.destroyed || !isVisiblePage()) return;
+            const now = tctDisplayedSecond();
+            if (!Number.isFinite(now) || now === state.lastTctSecond) return;
+            state.lastTctSecond = now;
+            // Direct DOM write in the clock mutation microtask: no 100 ms poll
+            // wait and no requestAnimationFrame phase delay.
+            updateExactTimersAt(now);
+        });
+        state.tctClockObserver.observe(clock, {
+            childList: true,
+            characterData: true,
+            subtree: true
+        });
+        return true;
     }
 
     function connectObserver() {
@@ -482,7 +582,7 @@
             );
         }
 
-        const now = Math.floor(Date.now() / 1000);
+        const now = tctDisplayedSecond();
         for (const candidate of candidates) {
             const timestamp = parseAbsoluteTimestamp(candidate);
             if (timestamp && timestamp >= now - 5) return timestamp;
@@ -495,7 +595,7 @@
         const apiStatus = member?.status || null;
         const apiState = normalizeStatusState(apiStatus?.state);
         const status = apiState !== "unknown" ? apiState : statusFromRow(row);
-        const now = Math.floor(Date.now() / 1000);
+        const now = tctDisplayedSecond();
         const exactUntil = positiveNumber(apiStatus?.until) ?? domStatusUntil(row);
         const travelEta = status === "traveling" ? positiveNumber(member?.travel?.eta) : null;
         const until = exactUntil && exactUntil > now ? exactUntil : travelEta && travelEta > now ? travelEta : null;
@@ -591,7 +691,7 @@
     }
 
     function matchesFilter(info) {
-        const now = Math.floor(Date.now() / 1000);
+        const now = infoNow(info);
         const soonLimit = Number(state.settings.soonMinutes) * 60;
         switch (state.settings.filter) {
             case "ready":
@@ -783,7 +883,7 @@
 
         const isUnavailableTravel = info.timerKind === "estimate-unavailable";
         const remaining = info.until
-            ? info.until - Math.floor(Date.now() / 1000)
+            ? info.until - infoNow(info)
             : null;
         if (!isUnavailableTravel && (!info.until || remaining <= 0)) return;
 
@@ -873,7 +973,7 @@
 
             state.lastInfos = allInfo;
             updateToolbar(allInfo);
-            manageClock(allInfo.some(info => info.until && info.until > Date.now() / 1000));
+            manageClock(allInfo.some(info => info.until && info.until > infoNow(info)));
             dockScoutButton();
         } finally {
             state.applying = false;
@@ -881,19 +981,20 @@
     }
 
     function tickTimers(force = false) {
-        if (state.destroyed || (state.scrolling && !force)) return;
+        if (state.destroyed) return;
         if (state.tickRaf) return;
 
         state.tickRaf = requestAnimationFrame(() => {
             state.tickRaf = null;
-            if (state.destroyed || (state.scrolling && !force)) return;
+            if (state.destroyed) return;
 
-            const now = Math.floor(Date.now() / 1000);
+            const localNow = Math.floor(Date.now() / 1000);
             let expired = false;
 
             document.querySelectorAll(".kswt-timer[data-until]").forEach(timer => {
                 const until = Number(timer.dataset.until);
-                const remaining = until - now;
+                const kind = String(timer.dataset.kind || "");
+                const remaining = until - timerNow(kind);
 
                 if (!Number.isFinite(until) || remaining <= 0) {
                     timer.remove();
@@ -902,7 +1003,7 @@
                 }
 
                 const nextText =
-                    `${timer.dataset.kind === "estimate" ? "~" : ""}${formatCountdown(remaining)}`;
+                    `${kind === "estimate" ? "~" : ""}${formatCountdown(remaining)}`;
                 if (timer.textContent !== nextText) timer.textContent = nextText;
             });
 
@@ -914,8 +1015,8 @@
             }
 
             // The age/count summary does not need a layout write every second.
-            if (force || expired || state.settings.filter === "soon" || now - state.lastToolbarTick >= 5) {
-                state.lastToolbarTick = now;
+            if (force || expired || state.settings.filter === "soon" || localNow - state.lastToolbarTick >= 5) {
+                state.lastToolbarTick = localNow;
                 updateToolbar(state.lastInfos);
             }
 
@@ -927,13 +1028,24 @@
     }
 
     function manageClock(needed) {
-        if (needed && !state.clockTimer) {
-            state.clockTimer = setInterval(() => {
-                if (!state.destroyed && isVisiblePage()) tickTimers();
-            }, 1000);
-        } else if (!needed && state.clockTimer) {
-            clearInterval(state.clockTimer);
-            state.clockTimer = null;
+        if (needed) {
+            connectTctClockObserver();
+            if (!state.clockTimer) {
+                // Fallback/reconnect path only. Exact timer phase is driven by
+                // the TCT MutationObserver above; this interval cannot advance
+                // an exact timer before the visible TCT second changes.
+                state.clockTimer = setInterval(() => {
+                    if (state.destroyed || !isVisiblePage()) return;
+                    connectTctClockObserver();
+                    tickTimers();
+                }, 250);
+            }
+        } else {
+            disconnectTctClockObserver();
+            if (state.clockTimer) {
+                clearInterval(state.clockTimer);
+                state.clockTimer = null;
+            }
             clearTimeout(state.scrollTimer);
             state.scrollTimer = null;
             state.scrolling = false;
@@ -961,13 +1073,15 @@
     }
 
     function countsFor(infos) {
-        const now = Math.floor(Date.now() / 1000);
         const soonLimit = Number(state.settings.soonMinutes) * 60;
         return {
             all: infos.length,
             ready: infos.filter(info => info.status === "okay").length,
             easy: infos.filter(info => info.status === "okay" && info.ff && info.ff <= Number(state.settings.maxFF)).length,
-            soon: infos.filter(info => info.until && info.until > now && info.until - now <= soonLimit).length,
+            soon: infos.filter(info => {
+                const now = infoNow(info);
+                return Boolean(info.until && info.until > now && info.until - now <= soonLimit);
+            }).length,
             unknown: infos.filter(info => !info.ff && !info.battleStats && !info.estimateText).length,
             core: infos.filter(info => info.hasCoreData || info.row.querySelector(".ks6-badge")).length,
             status: infos.filter(info => info.hasStatusData).length,
@@ -1297,6 +1411,7 @@
             ensureStyles();
             ensureToolbar();
             connectObserver();
+            connectTctClockObserver();
             window.__kingshadeScoutActive?.refreshStatus?.();
             scheduleApply(0);
             return;
@@ -1306,6 +1421,7 @@
         state.scanTimer = null;
         clearInterval(state.clockTimer);
         state.clockTimer = null;
+        disconnectTctClockObserver();
         clearTimeout(state.scrollTimer);
         state.scrollTimer = null;
         state.scrolling = false;
@@ -1424,6 +1540,7 @@
             ensureStyles();
             ensureToolbar();
             connectObserver();
+            connectTctClockObserver();
             window.__kingshadeScoutActive?.refreshStatus?.();
             scheduleApply(0);
         }
@@ -1456,6 +1573,7 @@
         state.destroyed = true;
         clearTimeout(state.scanTimer);
         clearInterval(state.clockTimer);
+        disconnectTctClockObserver();
         clearTimeout(state.scrollTimer);
         if (state.tickRaf) cancelAnimationFrame(state.tickRaf);
         state.scrollTimer = null;

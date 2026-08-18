@@ -1,16 +1,16 @@
 # Kingshade Torn Suite
 
 ![Platform](https://img.shields.io/badge/Platform-Torn%20PDA-blue)
-![Suite](https://img.shields.io/badge/Kingshade%20Suite-0.8.6-green)
+![Suite](https://img.shields.io/badge/Kingshade%20Suite-0.8.7-green)
 ![Status](https://img.shields.io/badge/Status-Release-brightgreen)
 
 A compact collection of read-only Torn PDA userscripts by **Kingshade**. The scripts add information, filtering and visual guidance without performing Torn actions for the player.
 
-## Kingshade Suite 0.8.6
+## Kingshade Suite 0.8.7
 
 Scout and War Tools are one coordinated suite. They must always use the **same version number**.
 
-### Kingshade Scout 0.8.6
+### Kingshade Scout 0.8.7
 
 Faction-member intelligence, shared data core and the Suite Control Center.
 
@@ -28,13 +28,13 @@ Faction-member intelligence, shared data core and the Suite Control Center.
 - Reduced rescanning and smoother scrolling on long member lists
 - Tabbed Suite Control Center for overview, Scout, War Tools and local-data controls
 
-**Repository file:** `Kingshade_Scout_Torn_PDA_v0.8.6.user.js`
+**Repository file:** `Kingshade_Scout_Torn_PDA_v0.8.7.user.js`
 
 **Raw installation URL:**
 
 `https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/Kingshade_Scout_Torn_PDA.user.js`
 
-### KS War Tools 0.8.6
+### KS War Tools 0.8.7
 
 Mobile faction filters, sorting and status timers powered by Scout.
 
@@ -49,7 +49,7 @@ Mobile faction filters, sorting and status timers powered by Scout.
 - No independent API requests and no automated Torn actions
 - Public settings/status interface used by the Suite Control Center
 
-**Repository file:** `KS_War_Tools_Torn_PDA_v0.8.6.user.js`
+**Repository file:** `KS_War_Tools_Torn_PDA_v0.8.7.user.js`
 
 **Raw installation URL:**
 
@@ -120,7 +120,7 @@ Standalone visual guidance for the Bootlegging crime. It keeps its own version n
 2. Add/enable both Scout and War Tools in Torn PDA.
 3. Open **KS → Scout**, create or enter the API key, read the disclosure and accept it.
 4. If FFScouter reports the key as unregistered, use **Register this key with FFScouter** after reviewing FFScouter's linked terms/data policy.
-5. Confirm that both components display version **0.8.6**, `Versions match`, and FF/EST loads on the faction member list.
+5. Confirm that both components display version **0.8.7**, `Versions match`, and FF/EST loads on the faction member list.
 6. Disable/remove older active Scout and War Tools versions.
 
 ## Feedback
@@ -143,7 +143,7 @@ Never include an API key in screenshots, reports or issues.
 - `release/...` branches prepare a version for `main`.
 - `test-status-timers` is retained as the historical v0.8.5 faction-test branch.
 - Scout and War Tools always share the version stored in [`VERSION`](VERSION).
-- Temporary diagnostics, test notes, ZIP archives and duplicate script copies do not belong in the repository root.
+- Temporary diagnostics, test notes, ZIP archives and temporary duplicate script copies do not belong in the repository root; published historical versioned snapshots are retained for link stability.
 
 See [`docs/RELEASE_PROCESS.md`](docs/RELEASE_PROCESS.md).
 
