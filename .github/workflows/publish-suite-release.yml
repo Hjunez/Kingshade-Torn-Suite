@@ -1,0 +1,88 @@
+name: Publish Kingshade Suite Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-kingshade-suite-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate Suite release
+        run: bash tools/validate-suite.sh
+
+      - name: Resolve release identity
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          READY_VERSION="$(tr -d '[:space:]' < .github/RELEASE_READY)"
+
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "Invalid VERSION: $VERSION" >&2
+            exit 1
+          }
+
+          if [[ "$READY_VERSION" != "$VERSION" ]]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Release gate not armed: VERSION=$VERSION, RELEASE_READY=$READY_VERSION"
+            exit 0
+          fi
+
+          TAG="v${VERSION}"
+          SCOUT="Kingshade_Scout_Torn_PDA_v${VERSION}.user.js"
+          WAR="KS_War_Tools_Torn_PDA_v${VERSION}.user.js"
+          TARGET="$(git log -1 --format=%H -- VERSION)"
+
+          [[ -f "$SCOUT" ]] || { echo "Missing $SCOUT" >&2; exit 1; }
+          [[ -f "$WAR" ]] || { echo "Missing $WAR" >&2; exit 1; }
+          [[ -n "$TARGET" ]] || { echo "Unable to resolve release target commit" >&2; exit 1; }
+
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "scout=$SCOUT" >> "$GITHUB_OUTPUT"
+          echo "war=$WAR" >> "$GITHUB_OUTPUT"
+          echo "target=$TARGET" >> "$GITHUB_OUTPUT"
+
+      - name: Check existing release
+        if: steps.release.outputs.ready == 'true'
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view "${{ steps.release.outputs.tag }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub release and attach userscripts
+        if: steps.release.outputs.ready == 'true' && steps.existing.outputs.exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release create "${{ steps.release.outputs.tag }}" \
+            "${{ steps.release.outputs.scout }}" \
+            "${{ steps.release.outputs.war }}" \
+            --repo "${{ github.repository }}" \
+            --target "${{ steps.release.outputs.target }}" \
+            --title "Kingshade Suite ${{ steps.release.outputs.tag }}" \
+            --notes "Kingshade Suite ${{ steps.release.outputs.tag }} RELEASE. See CHANGELOG.md for release details. Scout and War Tools are attached as the verified versioned userscript assets."
