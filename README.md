@@ -1,7 +1,7 @@
 # Kingshade Torn Suite
 
 ![Platform](https://img.shields.io/badge/Platform-Torn%20PDA-blue)
-![Suite](https://img.shields.io/badge/Kingshade%20Suite-0.8.6-green)
+![Suite](https://img.shields.io/badge/Kingshade%20Suite-0.8.7-green)
 ![Status](https://img.shields.io/badge/Status-Release-brightgreen)
 
 A compact collection of read-only Torn PDA userscripts by **Kingshade**. The scripts add information, filtering and visual guidance without performing Torn actions for the player.
@@ -143,7 +143,7 @@ Never include an API key in screenshots, reports or issues.
 - `release/...` branches prepare a version for `main`.
 - `test-status-timers` is retained as the historical v0.8.5 faction-test branch.
 - Scout and War Tools always share the version stored in [`VERSION`](VERSION).
-- Temporary diagnostics, test notes, ZIP archives and duplicate script copies do not belong in the repository root.
+- Temporary diagnostics, test notes, ZIP archives and temporary duplicate script copies do not belong in the repository root; published historical versioned snapshots are retained for link stability.
 
 See [`docs/RELEASE_PROCESS.md`](docs/RELEASE_PROCESS.md).
 
