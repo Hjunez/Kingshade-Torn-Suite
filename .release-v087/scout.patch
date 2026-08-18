@@ -1,0 +1,29 @@
+--- a/Kingshade_Scout_Torn_PDA.user.js
++++ b/Kingshade_Scout_Torn_PDA.user.js
+@@ -1,7 +1,7 @@
+ // ==UserScript==
+ // @name         Kingshade Scout for Torn PDA
+ // @namespace    https://kingshade.tools/
+-// @version      0.8.6
++// @version      0.8.7
+ // @downloadURL  https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/Kingshade_Scout_Torn_PDA.user.js
+ // @updateURL    https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/Kingshade_Scout_Torn_PDA.user.js
+ // @description  Kingshade Suite Scout for Torn PDA with FF/EST, faction status and FFScouter flight estimates.
+@@ -37,7 +37,7 @@
+ 
+     const NAME = "Kingshade Suite";
+     const COMPONENT = "Scout Core";
+-    const VERSION = "0.8.6";
++    const VERSION = "0.8.7";
+     const API_BASE = "https://ffscouter.com/api/v1";
+     const TORN_API_BASE = "https://api.torn.com";
+     const PREFIX = "kingshade-scout:";
+@@ -3584,7 +3584,7 @@
+     }
+ 
+     window[INSTANCE_KEY] = {
+-        version: "0.8.6",
++        version: "0.8.7",
+         openSetup,
+         destroy() {
+             destroyed = true;
