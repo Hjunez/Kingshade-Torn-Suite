@@ -1,0 +1,26 @@
+name: Build Suite v0.8.7 release
+
+on:
+  push:
+    branches:
+      - release/v0.8.7
+    paths:
+      - '.release-v087/**'
+      - '.github/workflows/build-suite-v087-release.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release branch
+        uses: actions/checkout@v4
+        with:
+          ref: release/v0.8.7
+          fetch-depth: 0
+
+      - name: Assemble, validate and commit release
+        shell: bash
+        run: bash .release-v087/build.sh
