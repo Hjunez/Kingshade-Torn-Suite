@@ -20,8 +20,12 @@ For every Suite release:
 4. Update README and CHANGELOG.
 5. Run `bash tools/validate-suite.sh`.
 6. Open a pull request into `main`.
-7. Merge only after testing.
-8. Create a GitHub release and attach both userscript files.
+7. Merge only after functional testing.
+8. Verify the real Torn PDA Update flow from the previous public version to the new version.
+9. After the updater migration gate passes, update `.github/RELEASE_READY` to the exact `VERSION` and merge that change into `main`.
+10. `.github/workflows/publish-suite-release.yml` then creates tag `v<VERSION>`, creates the GitHub Release, and attaches the versioned Scout and War Tools userscripts. The workflow is idempotent and does nothing if that release already exists.
+
+The release publisher resolves the tag target from the commit that last changed `VERSION`, so a later gate-only commit does not move the release tag away from the actual Suite release commit.
 
 Bootlegging Clean is standalone and keeps an independent version.
 
@@ -42,5 +46,5 @@ Do not commit:
 - The stable endpoint files must be byte-identical to the current versioned release files.
 - The legacy v0.8.5 endpoint filenames remain present and byte-identical to the current release so existing v0.8.5 installations can migrate through Torn PDA's Update action.
 - Older published versioned release snapshots may remain for link stability; their embedded `@version` must match their filename and their updater metadata must still point to the permanent stable endpoint.
-- After the new stable files reach `main`, verify the real Torn PDA Update flow from the previous public version to the new version before marking the updater migration gate complete.
+- After the new stable files reach `main`, verify the real Torn PDA Update flow from the previous public version to the new version before arming `.github/RELEASE_READY` or marking the updater migration gate complete.
 - Release validation must fail if any of those files, URLs or versions drift.
