@@ -2,6 +2,23 @@
 
 All notable changes to Kingshade Suite are documented here.
 
+## [0.8.7] — 2026-08-18 — Release
+
+### War Tools timer synchronization
+
+- Exact Hospital, Jail and Federal countdowns now use Torn's visible TCT clock second as their phase source instead of the device/browser clock.
+- Exact timer updates are driven directly by the visible TCT clock DOM transition, with a guarded fallback/reconnect loop.
+- Exact countdowns continue to update while scrolling; travel estimates remain explicitly separate from exact status timers.
+- Removed the previously observed early/late phase error that was operationally significant near hospital release.
+
+### Validation
+
+- Device diagnostics verified that `window.getCurrentTimestamp()` leads Torn's visible TCT clock by about 500 ms on the tested Torn PDA environment, so it is not used as the exact-timer phase source.
+- Torn PDA regression video 12195 verified stable exact HOSP countdown rate through list scrolling.
+- Torn PDA expiry video 12354 verified `0m02s` at TCT `08:41:06`, `0m01s` at `08:41:07`, and timer expiry at `08:41:08` without advancing early. The row refreshed/reordered shortly after expiry; the video did not directly prove an attack-screen transition.
+- Scout has no functional behavior change in 0.8.7 beyond synchronized Suite version identity.
+- Release candidates passed JavaScript syntax checks and exact SHA-256 verification before publication.
+
 ## [0.8.6] — 2026-08-11 — Release
 
 ### FFScouter integration
