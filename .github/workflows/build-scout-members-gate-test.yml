@@ -2,9 +2,10 @@ name: Build Scout Members Gate Test
 
 on:
   push:
-    branches: ["test/scout-members-tab-gate-088"]
+    branches:
+      - test/scout-members-tab-gate-088
     paths:
-      - ".github/workflows/build-scout-members-gate-test.yml"
+      - .github/workflows/build-scout-members-gate-test.yml
 
 permissions:
   contents: write
@@ -14,129 +15,81 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build isolated Scout test
+        with:
+          ref: test/scout-members-tab-gate-088
+      - name: Build isolated 0.8.8 TEST from release 0.8.7
         shell: python
         run: |
           from pathlib import Path
           import re
 
           src = Path('Kingshade_Scout_Torn_PDA.user.js')
-          out = Path('Kingshade_Scout_Torn_PDA_v0.8.8_MEMBERS_TAB_GATE_TEST.txt')
+          out = Path('Kingshade_Scout_Torn_PDA_v0.8.8_MEMBERS_ONLY_GATE_TEST.txt')
           s = src.read_text(encoding='utf-8')
+
+          if '// @version      0.8.7' not in s or 'const VERSION = "0.8.7";' not in s:
+              raise SystemExit('Unexpected Scout release base')
 
           s = s.replace('// @version      0.8.7', '// @version      0.8.8', 1)
           s = s.replace('const VERSION = "0.8.7";', 'const VERSION = "0.8.8";', 1)
-          s = s.replace('// @downloadURL  https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/Kingshade_Scout_Torn_PDA.user.js\n', '', 1)
-          s = s.replace('// @updateURL    https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/Kingshade_Scout_Torn_PDA.user.js\n', '', 1)
+          s = s.replace('// @name         Kingshade Scout for Torn PDA', '// @name         Kingshade Scout for Torn PDA [TEST]', 1)
+          s = s.replace('// @description  Kingshade Suite Scout for Torn PDA with FF/EST, faction status and FFScouter flight estimates.', '// @description  TEST 0.8.8: Scout runs only on the normal Faction Members view; Ranked War is explicitly excluded.', 1)
+          s = s.replace('// ==/UserScript==\n', '// ==/UserScript==\n//\n// TEST 0.8.8: hard Members-only runtime gate. Ranked War must not mount Scout UI, scan rows, observe rows or run Scout network work.\n', 1)
 
-          old = '''    function factionMemberLists() {
-        if (!isFactionPath()) return [];
-        return Array.from(document.querySelectorAll(".members-list")).filter(list =>
-            list instanceof HTMLElement && list.querySelector(".table-body")
-        );
-    }
-'''
-          new = '''    function isRankedWarViewActive() {
-        const warList = document.getElementById("faction_war_list_id");
-        if (!warList) return false;
-        const rect = warList.getBoundingClientRect();
-        const style = getComputedStyle(warList);
-        return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
-    }
-
-    function factionMemberLists() {
-        if (!isFactionPath() || isRankedWarViewActive()) return [];
-        return Array.from(document.querySelectorAll(".members-list")).filter(list =>
-            list instanceof HTMLElement &&
-            list.querySelector(".table-body") &&
-            !list.closest("#faction_war_list_id")
-        );
-    }
-'''
+          old = '''    function factionMemberLists() {\n        if (!isFactionPath()) return [];\n        return Array.from(document.querySelectorAll(".members-list")).filter(list =>\n            list instanceof HTMLElement && list.querySelector(".table-body")\n        );\n    }\n\n    function hasFactionMemberList() {\n        return factionMemberLists().length > 0;\n    }\n'''
+          new = '''    function isRankedWarView() {\n        return Boolean(document.getElementById("faction_war_list_id"));\n    }\n\n    function factionMemberLists() {\n        if (!isFactionPath() || isRankedWarView()) return [];\n        return Array.from(document.querySelectorAll(".members-list")).filter(list =>\n            list instanceof HTMLElement &&\n            list.querySelector(".table-body") &&\n            !list.closest("#faction_war_list_id")\n        );\n    }\n\n    function hasFactionMemberList() {\n        return !isRankedWarView() && factionMemberLists().length > 0;\n    }\n\n    function suspendOutsideMembers() {\n        if (hasFactionMemberList()) return false;\n        clearTimeout(scanTimer);\n        scanTimer = null;\n        clearTimeout(statusTimer);\n        statusTimer = null;\n        clearTimeout(ffRetryTimer);\n        ffRetryTimer = null;\n        clearTimeout(startupProbeTimer);\n        startupProbeTimer = null;\n        abortActiveRequests();\n        if (observerConnected) {\n            try { observer?.disconnect(); } catch {}\n            observerConnected = false;\n        }\n        clearRendered();\n        removePanel();\n        return true;\n    }\n'''
           if old not in s:
-              raise SystemExit('factionMemberLists anchor missing')
+              raise SystemExit('Member-list anchor not found')
           s = s.replace(old, new, 1)
 
-          old = '''    const onRouteChange = () => {
-        clearTimeout(statusTimer);
-        statusTimer = null;
+          old_route = '''        setTimeout(() => {\n            if (!hasFactionMemberList()) {\n                clearRendered();\n                removePanel();\n            }\n            scheduleScan(0);\n            scheduleStatusRefresh(0);\n            startStartupProbe();\n        }, 120);\n'''
+          new_route = '''        setTimeout(() => {\n            if (suspendOutsideMembers()) return;\n            scheduleScan(0);\n            scheduleStatusRefresh(0);\n            startStartupProbe();\n        }, 120);\n'''
+          if old_route not in s:
+              raise SystemExit('Route-change anchor not found')
+          s = s.replace(old_route, new_route, 1)
 
-        if (!isFactionPath()) {
-            clearRendered();
-            removePanel();
-        }
+          old_req = '''    function requireVisiblePage() {\n        if (!isPageVisible()) throw hiddenPageError();\n    }\n'''
+          new_req = '''    function requireVisiblePage() {\n        if (!isPageVisible()) throw hiddenPageError();\n        if (!hasFactionMemberList()) {\n            const error = new Error("Kingshade Scout is active only on Faction Members.");\n            error.code = "KS_NOT_MEMBERS_VIEW";\n            throw error;\n        }\n    }\n'''
+          if old_req not in s:
+              raise SystemExit('requireVisiblePage anchor not found')
+          s = s.replace(old_req, new_req, 1)
 
-        setTimeout(() => {
-            if (!hasFactionMemberList()) {
-                clearRendered();
-                removePanel();
-            }
-            scheduleScan(0);
-            scheduleStatusRefresh(0);
-            startStartupProbe();
-        }, 120);
-    };
-'''
-          new = '''    const onRouteChange = () => {
-        clearTimeout(statusTimer);
-        statusTimer = null;
+          required = [
+              'if (destroyed || statusRequestRunning || !isPageVisible() || !hasFactionMemberList()) return;',
+              'if (destroyed || !suiteDataEnabled() || !isPageVisible() || !hasFactionMemberList()) return;'
+          ]
+          for token in required:
+              if token not in s:
+                  raise SystemExit(f'Missing existing runtime guard: {token}')
 
-        if (!isFactionPath() || isRankedWarViewActive()) {
-            clearTimeout(scanTimer);
-            scanTimer = null;
-            clearTimeout(ffRetryTimer);
-            ffRetryTimer = null;
-            clearTimeout(startupProbeTimer);
-            startupProbeTimer = null;
-            abortActiveRequests();
-            clearRendered();
-            removePanel();
-        }
+          s = re.sub(r'^// @downloadURL.*\n', '', s, count=1, flags=re.M)
+          s = re.sub(r'^// @updateURL.*\n', '', s, count=1, flags=re.M)
 
-        setTimeout(() => {
-            if (!hasFactionMemberList()) {
-                clearTimeout(scanTimer);
-                scanTimer = null;
-                clearTimeout(statusTimer);
-                statusTimer = null;
-                clearTimeout(ffRetryTimer);
-                ffRetryTimer = null;
-                clearTimeout(startupProbeTimer);
-                startupProbeTimer = null;
-                abortActiveRequests();
-                clearRendered();
-                removePanel();
-                return;
-            }
-            scheduleScan(0);
-            scheduleStatusRefresh(0);
-            startStartupProbe();
-        }, 120);
-    };
-'''
-          if old not in s:
-              raise SystemExit('onRouteChange anchor missing')
-          s = s.replace(old, new, 1)
+          out.write_text('// REDIGERA ETT BEFINTLIGT SCRIPT\n' + s, encoding='utf-8')
 
-          # Test-file instruction header required by project workflow.
-          s = '// ERSÄTTA HELA INNEHÅLLET\n' + s
-          out.write_text(s, encoding='utf-8')
-
-      - name: Validate syntax and isolation
-        shell: bash
+          checks = {
+              'ranked_war_explicitly_blocked': 'function isRankedWarView()' in s and 'faction_war_list_id' in s,
+              'member_lists_fail_closed': 'if (!isFactionPath() || isRankedWarView()) return [];' in s,
+              'runtime_suspend': 'function suspendOutsideMembers()' in s,
+              'requests_aborted': 'abortActiveRequests();' in s,
+              'observer_disconnected': 'observer?.disconnect()' in s,
+              'panel_removed': 'removePanel();' in s,
+              'network_gate': 'KS_NOT_MEMBERS_VIEW' in s,
+              'release_logic_retained': 'const API_BASE = "https://ffscouter.com/api/v1";' in s,
+          }
+          failed = [k for k,v in checks.items() if not v]
+          if failed:
+              raise SystemExit('Invariant failure: ' + ', '.join(failed))
+          print(checks)
+      - name: Syntax check
         run: |
-          tail -n +2 Kingshade_Scout_Torn_PDA_v0.8.8_MEMBERS_TAB_GATE_TEST.txt > /tmp/scout-test.js
-          node --check /tmp/scout-test.js
-          grep -q 'function isRankedWarViewActive()' Kingshade_Scout_Torn_PDA_v0.8.8_MEMBERS_TAB_GATE_TEST.txt
-          grep -q '!isFactionPath() || isRankedWarViewActive()' Kingshade_Scout_Torn_PDA_v0.8.8_MEMBERS_TAB_GATE_TEST.txt
-          grep -q '!list.closest("#faction_war_list_id")' Kingshade_Scout_Torn_PDA_v0.8.8_MEMBERS_TAB_GATE_TEST.txt
-          ! grep -q '@updateURL' Kingshade_Scout_Torn_PDA_v0.8.8_MEMBERS_TAB_GATE_TEST.txt
-          ! grep -q '@downloadURL' Kingshade_Scout_Torn_PDA_v0.8.8_MEMBERS_TAB_GATE_TEST.txt
-      - name: Commit generated test file
-        shell: bash
+          tail -n +2 Kingshade_Scout_Torn_PDA_v0.8.8_MEMBERS_ONLY_GATE_TEST.txt > /tmp/scout.js
+          node --check /tmp/scout.js
+      - name: Commit generated TEST file
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Kingshade_Scout_Torn_PDA_v0.8.8_MEMBERS_TAB_GATE_TEST.txt
-          git commit -m "Add Scout 0.8.8 members-tab gate test" || exit 0
-          git push
+          git add Kingshade_Scout_Torn_PDA_v0.8.8_MEMBERS_ONLY_GATE_TEST.txt
+          git diff --cached --quiet && exit 0
+          git commit -m "test: build Scout 0.8.8 members-only gate"
+          git push origin HEAD:test/scout-members-tab-gate-088
