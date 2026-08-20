@@ -1,0 +1,142 @@
+name: Build Scout Members Gate Test
+
+on:
+  push:
+    branches: ["test/scout-members-tab-gate-088"]
+    paths:
+      - ".github/workflows/build-scout-members-gate-test.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build isolated Scout test
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          src = Path('Kingshade_Scout_Torn_PDA.user.js')
+          out = Path('Kingshade_Scout_Torn_PDA_v0.8.8_MEMBERS_TAB_GATE_TEST.txt')
+          s = src.read_text(encoding='utf-8')
+
+          s = s.replace('// @version      0.8.7', '// @version      0.8.8', 1)
+          s = s.replace('const VERSION = "0.8.7";', 'const VERSION = "0.8.8";', 1)
+          s = s.replace('// @downloadURL  https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/Kingshade_Scout_Torn_PDA.user.js\n', '', 1)
+          s = s.replace('// @updateURL    https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/Kingshade_Scout_Torn_PDA.user.js\n', '', 1)
+
+          old = '''    function factionMemberLists() {
+        if (!isFactionPath()) return [];
+        return Array.from(document.querySelectorAll(".members-list")).filter(list =>
+            list instanceof HTMLElement && list.querySelector(".table-body")
+        );
+    }
+'''
+          new = '''    function isRankedWarViewActive() {
+        const warList = document.getElementById("faction_war_list_id");
+        if (!warList) return false;
+        const rect = warList.getBoundingClientRect();
+        const style = getComputedStyle(warList);
+        return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+    }
+
+    function factionMemberLists() {
+        if (!isFactionPath() || isRankedWarViewActive()) return [];
+        return Array.from(document.querySelectorAll(".members-list")).filter(list =>
+            list instanceof HTMLElement &&
+            list.querySelector(".table-body") &&
+            !list.closest("#faction_war_list_id")
+        );
+    }
+'''
+          if old not in s:
+              raise SystemExit('factionMemberLists anchor missing')
+          s = s.replace(old, new, 1)
+
+          old = '''    const onRouteChange = () => {
+        clearTimeout(statusTimer);
+        statusTimer = null;
+
+        if (!isFactionPath()) {
+            clearRendered();
+            removePanel();
+        }
+
+        setTimeout(() => {
+            if (!hasFactionMemberList()) {
+                clearRendered();
+                removePanel();
+            }
+            scheduleScan(0);
+            scheduleStatusRefresh(0);
+            startStartupProbe();
+        }, 120);
+    };
+'''
+          new = '''    const onRouteChange = () => {
+        clearTimeout(statusTimer);
+        statusTimer = null;
+
+        if (!isFactionPath() || isRankedWarViewActive()) {
+            clearTimeout(scanTimer);
+            scanTimer = null;
+            clearTimeout(ffRetryTimer);
+            ffRetryTimer = null;
+            clearTimeout(startupProbeTimer);
+            startupProbeTimer = null;
+            abortActiveRequests();
+            clearRendered();
+            removePanel();
+        }
+
+        setTimeout(() => {
+            if (!hasFactionMemberList()) {
+                clearTimeout(scanTimer);
+                scanTimer = null;
+                clearTimeout(statusTimer);
+                statusTimer = null;
+                clearTimeout(ffRetryTimer);
+                ffRetryTimer = null;
+                clearTimeout(startupProbeTimer);
+                startupProbeTimer = null;
+                abortActiveRequests();
+                clearRendered();
+                removePanel();
+                return;
+            }
+            scheduleScan(0);
+            scheduleStatusRefresh(0);
+            startStartupProbe();
+        }, 120);
+    };
+'''
+          if old not in s:
+              raise SystemExit('onRouteChange anchor missing')
+          s = s.replace(old, new, 1)
+
+          # Test-file instruction header required by project workflow.
+          s = '// ERSÄTTA HELA INNEHÅLLET\n' + s
+          out.write_text(s, encoding='utf-8')
+
+      - name: Validate syntax and isolation
+        shell: bash
+        run: |
+          tail -n +2 Kingshade_Scout_Torn_PDA_v0.8.8_MEMBERS_TAB_GATE_TEST.txt > /tmp/scout-test.js
+          node --check /tmp/scout-test.js
+          grep -q 'function isRankedWarViewActive()' Kingshade_Scout_Torn_PDA_v0.8.8_MEMBERS_TAB_GATE_TEST.txt
+          grep -q '!isFactionPath() || isRankedWarViewActive()' Kingshade_Scout_Torn_PDA_v0.8.8_MEMBERS_TAB_GATE_TEST.txt
+          grep -q '!list.closest("#faction_war_list_id")' Kingshade_Scout_Torn_PDA_v0.8.8_MEMBERS_TAB_GATE_TEST.txt
+          ! grep -q '@updateURL' Kingshade_Scout_Torn_PDA_v0.8.8_MEMBERS_TAB_GATE_TEST.txt
+          ! grep -q '@downloadURL' Kingshade_Scout_Torn_PDA_v0.8.8_MEMBERS_TAB_GATE_TEST.txt
+      - name: Commit generated test file
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Kingshade_Scout_Torn_PDA_v0.8.8_MEMBERS_TAB_GATE_TEST.txt
+          git commit -m "Add Scout 0.8.8 members-tab gate test" || exit 0
+          git push
