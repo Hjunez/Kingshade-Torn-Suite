@@ -2,6 +2,19 @@
 
 All notable changes to Kingshade Suite are documented here.
 
+## KS Ranked War DIBS — 2026-08-20 — Release
+
+### KS Torn War Dibs 1.5.91
+- Multi-user verified compliance release.
+- Real Hospital <=2:00 gate and FF 2.00–5.00 eligibility.
+- Shared DIBS/TAKEN/claimant-name/RELEASE through FFScouter Hit Calling.
+- Test simulation/Worker removed; claim polling reduced to 2.5 seconds; API/data disclosure and active-view lifecycle hardened.
+
+### KS FFScouter Call Guard 1.1.2
+- PC/Tampermonkey compliance release with Hospital/FF parity.
+- Deterministic no-flicker rendering retained.
+- No direct Torn API requests; shared claim polling 2.5 seconds.
+
 ## [0.8.7] — 2026-08-18 — Release
 
 ### War Tools timer synchronization

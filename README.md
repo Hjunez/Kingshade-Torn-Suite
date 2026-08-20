@@ -98,6 +98,19 @@ The FFScouter integration uses its documented `/register`, `/check-key`, `/get-s
 - **Traveling:** FFScouter Premium landing/window/method data is shown when available; otherwise the Suite uses clearly marked estimates. Torn does not expose another player's exact arrival timestamp through the Suite's direct Torn API selection.
 - **Abroad:** no countdown because the player is stationary abroad.
 
+## KS Ranked War DIBS
+
+Shared Ranked War target coordination across **Torn PDA** and **FFScouter War Room**.
+
+- **KS Torn War Dibs 1.5.91** — PDA FF/Est, real Hospital countdown, FF 2.00–5.00 and shared DIBS.
+- **KS FFScouter Call Guard 1.1.2** — PC/Tampermonkey War Room DIBS, TAKEN + claimant name and RELEASE.
+- Stable update URLs use the unversioned `.user.js` files.
+- Full guide: [`docs/KS_RANKED_WAR_DIBS.md`](docs/KS_RANKED_WAR_DIBS.md).
+
+**PDA:** `https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs.user.js`
+
+**PC:** `https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_FFScouter_Call_Guard.user.js`
+
 ## Kingshade's Bootlegging Clean 4.1.1
 
 Standalone visual guidance for the Bootlegging crime. It keeps its own version number.
