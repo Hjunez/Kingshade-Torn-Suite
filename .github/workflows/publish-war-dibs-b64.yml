@@ -1,0 +1,82 @@
+name: Publish KS War Dibs exact release
+
+on:
+  push:
+    branches: ['release/ks-war-dibs-2026-08-20']
+    paths: ['.publish/war-dibs/**']
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check staged payload
+        id: ready
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=(torn.01.b64 torn.02.b64 torn.03.b64 torn.04.b64 torn.05.b64 guard.01.b64 guard.02.b64 guard.03.b64)
+          for f in "${expected[@]}"; do
+            [[ -f ".publish/war-dibs/$f" ]] || { echo 'ok=false' >> "$GITHUB_OUTPUT"; exit 0; }
+          done
+          echo 'ok=true' >> "$GITHUB_OUTPUT"
+
+      - name: Assemble exact userscripts
+        if: steps.ready.outputs.ok == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .publish/war-dibs/torn.*.b64 | base64 -d | gzip -dc > KS_Torn_War_Dibs.user.js
+          cat .publish/war-dibs/guard.*.b64 | base64 -d | gzip -dc > KS_FFScouter_Call_Guard.user.js
+          cp KS_Torn_War_Dibs.user.js KS_Torn_War_Dibs_v1.5.91.user.js
+          cp KS_FFScouter_Call_Guard.user.js KS_FFScouter_Call_Guard_v1.1.2.user.js
+          node --check KS_Torn_War_Dibs.user.js
+          node --check KS_FFScouter_Call_Guard.user.js
+          grep -Fq '// @version      1.5.91' KS_Torn_War_Dibs.user.js
+          grep -Fq '// @version      1.1.2' KS_FFScouter_Call_Guard.user.js
+          grep -Fq 'sharedPollMs: 2500' KS_Torn_War_Dibs.user.js
+          grep -Fq 'SHARED_POLL_MS = 2500' KS_FFScouter_Call_Guard.user.js
+          ! grep -Fq 'workers.dev' KS_Torn_War_Dibs.user.js
+          ! grep -Fq 'TEST DIBS' KS_Torn_War_Dibs.user.js
+          ! grep -Fq 'TEST DIBS' KS_FFScouter_Call_Guard.user.js
+
+      - name: Update README and changelog
+        if: steps.ready.outputs.ok == 'true'
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          r=Path('README.md').read_text()
+          marker="## Kingshade's Bootlegging Clean 4.1.1"
+          sec="""## KS Ranked War DIBS\n\nShared Ranked War target coordination across **Torn PDA** and **FFScouter War Room**.\n\n- **KS Torn War Dibs 1.5.91** — PDA FF/Est, real Hospital countdown, FF 2.00–5.00 and shared DIBS.\n- **KS FFScouter Call Guard 1.1.2** — PC/Tampermonkey War Room DIBS, TAKEN + claimant name and RELEASE.\n- Stable update URLs use the unversioned `.user.js` files.\n- Full guide: [`docs/KS_RANKED_WAR_DIBS.md`](docs/KS_RANKED_WAR_DIBS.md).\n\n**PDA:** `https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs.user.js`\n\n**PC:** `https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_FFScouter_Call_Guard.user.js`\n\n"""
+          if '## KS Ranked War DIBS' not in r:
+              r=r.replace(marker,sec+marker,1) if marker in r else r+'\n'+sec
+              Path('README.md').write_text(r)
+          c=Path('CHANGELOG.md').read_text()
+          entry="""## KS Ranked War DIBS — 2026-08-20 — Release\n\n### KS Torn War Dibs 1.5.91\n- Multi-user verified compliance release.\n- Real Hospital <=2:00 gate and FF 2.00–5.00 eligibility.\n- Shared DIBS/TAKEN/claimant-name/RELEASE through FFScouter Hit Calling.\n- Test simulation/Worker removed; claim polling reduced to 2.5 seconds; API/data disclosure and active-view lifecycle hardened.\n\n### KS FFScouter Call Guard 1.1.2\n- PC/Tampermonkey compliance release with Hospital/FF parity.\n- Deterministic no-flicker rendering retained.\n- No direct Torn API requests; shared claim polling 2.5 seconds.\n\n"""
+          if '## KS Ranked War DIBS — 2026-08-20 — Release' not in c:
+              p='# Changelog\n\nAll notable changes to Kingshade Suite are documented here.\n\n'
+              c=p+entry+c[len(p):] if c.startswith(p) else entry+c
+              Path('CHANGELOG.md').write_text(c)
+          PY
+
+      - name: Validate and commit
+        if: steps.ready.outputs.ok == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tools/validate-suite.sh
+          test -f docs/KS_RANKED_WAR_DIBS.md
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add KS_Torn_War_Dibs.user.js KS_Torn_War_Dibs_v1.5.91.user.js KS_FFScouter_Call_Guard.user.js KS_FFScouter_Call_Guard_v1.1.2.user.js README.md CHANGELOG.md docs/KS_RANKED_WAR_DIBS.md
+          git rm -r .publish/war-dibs
+          git rm .github/workflows/publish-war-dibs.yml .github/workflows/publish-war-dibs-b64.yml
+          git commit -m 'release: publish KS Ranked War DIBS'
+          git push origin HEAD:release/ks-war-dibs-2026-08-20
