@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KS Torn War Dibs
 // @namespace    kingshade.torn
-// @version      1.5.128
+// @version      1.5.133
 // @downloadURL  https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs.user.js
 // @updateURL    https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs.user.js
 // @description  Shared Ranked War DIBS with live Hospital countdown, FF 2.00-5.00 gating, Est/FF display and synchronized claims.
@@ -16,9 +16,9 @@
 // ==/UserScript==
 
 /*
- * KS Torn War Dibs v1.5.128 PATCH RELEASE — FF + EST + DIBS ONLY
- * Patch release: v1.5.109 behavior retained; NOT HOSP text removed while FF/Est, Hospital countdown, country gate and shared DIBS remain enabled.
- * Verified PDA FF/Est rendering and name stability retained.
+ * KS Torn War Dibs v1.5.133 PATCH RELEASE
+ * FF / Est separator, Hospital countdown, FF 2.00-5.00 gate and shared DIBS retained.
+ * Country eligibility remains internal; country labels are not shown in DIBS buttons.
  */
 
 (() => {
@@ -26,7 +26,7 @@
 
   const SCRIPT = Object.freeze({
     name: "KS Torn War Dibs",
-    version: "1.5.128",
+    version: "1.5.133",
     instanceKey: "__ksTornWarDibsV1517",
     rowHostPrefix: "ks-twd-v1517-row-",
     panelId: "ks-twd-v1517-panel",
@@ -856,6 +856,15 @@
     return "";
   }
 
+  function explicitCountryFromStatusText(status) {
+    if (!status || typeof status !== "object") return "";
+    const combined = normalizeText([
+      status.details,
+      status.description
+    ].filter(Boolean).join(" "));
+    return normalizeCountryName(combined);
+  }
+
   function countryFromStatusText(status) {
     if (!status || typeof status !== "object") return "";
 
@@ -973,14 +982,20 @@
     }
 
     const factionStatus = tornStatusForTarget(id);
+    const factionState = normalizeText(factionStatus?.state).toLowerCase();
+
+    // If faction status explicitly names a country (e.g. "Hawaiian hospital"),
+    // trust that explicit country even while state=Hospital.
+    const explicitFactionCountry = explicitCountryFromStatusText(factionStatus);
+    if (explicitFactionCountry) return explicitFactionCountry;
+
     const factionCountry = countryFromStatusText(factionStatus);
-    if (factionCountry && normalizeText(factionStatus?.state).toLowerCase() !== "hospital") {
+    if (factionCountry && factionState !== "hospital") {
       return factionCountry;
     }
 
-    // Hospital is the only claimable state; request public basic status when
-    // faction status is not enough to distinguish Torn vs foreign Hospital.
-    if (normalizeText(factionStatus?.state).toLowerCase() === "hospital") {
+    // Generic Hospital without an explicit country is ambiguous; use public basic.
+    if (factionState === "hospital") {
       void fetchPublicBasicStatus(id);
     }
 
@@ -1006,11 +1021,20 @@
     return labels[country] || (country ? country.toUpperCase() : "?");
   }
 
-  function sameCountryForTarget(targetId) {
+  function sameCountryForTarget(targetId, isHospital = false) {
     refreshOwnLocationFromBasic();
 
     const ownCountry = normalizeCountryName(ownLocationState.country);
-    const targetCountry = targetCountryForEligibility(targetId);
+    let targetCountry = targetCountryForEligibility(targetId);
+
+    // Enemy RW targets are not necessarily present in our faction-member status map.
+    // If the actual RW row says Hospital and country is still unknown, explicitly
+    // fetch the target's public basic profile status.
+    if (!targetCountry && isHospital) {
+      void fetchPublicBasicStatus(targetId);
+      const refreshed = publicBasicCachedStatus(targetId);
+      if (refreshed) targetCountry = countryFromStatusText(refreshed);
+    }
 
     if (ownLocationState.traveling) {
       return { known: true, same: false, reason: "self-traveling", ownCountry, targetCountry };
@@ -1432,7 +1456,7 @@
       isHospital: hospital.isHospital,
       seconds: hospital.seconds,
       fairFight: fairFightForTarget(row.id),
-      countryEligibility: sameCountryForTarget(row.id),
+      countryEligibility: sameCountryForTarget(row.id, hospital.isHospital),
       rwPhase: currentRwPhase()
     });
   }
@@ -1839,7 +1863,7 @@
     li.setAttribute(SCRIPT.ffGaugeAttr, "true");
     if (Number.isFinite(ff) && ff > 0) {
       const estText = formatBattleStatsEstimate(entry);
-      li.setAttribute(SCRIPT.ffValueAttr, estText && estText !== "-" ? `${ff.toFixed(2)}\n${estText}` : ff.toFixed(2));
+      li.setAttribute(SCRIPT.ffValueAttr, estText && estText !== "-" ? `${ff.toFixed(2)} / ${estText}` : ff.toFixed(2));
     } else li.removeAttribute(SCRIPT.ffValueAttr);
     li.style.setProperty("--ks-twd-ff-left-px", `${leftPx.toFixed(2)}px`);
     li.style.setProperty("--ks-twd-ff-color", scoutColorForFairFight(entry.fairFight));
@@ -2109,8 +2133,7 @@
     if (decision.state === TARGET_STATE.LOCKED) {
       if (decision.reason === "rw-not-started" || decision.reason === "rw-phase-unverifiable") {
         if (decision.prewarHospital && Number.isFinite(decision.seconds)) {
-          const targetCountry = displayCountryName(decision.countryEligibility?.targetCountry);
-          sub.textContent = `${formatCountdown(decision.seconds) || "HOSP"} · ${targetCountry}`;
+          sub.textContent = formatCountdown(decision.seconds) || "HOSP";
         } else if (!decision.prewarHospital) {
           sub.textContent = "";
         } else {
@@ -2124,8 +2147,8 @@
               : "DIBS locked until Ranked War starts")
           : "DIBS locked: Ranked War start state cannot be verified";
       } else if (decision.reason === "different-country") {
-        sub.textContent = "OTHER COUNTRY";
-        button.title = `DIBS locked: you are in ${decision.countryEligibility?.ownCountry || "unknown"} and target is in ${decision.countryEligibility?.targetCountry || "unknown"}`;
+        sub.textContent = "";
+        button.title = "DIBS locked: target is not in the same country";
       } else if (decision.reason === "self-traveling") {
         sub.textContent = "YOU TRAVEL";
         button.title = "DIBS locked while you are traveling";
@@ -2137,7 +2160,7 @@
       return;
     }
     if (decision.state === TARGET_STATE.UNKNOWN) {
-      sub.textContent = decision.reason === "country-unverifiable" ? "COUNTRY ?" : "UNKNOWN";
+      sub.textContent = decision.reason === "country-unverifiable" ? "" : "UNKNOWN";
       return;
     }
     if (decision.state === TARGET_STATE.UNAVAILABLE) { sub.textContent = ""; return; }
@@ -2161,7 +2184,7 @@
         isHospital: hospital.isHospital,
         seconds: hospital.seconds,
         fairFight: fairFightForTarget(row.id),
-      countryEligibility: sameCountryForTarget(row.id),
+      countryEligibility: sameCountryForTarget(row.id, hospital.isHospital),
       rwPhase: currentRwPhase()
       });
       updateDibsControl(host, decision, sharedClaimForTarget(row.id));
