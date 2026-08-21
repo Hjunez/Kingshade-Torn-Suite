@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KS Torn War Dibs
 // @namespace    kingshade.torn
-// @version      1.5.91
+// @version      1.5.128
 // @downloadURL  https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs.user.js
 // @updateURL    https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs.user.js
 // @description  Shared Ranked War DIBS with live Hospital countdown, FF 2.00-5.00 gating, Est/FF display and synchronized claims.
@@ -16,8 +16,8 @@
 // ==/UserScript==
 
 /*
- * KS Torn War Dibs v1.5.91 COMPLIANCE RELEASE
- * Live only: real Hospital status/countdown, FF 2.00-5.00, shared DIBS/TAKEN/RELEASE.
+ * KS Torn War Dibs v1.5.128 PATCH RELEASE — FF + EST + DIBS ONLY
+ * Patch release: v1.5.109 behavior retained; NOT HOSP text removed while FF/Est, Hospital countdown, country gate and shared DIBS remain enabled.
  * Verified PDA FF/Est rendering and name stability retained.
  */
 
@@ -26,7 +26,7 @@
 
   const SCRIPT = Object.freeze({
     name: "KS Torn War Dibs",
-    version: "1.5.91",
+    version: "1.5.128",
     instanceKey: "__ksTornWarDibsV1517",
     rowHostPrefix: "ks-twd-v1517-row-",
     panelId: "ks-twd-v1517-panel",
@@ -50,9 +50,9 @@
     ffscouterTermsUrl: "https://ffscouter.com/",
     ffscouterPrivacyUrl: "https://ffscouter.com/privacy",
     tornApiOrigin: "https://api.torn.com",
-    tornApiPath: "/v2/faction",
+    tornApiPath: "/v2/faction/50271",
     tornKeyInfoPath: "/v2/key/info",
-    tornCustomKeyUrl: "https://www.torn.com/preferences.php#tab=api?step=addNewKey&title=KS%20Torn%20War%20Dibs&faction=members"
+    tornCustomKeyUrl: "https://www.torn.com/preferences.php#tab=api?step=addNewKey&title=KS%20Torn%20War%20Dibs&faction=members&user=basic"
   });
 
   const CONFIG = Object.freeze({
@@ -99,6 +99,12 @@
     READY: "ready"
   });
 
+  const RW_PHASE = Object.freeze({
+    UNKNOWN: "unknown",
+    PREWAR: "prewar",
+    LIVE: "live"
+  });
+
   const CLAIM_FLOW_STATE = Object.freeze({
     IDLE: "idle",
     CLAIMING: "claiming",
@@ -113,7 +119,6 @@
   });
 
   const STATS_API = Object.freeze({ getStats: "/api/v1/get-stats" });
-  const PDA_TORN_API_KEY = "###PDA-APIKEY###";
 
   if (window[SCRIPT.instanceKey]) return;
   window[SCRIPT.instanceKey] = true;
@@ -154,10 +159,18 @@
   let selfPlayerId = "";
   let selfPlayerName = "";
   let selfIdentitySyncing = false;
+  let tornUserBasicCapability = "unknown"; // unknown | supported | unsupported
   let selfIdentityLastAttemptAt = 0;
+  let apiKeyStorageReady = false;
   let tornStatusLastFetchAt = 0;
   let tornTransportFailureStreak = 0;
   let tornMemberStatus = new Map();
+  let ownLocationState = { country: "", traveling: false, checkedAt: 0 };
+  const publicBasicStatusCache = new Map();
+  const publicBasicStatusPending = new Set();
+  let lastPublicBasicFetchAt = 0;
+  let lastObservedRwStartAtSeconds = 0;
+  let rwLiveConfirmSince = 0;
   let tornClockOffsetsMs = [];
   let pendingTargetId = "";
   let ownClaimMissingReads = 0;
@@ -195,7 +208,7 @@
   }
 
   function rawInjectedPdaTornApiKey() {
-    return validateTornApiKey(PDA_TORN_API_KEY);
+    return "";
   }
 
   function injectedPdaTornApiKey() {
@@ -503,7 +516,8 @@
   }
 
   async function tornApiRequest(path, key) {
-    if (path !== SCRIPT.tornApiPath && path !== SCRIPT.tornKeyInfoPath) {
+    const isPublicUserBasic = /^\/v2\/user\/\d+\/basic$/.test(path);
+    if (path !== SCRIPT.tornApiPath && path !== SCRIPT.tornKeyInfoPath && !isPublicUserBasic) {
       throw new Error("Blocked non-allowlisted Torn API endpoint");
     }
     const apiKey = validateTornApiKey(key);
@@ -520,7 +534,11 @@
     const info = payload?.info && typeof payload.info === "object" ? payload.info : null;
     const id = String(info?.user?.id ?? "").trim();
     if (!/^\d+$/.test(id)) return null;
-    return { playerId: id, playerName: "" };
+
+    return {
+      playerId: id,
+      playerName: ""
+    };
   }
 
   async function fetchSelfIdentity({ force = false } = {}) {
@@ -540,8 +558,10 @@
       if (!identity) return;
       selfPlayerId = identity.playerId;
       selfPlayerName = identity.playerName;
+      void fetchPublicBasicStatus(selfPlayerId);
       reconcileOwnClaimFromShared();
       scanWarRows();
+      updatePanel();
     } catch {} finally {
       selfIdentitySyncing = false;
     }
@@ -811,6 +831,205 @@
   // Torn member status
   // ---------------------------------------------------------------------------
 
+  function normalizeCountryName(value) {
+    const text = normalizeText(value).toLowerCase();
+    if (!text) return "";
+
+    const aliases = [
+      ["mexico", ["mexico", "mexican"]],
+      ["hawaii", ["hawaii", "hawaiian"]],
+      ["south africa", ["south africa", "south african"]],
+      ["japan", ["japan", "japanese"]],
+      ["china", ["china", "chinese"]],
+      ["argentina", ["argentina", "argentinian"]],
+      ["switzerland", ["switzerland", "swiss"]],
+      ["canada", ["canada", "canadian"]],
+      ["united kingdom", ["united kingdom", "british"]],
+      ["uae", ["uae", "united arab emirates", "emirati"]],
+      ["cayman islands", ["cayman islands", "cayman"]],
+      ["torn", ["torn city", "torn"]]
+    ];
+
+    for (const [canonical, variants] of aliases) {
+      if (variants.some(variant => text.includes(variant))) return canonical;
+    }
+    return "";
+  }
+
+  function countryFromStatusText(status) {
+    if (!status || typeof status !== "object") return "";
+
+    const combined = normalizeText([
+      status.details,
+      status.description
+    ].filter(Boolean).join(" "));
+
+    const explicit = normalizeCountryName(combined);
+    if (explicit) return explicit;
+
+    const state = normalizeText(status.state).toLowerCase();
+
+    // Torn's normal city Hospital/Jail/Okay status has no country adjective.
+    // Foreign hospitals expose a country adjective/name in public status text.
+    if (state === "hospital" || state === "jail" || state === "okay") return "torn";
+
+    return "";
+  }
+
+  function publicBasicCachedStatus(playerId) {
+    const id = String(playerId || "");
+    const cached = publicBasicStatusCache.get(id);
+    if (!cached || cached.expiresAt <= nowMs()) return null;
+    return cached.status || null;
+  }
+
+  async function fetchPublicBasicStatus(playerId) {
+    const id = String(playerId || "").trim();
+    if (!validTargetId(id)) return;
+    if (!runtimeActive || !isRuntimeEligible()) return;
+
+    const cached = publicBasicStatusCache.get(id);
+    if (cached?.expiresAt > nowMs()) return;
+    if (publicBasicStatusPending.has(id)) return;
+
+    const waitMs = Math.max(0, 1200 - (nowMs() - lastPublicBasicFetchAt));
+    if (waitMs > 0) {
+      window.setTimeout(() => void fetchPublicBasicStatus(id), waitMs);
+      return;
+    }
+
+    const key = effectiveTornApiKey();
+    if (!key) return;
+
+    publicBasicStatusPending.add(id);
+    lastPublicBasicFetchAt = nowMs();
+
+    try {
+      const result = await tornApiRequest(`/v2/user/${id}/basic`, key);
+      const body = result?.body || {};
+      const status = body?.profile?.status;
+
+      if (!result?.ok || body?.error || !status || typeof status !== "object") {
+        publicBasicStatusCache.set(id, { status: null, expiresAt: nowMs() + 10000 });
+        return;
+      }
+
+      tornUserBasicCapability = "supported";
+
+      publicBasicStatusCache.set(id, {
+        status: {
+          state: normalizeText(status.state),
+          description: normalizeText(status.description),
+          details: normalizeText(status.details),
+          until: Number(status.until) || 0
+        },
+        expiresAt: nowMs() + 20000
+      });
+
+      if (id === String(selfPlayerId || "")) refreshOwnLocationFromBasic();
+      scanWarRows();
+      updatePanel();
+    } catch {
+      publicBasicStatusCache.set(id, { status: null, expiresAt: nowMs() + 10000 });
+    } finally {
+      publicBasicStatusPending.delete(id);
+    }
+  }
+
+  function refreshOwnLocationFromBasic() {
+    const id = String(selfPlayerId || "");
+
+    // Transient SPA/key-info gaps are not evidence that the previously verified
+    // country became unknown. Preserve the last verified state and self-heal.
+    if (!validTargetId(id)) {
+      if (effectiveTornApiKey() && !selfIdentitySyncing) void fetchSelfIdentity();
+      return;
+    }
+
+    const status = publicBasicCachedStatus(id);
+    if (!status) {
+      void fetchPublicBasicStatus(id);
+      return;
+    }
+
+    const nextCountry = countryFromStatusText(status);
+    if (!nextCountry) return;
+
+    const state = normalizeText(status.state).toLowerCase();
+    ownLocationState = {
+      country: nextCountry,
+      traveling: state === "traveling",
+      checkedAt: nowMs()
+    };
+  }
+
+  function targetCountryForEligibility(targetId) {
+    const id = String(targetId || "");
+
+    const publicStatus = publicBasicCachedStatus(id);
+    if (publicStatus) {
+      const country = countryFromStatusText(publicStatus);
+      if (country) return country;
+    }
+
+    const factionStatus = tornStatusForTarget(id);
+    const factionCountry = countryFromStatusText(factionStatus);
+    if (factionCountry && normalizeText(factionStatus?.state).toLowerCase() !== "hospital") {
+      return factionCountry;
+    }
+
+    // Hospital is the only claimable state; request public basic status when
+    // faction status is not enough to distinguish Torn vs foreign Hospital.
+    if (normalizeText(factionStatus?.state).toLowerCase() === "hospital") {
+      void fetchPublicBasicStatus(id);
+    }
+
+    return publicStatus ? countryFromStatusText(publicStatus) : "";
+  }
+
+  function displayCountryName(value) {
+    const country = normalizeCountryName(value);
+    const labels = {
+      "torn": "Torn",
+      "uae": "UAE",
+      "united kingdom": "UK",
+      "cayman islands": "Cayman",
+      "south africa": "S. Africa",
+      "switzerland": "Swiss",
+      "argentina": "Argentina",
+      "canada": "Canada",
+      "china": "China",
+      "japan": "Japan",
+      "hawaii": "Hawaii",
+      "mexico": "Mexico"
+    };
+    return labels[country] || (country ? country.toUpperCase() : "?");
+  }
+
+  function sameCountryForTarget(targetId) {
+    refreshOwnLocationFromBasic();
+
+    const ownCountry = normalizeCountryName(ownLocationState.country);
+    const targetCountry = targetCountryForEligibility(targetId);
+
+    if (ownLocationState.traveling) {
+      return { known: true, same: false, reason: "self-traveling", ownCountry, targetCountry };
+    }
+
+    if (!ownCountry || !targetCountry) {
+      return { known: false, same: false, reason: "country-unverifiable", ownCountry, targetCountry };
+    }
+
+    return {
+      known: true,
+      same: ownCountry === targetCountry,
+      reason: ownCountry === targetCountry ? "same-country" : "different-country",
+      ownCountry,
+      targetCountry
+    };
+  }
+
+
   function setTornStatusState(state, message, count = tornMemberStatus.size) {
     tornStatusState = { state: String(state || "unknown"), message: normalizeText(message) || "Torn: unknown", count: Number.isInteger(count) && count >= 0 ? count : 0 };
     updatePanel();
@@ -824,7 +1043,12 @@
       const id = String(member?.id ?? member?.player_id ?? "");
       if (!validTargetId(id)) continue;
       const status = member?.status || {};
-      map.set(id, { state: normalizeText(status?.state), description: normalizeText(status?.description), until: Number(status?.until) || 0 });
+      map.set(id, {
+        state: normalizeText(status?.state),
+        description: normalizeText(status?.description),
+        details: normalizeText(status?.details),
+        until: Number(status?.until) || 0
+      });
     }
     return map;
   }
@@ -840,6 +1064,7 @@
 
   async function fetchTornStatuses({ force = false } = {}) {
     if (!runtimeActive || !isRuntimeEligible() || !bridgeMounted || !isWarPanelPresent()) return;
+    refreshOwnLocationFromBasic();
     const key = effectiveTornApiKey();
     if (!key || tornStatusSyncing || nowMs() < tornStatusBackoffUntil) return;
     if (!force && tornStatusLastFetchAt > 0 && nowMs() - tornStatusLastFetchAt < CONFIG.tornStatusPollMs) return;
@@ -987,25 +1212,199 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Ranked War countdown reader restored from the PDA-verified v1.5.88 baseline.
+  // It handles Torn-generated ::before/::after content and split DD:HH:MM:SS nodes.
+  function activeRankedWarTab() {
+    const root = document.getElementById("faction_war_list_id");
+    if (!root) return null;
+    for (const child of Array.from(root.children || [])) {
+      if (!(child instanceof HTMLElement) || child.tagName !== "LI") continue;
+      if (child.classList.contains("act") && child.getAttribute("role") === "button") return child;
+    }
+    return null;
+  }
+
+  function stripGeneratedContent(value) {
+    let text = normalizeText(value);
+    if (!text || text === "none" || text === "normal") return "";
+    if ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'"))) {
+      text = text.slice(1, -1);
+    }
+    return normalizeText(text.replace(/\\A/gi, " ").replace(/\\(["'\\])/g, "$1"));
+  }
+
+  function parsePreWarCountdownSeconds(text) {
+    const value = normalizeText(text);
+    // Torn's Ranked War pre-start clock is DD:HH:MM:SS. Deliberately do NOT
+    // accept HH:MM:SS here: on PDA the day prefix may be generated separately,
+    // and accepting the truncated remainder caused a multi-day war to look minutes away.
+    const match = value.match(/(?:^|[^\d:])(\d{1,3}):([0-2]\d):([0-5]\d):([0-5]\d)(?![\d:])/);
+    if (!match) return null;
+    const days = Number(match[1]);
+    const hours = Number(match[2]);
+    const minutes = Number(match[3]);
+    const seconds = Number(match[4]);
+    if (!Number.isInteger(days) || !Number.isInteger(hours) || !Number.isInteger(minutes) || !Number.isInteger(seconds)) return null;
+    if (hours > 23 || minutes > 59 || seconds > 59) return null;
+    const total = days * 86400 + hours * 3600 + minutes * 60 + seconds;
+    return Number.isFinite(total) && total >= 0 ? total : null;
+  }
+
+  function threePartClock(text) {
+    const value = normalizeText(text);
+    const match = value.match(/(?:^|[^\d:])([0-2]\d):([0-5]\d):([0-5]\d)(?![\d:])/);
+    return match ? `${match[1]}:${match[2]}:${match[3]}` : "";
+  }
+
+  function simpleDayPrefix(text) {
+    const value = stripGeneratedContent(text);
+    const match = value.match(/(?:^|[^\d])(\d{1,3}):?(?:[^\d]|$)/);
+    return match ? match[1] : "";
+  }
+
+  function safePseudoContent(element, pseudo) {
+    if (!(element instanceof Element)) return "";
+    try {
+      return stripGeneratedContent(getComputedStyle(element, pseudo).content);
+    } catch {
+      return "";
+    }
+  }
+
+  function candidateCountdownStrings(element) {
+    if (!(element instanceof Element)) return [];
+    const values = [];
+    const add = value => {
+      const text = normalizeText(value);
+      if (text && !values.includes(text)) values.push(text);
+    };
+
+    const text = normalizeText(element.textContent);
+    const innerText = element instanceof HTMLElement ? normalizeText(element.innerText) : "";
+    const before = safePseudoContent(element, "::before");
+    const after = safePseudoContent(element, "::after");
+
+    add(text);
+    add(innerText);
+    add(`${before}${text}${after}`);
+    add(`${before}${innerText}${after}`);
+    add(`${before} ${text} ${after}`);
+
+    const clock = threePartClock(text) || threePartClock(innerText);
+    const beforeDay = simpleDayPrefix(before);
+    const afterDay = simpleDayPrefix(after);
+    if (clock && beforeDay) add(`${beforeDay}:${clock}`);
+    if (clock && afterDay) add(`${afterDay}:${clock}`);
+
+    const children = Array.from(element.children || []).slice(0, 12);
+    const childTexts = children.map(child => normalizeText(child.textContent)).filter(Boolean);
+    for (let i = 0; i + 1 < childTexts.length; i += 1) {
+      const day = childTexts[i].match(/^\d{1,3}:?$/)?.[0]?.replace(/:$/, "") || "";
+      const childClock = threePartClock(childTexts[i + 1]);
+      if (day && childClock) add(`${day}:${childClock}`);
+    }
+
+    if (childTexts.length >= 4) {
+      for (let i = 0; i + 3 < childTexts.length; i += 1) {
+        const parts = childTexts.slice(i, i + 4).map(value => value.match(/^\d{1,3}$/)?.[0] || "");
+        if (parts.every(Boolean)) add(parts.join(":"));
+      }
+    }
+
+    return values;
+  }
+
+  function readRankedWarCountdownSeconds(active) {
+    if (!(active instanceof Element)) return null;
+    const nodes = [active, ...Array.from(active.querySelectorAll("*")).slice(0, 220)];
+    for (const node of nodes) {
+      for (const candidate of candidateCountdownStrings(node)) {
+        const seconds = parsePreWarCountdownSeconds(candidate);
+        if (Number.isFinite(seconds)) return seconds;
+      }
+    }
+    return null;
+  }
+
+  function currentRwPhase() {
+    if (!isWarPanelPresent()) {
+      rwLiveConfirmSince = 0;
+      return { phase: RW_PHASE.UNKNOWN, runwaySeconds: null };
+    }
+
+    const active = activeRankedWarTab();
+    if (!active) {
+      rwLiveConfirmSince = 0;
+      return { phase: RW_PHASE.UNKNOWN, runwaySeconds: null };
+    }
+
+    const runwaySeconds = readRankedWarCountdownSeconds(active);
+    const now = Math.floor(getTornNowMs() / 1000);
+
+    if (Number.isFinite(runwaySeconds) && runwaySeconds > 0) {
+      lastObservedRwStartAtSeconds = now + runwaySeconds;
+      rwLiveConfirmSince = 0;
+      return { phase: RW_PHASE.PREWAR, runwaySeconds };
+    }
+
+    // Once a future start was observed, transient SPA/render gaps may never
+    // unlock DIBS before that observed start time has actually passed.
+    if (lastObservedRwStartAtSeconds > now) {
+      rwLiveConfirmSince = 0;
+      return {
+        phase: RW_PHASE.PREWAR,
+        runwaySeconds: Math.max(0, lastObservedRwStartAtSeconds - now)
+      };
+    }
+
+    // No verified countdown has ever been seen: fail closed.
+    if (!lastObservedRwStartAtSeconds) {
+      rwLiveConfirmSince = 0;
+      return { phase: RW_PHASE.UNKNOWN, runwaySeconds: null };
+    }
+
+    // After the observed start, require a short stable no-countdown window
+    // before promoting to LIVE to avoid one-frame boundary races.
+    if (!rwLiveConfirmSince) rwLiveConfirmSince = nowMs();
+    if (nowMs() - rwLiveConfirmSince < 3000) {
+      return { phase: RW_PHASE.UNKNOWN, runwaySeconds: 0 };
+    }
+
+    return { phase: RW_PHASE.LIVE, runwaySeconds: 0 };
+  }
+
   // Pure target decision engine
   // ---------------------------------------------------------------------------
 
-  function classifyLiveTargetState({ playerId, ownTargetId, isHospital, seconds, fairFight }) {
+  function classifyLiveTargetState({ playerId, ownTargetId, isHospital, seconds, fairFight, countryEligibility, rwPhase }) {
     const ff = Number.isFinite(fairFight) ? Number(fairFight) : null;
     if (ownTargetId) {
       if (ownTargetId === playerId) return { state: TARGET_STATE.CLAIMED, seconds, fairFight: ff, reason: "active-own-dibs", mode: "live" };
       return { state: TARGET_STATE.BLOCKED, seconds, fairFight: ff, reason: "another-active-dibs", mode: "live" };
     }
+    if (rwPhase?.phase !== RW_PHASE.LIVE) {
+      return {
+        state: TARGET_STATE.LOCKED,
+        seconds: isHospital ? seconds : null,
+        fairFight: ff,
+        reason: rwPhase?.phase === RW_PHASE.PREWAR ? "rw-not-started" : "rw-phase-unverifiable",
+        mode: "live",
+        rwPhase,
+        prewarHospital: !!isHospital
+      };
+    }
     if (!isHospital) return { state: TARGET_STATE.UNAVAILABLE, seconds: null, fairFight: ff, reason: "not-hospital", mode: "live" };
     if (seconds === null) return { state: TARGET_STATE.UNKNOWN, seconds: null, fairFight: ff, reason: "hospital-timer-unverifiable", mode: "live" };
     if (seconds > CONFIG.gateSeconds) return { state: TARGET_STATE.LOCKED, seconds, fairFight: ff, reason: "hospital-too-early", mode: "live" };
-    if (ff === null) return { state: TARGET_STATE.UNKNOWN, seconds, fairFight: null, reason: "fair-fight-unverifiable", mode: "live" };
+    if (!countryEligibility?.known) return { state: TARGET_STATE.UNKNOWN, seconds, fairFight: ff, reason: "country-unverifiable", mode: "live", countryEligibility };
+    if (!countryEligibility.same) return { state: TARGET_STATE.LOCKED, seconds, fairFight: ff, reason: countryEligibility.reason, mode: "live", countryEligibility };
+    if (ff === null) return { state: TARGET_STATE.UNKNOWN, seconds, fairFight: null, reason: "fair-fight-unverifiable", mode: "live", countryEligibility };
     if (ff < CONFIG.minFairFight) return { state: TARGET_STATE.LOCKED, seconds, fairFight: ff, reason: "fair-fight-too-low", mode: "live" };
     if (ff > CONFIG.maxFairFight) return { state: TARGET_STATE.LOCKED, seconds, fairFight: ff, reason: "fair-fight-too-high", mode: "live" };
     return { state: TARGET_STATE.READY, seconds, fairFight: ff, reason: "hospital-window-and-fair-fight-open", mode: "live" };
   }
 
-  function classifyTargetState({ playerId, ownClaim, isHospital, seconds, fairFight }) {
+  function classifyTargetState({ playerId, ownClaim, isHospital, seconds, fairFight, countryEligibility, rwPhase }) {
     if (ownClaim) {
       if (ownClaim.targetId === playerId) {
         return { state: TARGET_STATE.CLAIMED, seconds, fairFight, reason: "active-own-dibs", mode: "live" };
@@ -1017,7 +1416,9 @@
       ownTargetId: "",
       isHospital,
       seconds,
-      fairFight
+      fairFight,
+      countryEligibility,
+      rwPhase
     });
   }
 
@@ -1030,7 +1431,9 @@
       ownClaim: currentOwnClaim(),
       isHospital: hospital.isHospital,
       seconds: hospital.seconds,
-      fairFight: fairFightForTarget(row.id)
+      fairFight: fairFightForTarget(row.id),
+      countryEligibility: sameCountryForTarget(row.id),
+      rwPhase: currentRwPhase()
     });
   }
 
@@ -1052,6 +1455,9 @@
     const targetId = String(playerId || "");
     if (!runtimeActive || !isRuntimeEligible() || sharedWriteBusy || !sharedApiKey || !validTargetId(targetId)) return;
     if (currentOwnClaim() || sharedClaimForTarget(targetId)) return;
+    const rwPhase = currentRwPhase();
+    if (rwPhase.phase !== RW_PHASE.LIVE) { scanWarRows(); return; }
+
     const eligibility = currentDecisionForTarget(targetId);
     if (!eligibility || eligibility.state !== TARGET_STATE.READY) { scanWarRows(); return; }
 
@@ -1205,7 +1611,7 @@
         color:var(--ks-twd-est-fg,#d1d5db);
         font:700 11px/20px Arial,sans-serif;
         text-align:center;
-        white-space:nowrap;
+        white-space:pre-line;
         overflow:hidden;
       }
       [${SCRIPT.layoutRootAttr}="true"] .white-grad > .attack {
@@ -1258,7 +1664,7 @@
         content:"";
         position:absolute;
         top:1px;
-        left:var(--ks-twd-ff-left-px,58px);
+        left:var(--ks-twd-ff-left-px,52px);
         width:0;
         height:0;
         z-index:12;
@@ -1272,16 +1678,18 @@
       [${SCRIPT.layoutRootAttr}="true"] ul.members-list > li.enemy[${SCRIPT.ffGaugeAttr}="true"][${SCRIPT.ffValueAttr}]::after {
         content:attr(${SCRIPT.ffValueAttr});
         position:absolute;
-        top:12px;
+        top:7px;
         left:var(--ks-twd-ff-left-px,58px);
         transform:translateX(-50%);
         z-index:13;
-        min-width:22px;
+        width:30px;
+        min-width:30px;
+        max-width:30px;
         padding:1px 3px;
         border-radius:3px;
         background:rgba(15,23,42,.92);
         color:var(--ks-twd-ff-color,#d1d5db);
-        font:700 8px/10px Arial,sans-serif;
+        font:700 7px/8px Arial,sans-serif;
         text-align:center;
         white-space:nowrap;
         box-shadow:0 1px 2px rgba(0,0,0,.65);
@@ -1301,34 +1709,37 @@
         }
         [${SCRIPT.layoutRootAttr}="true"] .white-grad > .level,
         [${SCRIPT.layoutRootAttr}="true"] ul.members-list > li.enemy > .level {
-          width:39px !important;
-          min-width:39px !important;
-          max-width:39px !important;
+          display:none !important;
+          width:0 !important;
+          min-width:0 !important;
+          max-width:0 !important;
           padding:0 !important;
-          box-sizing:border-box !important;
+          margin:0 !important;
+          border:0 !important;
+          overflow:hidden !important;
         }
         [${SCRIPT.layoutRootAttr}="true"] .white-grad > .points,
         [${SCRIPT.layoutRootAttr}="true"] ul.members-list > li.enemy > .points {
-          width:40px !important;
-          min-width:40px !important;
-          max-width:40px !important;
+          width:53px !important;
+          min-width:53px !important;
+          max-width:53px !important;
           padding:0 !important;
           box-sizing:border-box !important;
         }
         [${SCRIPT.layoutRootAttr}="true"] .white-grad > .status,
         [${SCRIPT.layoutRootAttr}="true"] ul.members-list > li.enemy > .status {
-          width:46px !important;
-          min-width:46px !important;
-          max-width:46px !important;
+          width:59px !important;
+          min-width:59px !important;
+          max-width:59px !important;
           padding:0 !important;
           box-sizing:border-box !important;
           overflow:hidden !important;
         }
         [${SCRIPT.layoutRootAttr}="true"] .white-grad > .attack,
         [${SCRIPT.layoutRootAttr}="true"] ul.members-list > li.enemy > .attack {
-          width:56px !important;
-          min-width:56px !important;
-          max-width:56px !important;
+          width:69px !important;
+          min-width:69px !important;
+          max-width:69px !important;
           padding:0 !important;
           box-sizing:border-box !important;
         }
@@ -1426,8 +1837,10 @@
     const clamped = Math.max(33, Math.min(98, percent));
     const leftPx = 6 + (104 * clamped / 100);
     li.setAttribute(SCRIPT.ffGaugeAttr, "true");
-    if (Number.isFinite(ff) && ff > 0) li.setAttribute(SCRIPT.ffValueAttr, ff.toFixed(2));
-    else li.removeAttribute(SCRIPT.ffValueAttr);
+    if (Number.isFinite(ff) && ff > 0) {
+      const estText = formatBattleStatsEstimate(entry);
+      li.setAttribute(SCRIPT.ffValueAttr, estText && estText !== "-" ? `${ff.toFixed(2)}\n${estText}` : ff.toFixed(2));
+    } else li.removeAttribute(SCRIPT.ffValueAttr);
     li.style.setProperty("--ks-twd-ff-left-px", `${leftPx.toFixed(2)}px`);
     li.style.setProperty("--ks-twd-ff-color", scoutColorForFairFight(entry.fairFight));
   }
@@ -1618,6 +2031,9 @@
           button { box-sizing:border-box; display:block; width:84%; min-width:0; height:28px; min-height:28px; margin:3px auto 0; padding:2px 1px; border:1px solid #718096; border-radius:6px; background:#1a202c; color:#e2e8f0; font:900 7px/1.1 Arial,sans-serif; text-align:center; touch-action:manipulation; overflow:hidden; -webkit-tap-highlight-color:transparent; }
           button.ready { border-color:#38a169; background:#22543d; color:#f0fff4; }
           button.locked { border-color:#975a16; background:#744210; color:#fefcbf; }
+          button.prewar { border-color:#5f6875; background:#3b4048; color:#c5ccd5; filter:saturate(.35); }
+          button.prewar:disabled { opacity:.72; }
+          button.prewar .sub { color:#b8c0ca; }
           button.unknown { border-color:#9b2c2c; background:#742a2a; color:#fff5f5; }
           button.unavailable { border-color:#4a5568; background:#2d3748; color:#cbd5e0; }
           button.claimed { border-color:#3182ce; background:#2a4365; color:#ebf8ff; }
@@ -1671,7 +2087,10 @@
       button.className = "shared"; button.dataset.state = "shared"; button.disabled = true; label.textContent = "TAKEN"; sub.textContent = extraCount > 0 ? `${firstName} +${extraCount}` : firstName; return;
     }
 
-    button.className = decision.state;
+    button.className =
+      decision.reason === "rw-not-started" || decision.reason === "rw-phase-unverifiable"
+        ? "prewar"
+        : decision.state;
     button.dataset.state = decision.state;
     label.textContent = "DIBS";
 
@@ -1688,12 +2107,40 @@
 
     button.disabled = true;
     if (decision.state === TARGET_STATE.LOCKED) {
-      if (decision.reason === "fair-fight-too-low" || decision.reason === "fair-fight-too-high") sub.textContent = Number.isFinite(decision.fairFight) ? `FF${Number(decision.fairFight).toFixed(1)}` : "LOCKED";
-      else sub.textContent = formatCountdown(decision.seconds) || "LOCKED";
+      if (decision.reason === "rw-not-started" || decision.reason === "rw-phase-unverifiable") {
+        if (decision.prewarHospital && Number.isFinite(decision.seconds)) {
+          const targetCountry = displayCountryName(decision.countryEligibility?.targetCountry);
+          sub.textContent = `${formatCountdown(decision.seconds) || "HOSP"} · ${targetCountry}`;
+        } else if (!decision.prewarHospital) {
+          sub.textContent = "";
+        } else {
+          sub.textContent = "HOSP";
+        }
+
+        const runway = decision.rwPhase?.runwaySeconds;
+        button.title = decision.reason === "rw-not-started"
+          ? (Number.isFinite(runway)
+              ? `DIBS locked until Ranked War starts · ${formatCountdown(runway)} remaining`
+              : "DIBS locked until Ranked War starts")
+          : "DIBS locked: Ranked War start state cannot be verified";
+      } else if (decision.reason === "different-country") {
+        sub.textContent = "OTHER COUNTRY";
+        button.title = `DIBS locked: you are in ${decision.countryEligibility?.ownCountry || "unknown"} and target is in ${decision.countryEligibility?.targetCountry || "unknown"}`;
+      } else if (decision.reason === "self-traveling") {
+        sub.textContent = "YOU TRAVEL";
+        button.title = "DIBS locked while you are traveling";
+      } else if (decision.reason === "fair-fight-too-low" || decision.reason === "fair-fight-too-high") {
+        sub.textContent = Number.isFinite(decision.fairFight) ? `FF${Number(decision.fairFight).toFixed(1)}` : "LOCKED";
+      } else {
+        sub.textContent = formatCountdown(decision.seconds) || "LOCKED";
+      }
       return;
     }
-    if (decision.state === TARGET_STATE.UNKNOWN) { sub.textContent = "UNKNOWN"; return; }
-    if (decision.state === TARGET_STATE.UNAVAILABLE) { sub.textContent = "NOT HOSP"; return; }
+    if (decision.state === TARGET_STATE.UNKNOWN) {
+      sub.textContent = decision.reason === "country-unverifiable" ? "COUNTRY ?" : "UNKNOWN";
+      return;
+    }
+    if (decision.state === TARGET_STATE.UNAVAILABLE) { sub.textContent = ""; return; }
     sub.textContent = "LOCKED";
   }
 
@@ -1713,7 +2160,9 @@
         ownClaim: currentOwnClaim(),
         isHospital: hospital.isHospital,
         seconds: hospital.seconds,
-        fairFight: fairFightForTarget(row.id)
+        fairFight: fairFightForTarget(row.id),
+      countryEligibility: sameCountryForTarget(row.id),
+      rwPhase: currentRwPhase()
       });
       updateDibsControl(host, decision, sharedClaimForTarget(row.id));
     }
@@ -1774,6 +2223,8 @@
         <div class="status-grid">
           <div class="status-item" data-role="shared-item"><span class="dot"></span><span class="status" data-role="status">Shared: loading…</span></div>
           <div class="status-item" data-role="torn-item"><span class="dot"></span><span class="status" data-role="torn-status">Torn: loading…</span></div>
+          <div class="status-item" data-role="rw-item"><span class="dot"></span><span class="status" data-role="rw-status">DIBS: checking RW…</span></div>
+          <div class="status-item" data-role="country-item"><span class="dot"></span><span class="status" data-role="country-status">Country: checking…</span></div>
         </div>
         <div class="controls">
           <button type="button" data-role="key">FFScouter key</button><span class="sep">·</span>
@@ -1825,13 +2276,63 @@
     return true;
   }
 
+  function formatRwRunway(totalSeconds) {
+    const value = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+    const days = Math.floor(value / 86400);
+    const hours = Math.floor((value % 86400) / 3600);
+    const minutes = Math.floor((value % 3600) / 60);
+    const seconds = value % 60;
+
+    if (days > 0) return `${days}d ${hours}h ${minutes}m ${seconds}s`;
+    if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+    return `${minutes}m ${seconds}s`;
+  }
+
   function updatePanel() {
     const host = document.getElementById(SCRIPT.panelId);
     if (!host?.shadowRoot) return;
     const $ = role => host.shadowRoot.querySelector(`[data-role='${role}']`);
-    const sharedItem = $("shared-item"); const tornItem = $("torn-item");
+    const sharedItem = $("shared-item"); const tornItem = $("torn-item"); const rwItem = $("rw-item"); const countryItem = $("country-item");
     if (sharedItem) sharedItem.dataset.state = sharedStatus.state;
     if (tornItem) tornItem.dataset.state = tornStatusState.state;
+
+    const rwState = currentRwPhase();
+    if (rwItem) {
+      rwItem.dataset.state = rwState.phase === RW_PHASE.LIVE
+        ? "online"
+        : (rwState.phase === RW_PHASE.PREWAR ? "idle" : "error");
+    }
+    if ($("rw-status")) {
+      if (rwState.phase === RW_PHASE.LIVE) {
+        $("rw-status").textContent = "DIBS: LIVE";
+        $("rw-status").title = "Ranked War is live";
+      } else if (rwState.phase === RW_PHASE.PREWAR) {
+        $("rw-status").textContent = Number.isFinite(rwState.runwaySeconds)
+          ? `DIBS: LOCKED · RW ${formatRwRunway(rwState.runwaySeconds)}`
+          : "DIBS: LOCKED · PRE-WAR";
+        $("rw-status").title = "DIBS remains disabled until Ranked War starts";
+      } else {
+        $("rw-status").textContent = "DIBS: LOCKED · RW ?";
+        $("rw-status").title = "Ranked War start state cannot be verified; DIBS remains disabled";
+      }
+    }
+    if (countryItem) {
+      const ownCountry = displayCountryName(ownLocationState.country);
+      const verified = ownLocationState.checkedAt > 0 && ownCountry !== "?";
+      countryItem.dataset.state = verified ? "online" : "idle";
+
+      if ($("country-status")) {
+        if (verified) {
+          $("country-status").textContent = ownLocationState.traveling
+            ? `Country: traveling → ${ownCountry}`
+            : `Country: ${ownCountry}`;
+          $("country-status").title = "Verified from Torn /user/{id}/basic status";
+        } else {
+          $("country-status").textContent = "Country: checking…";
+          $("country-status").title = "Waiting for verified Torn /user/{id}/basic status";
+        }
+      }
+    }
     if ($("status")) { $("status").textContent = sharedStatus.message; $("status").title = sharedStatus.message; }
     if ($("torn-status")) { $("torn-status").textContent = tornStatusState.message; $("torn-status").title = tornStatusState.message; }
     if ($("key")) $("key").textContent = sharedApiKey ? "Change FF key" : "Set FFScouter key";
@@ -1865,7 +2366,9 @@
     if (!key) { setTornStatusState("error", "Torn: invalid key format"); return; }
     if (!(await saveSecureTornApiKey(key))) { setTornStatusState("error", "Torn: key could not be stored securely"); return; }
     storedTornApiKey = key;
-    selfPlayerId = ""; selfPlayerName = ""; selfIdentityLastAttemptAt = 0;
+    selfPlayerId = ""; selfPlayerName = ""; tornUserBasicCapability = "unknown"; selfIdentityLastAttemptAt = 0;
+    ownLocationState = { country: "", traveling: false, checkedAt: 0 };
+    publicBasicStatusCache.clear();
     input.value = "";
     host.shadowRoot.querySelector("[data-role='torn-key-editor']")?.classList.remove("open");
     tornMemberStatus = new Map(); tornStatusLastFetchAt = 0;
@@ -1888,7 +2391,9 @@
     if (!storedTornApiKey || !window.confirm("Forget the saved Torn API key on this device?")) return;
     registerTrustedInteraction();
     if (!(await deleteSecureTornApiKey())) { setTornStatusState("error", "Torn: saved key could not be removed"); return; }
-    storedTornApiKey = ""; tornMemberStatus = new Map(); tornStatusLastFetchAt = 0; selfPlayerId = ""; selfPlayerName = ""; selfIdentityLastAttemptAt = 0;
+    storedTornApiKey = ""; tornMemberStatus = new Map(); tornStatusLastFetchAt = 0; selfPlayerId = ""; selfPlayerName = ""; tornUserBasicCapability = "unknown"; selfIdentityLastAttemptAt = 0;
+    ownLocationState = { country: "", traveling: false, checkedAt: 0 };
+    publicBasicStatusCache.clear();
     setTornStatusState("key-required", "Torn: API key required", 0); scanWarRows();
   }
 
@@ -1896,13 +2401,20 @@
     let vaultFailed = false;
     try { [sharedApiKey, storedTornApiKey] = await Promise.all([loadSecureApiKey(), loadSecureTornApiKey()]); }
     catch { sharedApiKey = ""; storedTornApiKey = ""; vaultFailed = true; }
+
+    apiKeyStorageReady = true;
+
     if (sharedApiKey) setSharedStatus("ready", "Shared: saved key loaded", 0); else setSharedStatus(vaultFailed ? "error" : "key-required", vaultFailed ? "Shared: secure storage unavailable" : "Shared: key required", 0);
     if (effectiveTornApiKey()) setTornStatusState("ready", injectedPdaTornApiKey() ? "Torn: PDA key loaded" : "Torn: saved key loaded", 0); else setTornStatusState(vaultFailed ? "error" : "key-required", vaultFailed ? "Torn: secure storage unavailable" : "Torn: API key required", 0);
     updatePanel();
+
     if (runtimeActive) {
       if (sharedApiKey) { void fetchSharedClaims(); void fetchFairFightStats({ force: true }); }
-      if (effectiveTornApiKey()) { void fetchTornStatuses({ force: true }); void fetchSelfIdentity({ force: true }); }
+      if (effectiveTornApiKey()) {
+        void fetchTornStatuses({ force: true });
+        void fetchSelfIdentity({ force: true });
       }
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1998,7 +2510,15 @@
     rowRefreshTimer = window.setInterval(() => { if (runtimeActive && isRuntimeEligible()) scanWarRows(); }, CONFIG.rowRefreshMs);
     sharedPollTimer = window.setInterval(() => { if (sharedApiKey && runtimeActive && isRuntimeEligible()) void fetchSharedClaims(); }, CONFIG.sharedPollMs);
     fairFightTimer = window.setInterval(() => { if (sharedApiKey && runtimeActive && isRuntimeEligible()) void fetchFairFightStats(); }, CONFIG.fairFightRefreshMs);
-    tornStatusTimer = window.setInterval(() => { if (effectiveTornApiKey() && runtimeActive && isRuntimeEligible()) void fetchTornStatuses(); }, CONFIG.tornStatusPollMs);
+    tornStatusTimer = window.setInterval(() => {
+      if (!effectiveTornApiKey() || !runtimeActive || !isRuntimeEligible()) return;
+      void fetchTornStatuses();
+      if (!selfPlayerId) void fetchSelfIdentity();
+      else {
+        refreshOwnLocationFromBasic();
+        void fetchPublicBasicStatus(selfPlayerId);
+      }
+    }, CONFIG.tornStatusPollMs);
     routeHeartbeatTimer = window.setInterval(() => {
       if (!runtimeActive || !isRuntimeEligible()) return;
       if (isWarPanelPresent()) { if (!bridgeMounted) mountBridge(); else positionPanel(document.getElementById(SCRIPT.panelId)); }
@@ -2020,6 +2540,10 @@
     runtimeGeneration += 1;
     if (isWarPanelPresent()) mountBridge();
     startRuntimeTimers();
+
+    if (apiKeyStorageReady && effectiveTornApiKey()) {
+      void fetchSelfIdentity({ force: true });
+    }
   }
 
   function destroy() {
