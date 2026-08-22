@@ -1,0 +1,76 @@
+KSBA v5.2.6 — BUG REPORT TEMPLATE
+
+RESULT
+[ ] PASS
+[ ] PASS WITH NOTES
+[ ] FAIL
+
+TESTER
+Torn name or nickname:
+Device model:
+Android version:
+Torn PDA version:
+Screen orientation:
+Approximate local time of problem:
+
+SCRIPT SETUP
+Installed script version: 5.2.6
+Injection time: START / OTHER
+Other Bootlegging Advisor versions enabled: YES / NO
+Other scripts enabled that may affect Crimes or page layout:
+
+WHERE DID IT HAPPEN?
+[ ] Main Advisor card
+[ ] Recommendation
+[ ] Genre highlight
+[ ] Details
+[ ] Data Status
+[ ] Page bottom / scrolling
+[ ] Page change / return
+[ ] Installation / script loading
+[ ] Other:
+
+EXPECTED RESULT
+
+ACTUAL RESULT
+
+STEPS TO REPRODUCE
+1.
+2.
+3.
+4.
+
+HOW OFTEN?
+[ ] Every time
+[ ] Sometimes
+[ ] Once
+[ ] Unknown
+
+VISIBLE TORN VALUES
+Recommendation shown:
+Genre affected:
+Stock:
+Queued:
+Projected:
+Target:
+Coverage:
+
+EVIDENCE ATTACHED
+[ ] Screenshot
+[ ] Short video
+[ ] Copy Safe Diagnostic
+
+COPY SAFE DIAGNOSTIC
+Paste here:
+
+ADDITIONAL NOTES
+
+PRIVACY CHECK
+
+Do not include:
+- Torn API keys
+- passwords
+- recovery codes
+- full private messages
+- payment information
+- unrelated personal information

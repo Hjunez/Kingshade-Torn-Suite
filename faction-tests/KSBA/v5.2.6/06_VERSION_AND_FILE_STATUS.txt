@@ -1,0 +1,32 @@
+KSBA v5.2.6 — VERSION AND FILE STATUS
+
+STATUS
+FACTION TEST CANDIDATE
+
+INSTALL THIS FILE
+01_Kingshades_Bootlegging_Advisor_v5.2.6_FACTION_TEST.txt
+
+TORN PDA SCRIPT NAME
+Kingshade's Bootlegging Advisor
+
+INJECTION TIME
+START
+
+REPLACES IN TORN PDA
+Any earlier Kingshade's Bootlegging Advisor version.
+
+ONLY ONE VERSION MAY BE ENABLED
+
+KEEP DURING FACTION TEST
+- This complete faction-test package.
+- The tester's previous working version only if they need a personal rollback.
+- Screenshots, videos and diagnostics for reported bugs.
+
+CAN BE REMOVED AFTER INSTALLATION
+- Duplicate copies of the same v5.2.6 script.
+- Older inactive Bootlegging Advisor scripts after the tester confirms v5.2.6 loads correctly.
+
+PROJECT PUBLICATION
+- This package is for controlled faction testing.
+- It has not been published through the project GitHub repository.
+- No repository, branch, release, README or raw URL was changed.
