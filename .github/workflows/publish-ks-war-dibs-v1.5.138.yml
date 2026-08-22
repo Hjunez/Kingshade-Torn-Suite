@@ -1,6 +1,11 @@
 name: Publish KS Torn War Dibs v1.5.138
 
 on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.tmp/ks-war-dibs-v1.5.138-live/GO'
   push:
     branches:
       - trigger-v15138-live
