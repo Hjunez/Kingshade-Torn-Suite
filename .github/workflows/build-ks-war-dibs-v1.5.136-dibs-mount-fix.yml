@@ -1,9 +1,9 @@
 name: Build KS Torn War Dibs 1.5.136 Live Phase Fix Test
 
 on:
-  pull_request:
+  push:
     branches:
-      - main
+      - trigger-v15136-live-phase-direct
     paths:
       - '.tmp/ks-war-dibs-v1.5.136/GO'
 
