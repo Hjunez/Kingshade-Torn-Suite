@@ -26,15 +26,16 @@ jobs:
         run: bash tools/validate-suite.sh
 
   build_ks_war_dibs_15138:
-    if: ${{ github.event_name == 'pull_request' }}
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
     runs-on: ubuntu-latest
     steps:
       - name: Check trigger marker
         id: marker
         shell: bash
         run: |
-          if git ls-remote --exit-code origin "refs/heads/${{ github.head_ref }}" >/dev/null 2>&1; then
-            git clone --depth 1 --branch "${{ github.head_ref }}" "https://github.com/${{ github.repository }}.git" trigger-repo
+          branch="${{ github.head_ref || github.ref_name }}"
+          if git ls-remote --exit-code origin "refs/heads/${branch}" >/dev/null 2>&1; then
+            git clone --depth 1 --branch "${branch}" "https://github.com/${{ github.repository }}.git" trigger-repo
             if [ -f trigger-repo/.tmp/ks-war-dibs-v1.5.138-release/GO ]; then echo "run=true" >> "$GITHUB_OUTPUT"; else echo "run=false" >> "$GITHUB_OUTPUT"; fi
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
