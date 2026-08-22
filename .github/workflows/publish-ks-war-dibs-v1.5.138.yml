@@ -1,131 +1,122 @@
-name: Publish KS Torn War Dibs v1.5.138
+name: Build KS Torn War Dibs v1.5.138 final release branch
 
 on:
-  pull_request:
-    branches:
-      - main
-    paths:
-      - '.tmp/ks-war-dibs-v1.5.138-live/GO'
   push:
     branches:
-      - main
+      - ops/v15138-final-builder
     paths:
-      - '.tmp/ks-war-dibs-v1.5.138-live/GO'
+      - '.tmp/v15138-final-builder/GO'
 
 permissions:
   contents: write
 
 jobs:
-  publish:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: test/ks-war-dibs-v1.5.135-hospital-clock-exact
+          ref: main
           fetch-depth: 0
 
-      - name: Build verified live release
+      - name: Build verified v1.5.138 payload
         shell: bash
         run: |
           set -euo pipefail
-          cp KS_Torn_War_Dibs_v1.5.135_HOSPITAL_CLOCK_EXACT_TEST.txt KS_Torn_War_Dibs.user.js
+          git fetch origin test/ks-war-dibs-v1.5.135-hospital-clock-exact
+          git show origin/test/ks-war-dibs-v1.5.135-hospital-clock-exact:KS_Torn_War_Dibs_v1.5.135_HOSPITAL_CLOCK_EXACT_TEST.txt > /tmp/KS_Torn_War_Dibs_v1.5.135.txt
+          cp /tmp/KS_Torn_War_Dibs_v1.5.135.txt /tmp/KS_Torn_War_Dibs.user.js
           python - <<'PY'
           from pathlib import Path
-          p = Path('KS_Torn_War_Dibs.user.js')
+          p = Path('/tmp/KS_Torn_War_Dibs.user.js')
           s = p.read_text()
 
-          for old, new in [
+          replacements = [
               ('// @version      1.5.135', '// @version      1.5.138'),
               ('version: "1.5.135"', 'version: "1.5.138"'),
-              ('KS Torn War Dibs v1.5.135 HOSPITAL CLOCK EXACT TEST', 'KS Torn War Dibs v1.5.138 RW LOCK REMOVED RELEASE'),
-          ]:
+              ('KS Torn War Dibs v1.5.135 HOSPITAL CLOCK EXACT TEST', 'KS Torn War Dibs v1.5.138 RW CLAIM GUARD REMOVED TEST'),
+          ]
+          for old, new in replacements:
               if s.count(old) != 1:
                   raise SystemExit(f'mismatch: {old} -> {s.count(old)}')
               s = s.replace(old, new, 1)
 
-          version_line = '// @version      1.5.138\n'
-          remote = ('// @downloadURL  https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs.user.js\n'
-                    '// @updateURL    https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs.user.js\n')
-          if '@downloadURL' not in s:
-              s = s.replace(version_line, version_line + remote, 1)
-
           gate = '''    if (rwPhase?.phase !== RW_PHASE.LIVE) {
-      return {
-        state: TARGET_STATE.LOCKED,
-        seconds: isHospital ? seconds : null,
-        fairFight: ff,
-        reason: rwPhase?.phase === RW_PHASE.PREWAR ? "rw-not-started" : "rw-phase-unverifiable",
-        mode: "live",
-        rwPhase,
-        prewarHospital: !!isHospital
-      };
-    }
-'''
-          if s.count(gate) < 1:
-              raise SystemExit('RW decision gate not found')
-          s = s.replace(gate, '')
+            return {
+              state: TARGET_STATE.LOCKED,
+              seconds: isHospital ? seconds : null,
+              fairFight: ff,
+              reason: rwPhase?.phase === RW_PHASE.PREWAR ? "rw-not-started" : "rw-phase-unverifiable",
+              mode: "live",
+              rwPhase,
+              prewarHospital: !!isHospital
+            };
+          }
+          '''
+          gate = gate.replace('          ', '', 1)
+          if s.count(gate) != 1:
+              raise SystemExit(f'RW decision gate mismatch: {s.count(gate)}')
+          s = s.replace(gate, '', 1)
+
+          hidden = '''    const rwPhase = currentRwPhase();
+          if (rwPhase.phase !== RW_PHASE.LIVE) { scanWarRows(); return; }
+
+          const eligibility = currentDecisionForTarget(targetId);
+          '''
+          hidden = hidden.replace('          ', '', 1)
+          if s.count(hidden) != 1:
+              raise SystemExit(f'hidden claim guard mismatch: {s.count(hidden)}')
+          s = s.replace(hidden, '    const eligibility = currentDecisionForTarget(targetId);\n', 1)
 
           panel_old = '''      if (rwState.phase === RW_PHASE.LIVE) {
-        $("rw-status").textContent = "DIBS: LIVE";
-        $("rw-status").title = "Ranked War is live";
-      } else if (rwState.phase === RW_PHASE.PREWAR) {
-        $("rw-status").textContent = Number.isFinite(rwState.runwaySeconds)
-          ? `DIBS: LOCKED · RW ${formatRwRunway(rwState.runwaySeconds)}`
-          : "DIBS: LOCKED · PRE-WAR";
-        $("rw-status").title = "DIBS remains disabled until Ranked War starts";
-      } else {
-        $("rw-status").textContent = "DIBS: LOCKED · RW ?";
-        $("rw-status").title = "Ranked War start state cannot be verified; DIBS remains disabled";
-      }
-'''
+            $("rw-status").textContent = "DIBS: LIVE";
+            $("rw-status").title = "Ranked War is live";
+          } else if (rwState.phase === RW_PHASE.PREWAR) {
+            $("rw-status").textContent = Number.isFinite(rwState.runwaySeconds)
+              ? `DIBS: LOCKED · RW ${formatRwRunway(rwState.runwaySeconds)}`
+              : "DIBS: LOCKED · PRE-WAR";
+            $("rw-status").title = "DIBS remains disabled until Ranked War starts";
+          } else {
+            $("rw-status").textContent = "DIBS: LOCKED · RW ?";
+            $("rw-status").title = "Ranked War start state cannot be verified; DIBS remains disabled";
+          }
+          '''
+          panel_old = panel_old.replace('          ', '', 1)
+          if s.count(panel_old) != 1:
+              raise SystemExit(f'RW panel block mismatch: {s.count(panel_old)}')
           panel_new = '''      $("rw-status").textContent = "DIBS: ACTIVE";
       $("rw-status").title = "RW start lock removed; Hospital and FF gates remain active";
 '''
-          if s.count(panel_old) < 1:
-              raise SystemExit('RW panel block not found')
-          s = s.replace(panel_old, panel_new)
-
-          hidden_guard = '''    const rwPhase = currentRwPhase();
-    if (rwPhase.phase !== RW_PHASE.LIVE) { scanWarRows(); return; }
-
-    const eligibility = currentDecisionForTarget(targetId);
-'''
-          hidden_guard_new = '''    const eligibility = currentDecisionForTarget(targetId);
-'''
-          if s.count(hidden_guard) != 1:
-              raise SystemExit(f'hidden claim guard mismatch: {s.count(hidden_guard)}')
-          s = s.replace(hidden_guard, hidden_guard_new, 1)
+          s = s.replace(panel_old, panel_new, 1)
 
           marker = ' * TEST ONLY: Hospital countdown/gating uses FFScouter-aligned second-boundary semantics (ceil + 1s).\n'
-          if marker in s:
-              s = s.replace(marker, ' * Hospital countdown/gating uses FFScouter-aligned second-boundary semantics (ceil + 1s).\n * RW start lock and hidden claim-path RW guard removed; Hospital <=2:00 and FF 2.00-5.00 gates retained.\n', 1)
+          if s.count(marker) == 1:
+              s = s.replace(marker, ' * Hospital countdown uses v1.5.135 FFScouter-aligned second-boundary semantics.\n * TEST ONLY: RW start lock removed. Hospital <=2:00 and FF 2.00-5.00 gates retained.\n', 1)
 
           p.write_text(s)
-          Path('KS_Torn_War_Dibs_v1.5.138.user.js').write_text(s)
           PY
 
-          node --check KS_Torn_War_Dibs.user.js
-          grep -q '^// @version      1.5.138$' KS_Torn_War_Dibs.user.js
-          grep -q '^// @downloadURL  https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs.user.js$' KS_Torn_War_Dibs.user.js
-          grep -q 'DIBS: ACTIVE' KS_Torn_War_Dibs.user.js
-          ! grep -q 'DIBS: LOCKED · RW' KS_Torn_War_Dibs.user.js
-          ! grep -q 'if (rwPhase.phase !== RW_PHASE.LIVE) { scanWarRows(); return; }' KS_Torn_War_Dibs.user.js
-          grep -q 'gateSeconds: 120' KS_Torn_War_Dibs.user.js
-          grep -q 'minFairFight: 2.0' KS_Torn_War_Dibs.user.js
-          grep -q 'maxFairFight: 5.0' KS_Torn_War_Dibs.user.js
+          node --check /tmp/KS_Torn_War_Dibs.user.js
+          grep -q '^// @version      1.5.138$' /tmp/KS_Torn_War_Dibs.user.js
+          grep -q '^// @downloadURL  https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs.user.js$' /tmp/KS_Torn_War_Dibs.user.js
+          grep -q '^// @updateURL    https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs.user.js$' /tmp/KS_Torn_War_Dibs.user.js
+          grep -q 'DIBS: ACTIVE' /tmp/KS_Torn_War_Dibs.user.js
+          ! grep -q 'DIBS: LOCKED · RW' /tmp/KS_Torn_War_Dibs.user.js
+          ! grep -q 'if (rwPhase?.phase !== RW_PHASE.LIVE)' /tmp/KS_Torn_War_Dibs.user.js
+          ! grep -q 'if (rwPhase.phase !== RW_PHASE.LIVE) { scanWarRows(); return; }' /tmp/KS_Torn_War_Dibs.user.js
+          grep -q 'gateSeconds: 120' /tmp/KS_Torn_War_Dibs.user.js
+          grep -q 'minFairFight: 2.0' /tmp/KS_Torn_War_Dibs.user.js
+          grep -q 'maxFairFight: 5.0' /tmp/KS_Torn_War_Dibs.user.js
 
-      - name: Publish to main
+      - name: Commit payload to release branch
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git fetch origin main
-          cp KS_Torn_War_Dibs.user.js /tmp/KS_Torn_War_Dibs.user.js
-          cp KS_Torn_War_Dibs_v1.5.138.user.js /tmp/KS_Torn_War_Dibs_v1.5.138.user.js
-          git checkout main
+          git checkout -B release/ks-war-dibs-v1.5.138-final origin/main
           cp /tmp/KS_Torn_War_Dibs.user.js KS_Torn_War_Dibs.user.js
-          cp /tmp/KS_Torn_War_Dibs_v1.5.138.user.js KS_Torn_War_Dibs_v1.5.138.user.js
-          git add KS_Torn_War_Dibs.user.js KS_Torn_War_Dibs_v1.5.138.user.js
+          git add KS_Torn_War_Dibs.user.js
+          git diff --cached --quiet && { echo 'No release diff'; exit 1; }
           git commit -m 'release: KS Torn War Dibs v1.5.138'
-          git push origin main
+          git push --force origin release/ks-war-dibs-v1.5.138-final
