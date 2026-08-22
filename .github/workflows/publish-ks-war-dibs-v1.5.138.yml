@@ -24,74 +24,48 @@ jobs:
         run: |
           set -euo pipefail
           git fetch origin test/ks-war-dibs-v1.5.135-hospital-clock-exact
-          git show origin/test/ks-war-dibs-v1.5.135-hospital-clock-exact:KS_Torn_War_Dibs_v1.5.135_HOSPITAL_CLOCK_EXACT_TEST.txt > /tmp/KS_Torn_War_Dibs_v1.5.135.txt
-          cp /tmp/KS_Torn_War_Dibs_v1.5.135.txt /tmp/KS_Torn_War_Dibs.user.js
+          git show origin/test/ks-war-dibs-v1.5.135-hospital-clock-exact:KS_Torn_War_Dibs_v1.5.135_HOSPITAL_CLOCK_EXACT_TEST.txt > /tmp/base135.txt
+          cp /tmp/base135.txt /tmp/KS_Torn_War_Dibs.user.js
           python - <<'PY'
           from pathlib import Path
           p = Path('/tmp/KS_Torn_War_Dibs.user.js')
           s = p.read_text()
 
-          replacements = [
+          for old, new in [
               ('// @version      1.5.135', '// @version      1.5.138'),
               ('version: "1.5.135"', 'version: "1.5.138"'),
               ('KS Torn War Dibs v1.5.135 HOSPITAL CLOCK EXACT TEST', 'KS Torn War Dibs v1.5.138 RW CLAIM GUARD REMOVED TEST'),
-          ]
-          for old, new in replacements:
+          ]:
               if s.count(old) != 1:
-                  raise SystemExit(f'mismatch: {old} -> {s.count(old)}')
+                  raise SystemExit(f'metadata mismatch: {old} -> {s.count(old)}')
               s = s.replace(old, new, 1)
 
-          gate = '''    if (rwPhase?.phase !== RW_PHASE.LIVE) {
-            return {
-              state: TARGET_STATE.LOCKED,
-              seconds: isHospital ? seconds : null,
-              fairFight: ff,
-              reason: rwPhase?.phase === RW_PHASE.PREWAR ? "rw-not-started" : "rw-phase-unverifiable",
-              mode: "live",
-              rwPhase,
-              prewarHospital: !!isHospital
-            };
-          }
-          '''
-          gate = gate.replace('          ', '', 1)
-          if s.count(gate) != 1:
-              raise SystemExit(f'RW decision gate mismatch: {s.count(gate)}')
-          s = s.replace(gate, '', 1)
+          decision_start_text = '    if (rwPhase?.phase !== RW_PHASE.LIVE) {\n'
+          decision_next_text = '    if (!isHospital) return { state: TARGET_STATE.UNAVAILABLE'
+          if s.count(decision_start_text) != 1 or s.count(decision_next_text) != 1:
+              raise SystemExit('decision guard anchors mismatch')
+          a = s.index(decision_start_text)
+          b = s.index(decision_next_text, a)
+          s = s[:a] + s[b:]
 
-          hidden = '''    const rwPhase = currentRwPhase();
-          if (rwPhase.phase !== RW_PHASE.LIVE) { scanWarRows(); return; }
-
-          const eligibility = currentDecisionForTarget(targetId);
-          '''
-          hidden = hidden.replace('          ', '', 1)
+          hidden = '    const rwPhase = currentRwPhase();\n    if (rwPhase.phase !== RW_PHASE.LIVE) { scanWarRows(); return; }\n\n    const eligibility = currentDecisionForTarget(targetId);\n'
           if s.count(hidden) != 1:
               raise SystemExit(f'hidden claim guard mismatch: {s.count(hidden)}')
           s = s.replace(hidden, '    const eligibility = currentDecisionForTarget(targetId);\n', 1)
 
-          panel_old = '''      if (rwState.phase === RW_PHASE.LIVE) {
-            $("rw-status").textContent = "DIBS: LIVE";
-            $("rw-status").title = "Ranked War is live";
-          } else if (rwState.phase === RW_PHASE.PREWAR) {
-            $("rw-status").textContent = Number.isFinite(rwState.runwaySeconds)
-              ? `DIBS: LOCKED · RW ${formatRwRunway(rwState.runwaySeconds)}`
-              : "DIBS: LOCKED · PRE-WAR";
-            $("rw-status").title = "DIBS remains disabled until Ranked War starts";
-          } else {
-            $("rw-status").textContent = "DIBS: LOCKED · RW ?";
-            $("rw-status").title = "Ranked War start state cannot be verified; DIBS remains disabled";
-          }
-          '''
-          panel_old = panel_old.replace('          ', '', 1)
-          if s.count(panel_old) != 1:
-              raise SystemExit(f'RW panel block mismatch: {s.count(panel_old)}')
-          panel_new = '''      $("rw-status").textContent = "DIBS: ACTIVE";
-      $("rw-status").title = "RW start lock removed; Hospital and FF gates remain active";
-'''
-          s = s.replace(panel_old, panel_new, 1)
+          panel_start_text = '    if ($("rw-status")) {\n'
+          panel_next_text = '    if (countryItem) {\n'
+          if s.count(panel_start_text) != 1:
+              raise SystemExit(f'panel start mismatch: {s.count(panel_start_text)}')
+          a = s.index(panel_start_text)
+          b = s.index(panel_next_text, a)
+          panel = '    if ($("rw-status")) {\n      $("rw-status").textContent = "DIBS: ACTIVE";\n      $("rw-status").title = "RW start lock removed; Hospital and FF gates remain active";\n    }\n'
+          s = s[:a] + panel + s[b:]
 
           marker = ' * TEST ONLY: Hospital countdown/gating uses FFScouter-aligned second-boundary semantics (ceil + 1s).\n'
-          if s.count(marker) == 1:
-              s = s.replace(marker, ' * Hospital countdown uses v1.5.135 FFScouter-aligned second-boundary semantics.\n * TEST ONLY: RW start lock removed. Hospital <=2:00 and FF 2.00-5.00 gates retained.\n', 1)
+          if s.count(marker) != 1:
+              raise SystemExit(f'header marker mismatch: {s.count(marker)}')
+          s = s.replace(marker, ' * Hospital countdown uses v1.5.135 FFScouter-aligned second-boundary semantics.\n * TEST ONLY: RW start lock removed. Hospital <=2:00 and FF 2.00-5.00 gates retained.\n', 1)
 
           p.write_text(s)
           PY
