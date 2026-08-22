@@ -1,0 +1,113 @@
+name: Build KS Torn War Dibs 1.5.136 Live Phase Fix Test
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.tmp/ks-war-dibs-v1.5.136-live/GO'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: test/ks-war-dibs-v1.5.135-hospital-clock-exact
+      - name: Build isolated test version
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp KS_Torn_War_Dibs_v1.5.135_HOSPITAL_CLOCK_EXACT_TEST.txt KS_Torn_War_Dibs_v1.5.136_LIVE_PHASE_FIX_TEST.txt
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('KS_Torn_War_Dibs_v1.5.136_LIVE_PHASE_FIX_TEST.txt')
+          s = p.read_text()
+          for old, new in [
+              ('// @version      1.5.135', '// @version      1.5.136'),
+              ('version: "1.5.135"', 'version: "1.5.136"'),
+              ('KS Torn War Dibs v1.5.135 HOSPITAL CLOCK EXACT TEST', 'KS Torn War Dibs v1.5.136 LIVE PHASE FIX TEST'),
+          ]:
+              if s.count(old) != 1: raise SystemExit(f'mismatch: {old}')
+              s = s.replace(old, new, 1)
+          state_old = '  let lastObservedRwStartAtSeconds = 0;\n  let rwLiveConfirmSince = 0;\n'
+          state_new = state_old + '  let rwClockLastSeconds = null;\n  let rwClockLastSeenAt = 0;\n  let rwClockDirection = 0; // -1 countdown/prewar, +1 elapsed/live\n'
+          if s.count(state_old) != 1: raise SystemExit('state marker mismatch')
+          s = s.replace(state_old, state_new, 1)
+          start = s.index('  function currentRwPhase() {')
+          end = s.index('\n  // Pure target decision engine', start)
+          new = '''  function currentRwPhase() {
+    if (!isWarPanelPresent()) {
+      rwLiveConfirmSince = 0;
+      rwClockLastSeconds = null;
+      rwClockLastSeenAt = 0;
+      rwClockDirection = 0;
+      return { phase: RW_PHASE.UNKNOWN, runwaySeconds: null };
+    }
+    const active = activeRankedWarTab();
+    if (!active) {
+      rwLiveConfirmSince = 0;
+      return { phase: RW_PHASE.UNKNOWN, runwaySeconds: null };
+    }
+    const observedSeconds = readRankedWarCountdownSeconds(active);
+    const now = Math.floor(getTornNowMs() / 1000);
+    const sampledAt = nowMs();
+    if (Number.isFinite(observedSeconds) && observedSeconds > 0) {
+      if (Number.isFinite(rwClockLastSeconds) && rwClockLastSeenAt > 0) {
+        const age = sampledAt - rwClockLastSeenAt;
+        if (age >= 500 && age <= 5000 && observedSeconds !== rwClockLastSeconds) {
+          rwClockDirection = observedSeconds > rwClockLastSeconds ? 1 : -1;
+        }
+      }
+      rwClockLastSeconds = observedSeconds;
+      rwClockLastSeenAt = sampledAt;
+      if (rwClockDirection > 0) {
+        lastObservedRwStartAtSeconds = 0;
+        rwLiveConfirmSince = sampledAt;
+        return { phase: RW_PHASE.LIVE, runwaySeconds: 0 };
+      }
+      if (rwClockDirection < 0) {
+        lastObservedRwStartAtSeconds = now + observedSeconds;
+        rwLiveConfirmSince = 0;
+        return { phase: RW_PHASE.PREWAR, runwaySeconds: observedSeconds };
+      }
+      return { phase: RW_PHASE.UNKNOWN, runwaySeconds: null };
+    }
+    rwClockLastSeconds = null;
+    rwClockLastSeenAt = 0;
+    rwClockDirection = 0;
+    if (lastObservedRwStartAtSeconds > now) {
+      rwLiveConfirmSince = 0;
+      return { phase: RW_PHASE.PREWAR, runwaySeconds: Math.max(0, lastObservedRwStartAtSeconds - now) };
+    }
+    if (!lastObservedRwStartAtSeconds) {
+      rwLiveConfirmSince = 0;
+      return { phase: RW_PHASE.UNKNOWN, runwaySeconds: null };
+    }
+    if (!rwLiveConfirmSince) rwLiveConfirmSince = sampledAt;
+    if (sampledAt - rwLiveConfirmSince < 3000) return { phase: RW_PHASE.UNKNOWN, runwaySeconds: 0 };
+    return { phase: RW_PHASE.LIVE, runwaySeconds: 0 };
+  }
+'''
+          s = s[:start] + new + s[end:]
+          marker = ' * TEST ONLY: Hospital countdown/gating uses FFScouter-aligned second-boundary semantics (ceil + 1s).\n'
+          if marker not in s: raise SystemExit('marker missing')
+          s = s.replace(marker, marker + ' * TEST ONLY: Ranked War timer direction distinguishes pre-war countdown from live elapsed time.\n', 1)
+          p.write_text(s)
+          PY
+          cp KS_Torn_War_Dibs_v1.5.136_LIVE_PHASE_FIX_TEST.txt /tmp/check.js
+          node --check /tmp/check.js
+          grep -q '^// @version      1.5.136$' KS_Torn_War_Dibs_v1.5.136_LIVE_PHASE_FIX_TEST.txt
+          grep -q 'rwClockDirection = observedSeconds > rwClockLastSeconds ? 1 : -1;' KS_Torn_War_Dibs_v1.5.136_LIVE_PHASE_FIX_TEST.txt
+      - name: Commit test file
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add KS_Torn_War_Dibs_v1.5.136_LIVE_PHASE_FIX_TEST.txt
+          git commit -m 'test: KS Torn War Dibs v1.5.136 live phase fix'
+          git push origin HEAD:test/ks-war-dibs-v1.5.136-live-phase-fix
