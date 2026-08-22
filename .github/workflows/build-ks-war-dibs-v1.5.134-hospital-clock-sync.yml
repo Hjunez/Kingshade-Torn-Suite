@@ -45,7 +45,8 @@ jobs:
           s = s.replace(marker, insert, 1)
           p.write_text(s)
           PY
-          node --check KS_Torn_War_Dibs_v1.5.134_HOSPITAL_CLOCK_SYNC_TEST.txt
+          cp KS_Torn_War_Dibs_v1.5.134_HOSPITAL_CLOCK_SYNC_TEST.txt /tmp/ks-twd-check.js
+          node --check /tmp/ks-twd-check.js
           grep -q '^// @version      1.5.134$' KS_Torn_War_Dibs_v1.5.134_HOSPITAL_CLOCK_SYNC_TEST.txt
           grep -q 'apiStatus.until - nowMs() / 1000' KS_Torn_War_Dibs_v1.5.134_HOSPITAL_CLOCK_SYNC_TEST.txt
           grep -q 'until - nowMs() / 1000' KS_Torn_War_Dibs_v1.5.134_HOSPITAL_CLOCK_SYNC_TEST.txt
