@@ -1,11 +1,11 @@
-name: Build KS Torn War Dibs 1.5.136 RW Lock Removed Test
+name: Build KS Torn War Dibs v1.5.138 Release
 
 on:
   pull_request:
     branches:
       - main
     paths:
-      - '.tmp/ks-war-dibs-v1.5.136-unlock/GO'
+      - '.tmp/ks-war-dibs-v1.5.138-release/GO'
 
 permissions:
   contents: write
@@ -17,22 +17,30 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: test/ks-war-dibs-v1.5.135-hospital-clock-exact
-      - name: Build isolated test version
+
+      - name: Build verified release
         shell: bash
         run: |
           set -euo pipefail
-          cp KS_Torn_War_Dibs_v1.5.135_HOSPITAL_CLOCK_EXACT_TEST.txt KS_Torn_War_Dibs_v1.5.136_RW_LOCK_REMOVED_TEST.txt
+          cp KS_Torn_War_Dibs_v1.5.135_HOSPITAL_CLOCK_EXACT_TEST.txt KS_Torn_War_Dibs.user.js
           python - <<'PY'
           from pathlib import Path
-          p = Path('KS_Torn_War_Dibs_v1.5.136_RW_LOCK_REMOVED_TEST.txt')
+          p = Path('KS_Torn_War_Dibs.user.js')
           s = p.read_text()
+
           for old, new in [
-              ('// @version      1.5.135', '// @version      1.5.136'),
-              ('version: "1.5.135"', 'version: "1.5.136"'),
-              ('KS Torn War Dibs v1.5.135 HOSPITAL CLOCK EXACT TEST', 'KS Torn War Dibs v1.5.136 RW LOCK REMOVED TEST'),
+              ('// @version      1.5.135', '// @version      1.5.138'),
+              ('version: "1.5.135"', 'version: "1.5.138"'),
+              ('KS Torn War Dibs v1.5.135 HOSPITAL CLOCK EXACT TEST', 'KS Torn War Dibs v1.5.138 RW LOCK REMOVED RELEASE'),
           ]:
               if s.count(old) != 1: raise SystemExit(f'mismatch: {old}')
               s = s.replace(old, new, 1)
+
+          v = '// @version      1.5.138\n'
+          remote = ('// @downloadURL  https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs.user.js\n'
+                    '// @updateURL    https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs.user.js\n')
+          if '@downloadURL' not in s:
+              s = s.replace(v, v + remote, 1)
 
           gate = '''    if (rwPhase?.phase !== RW_PHASE.LIVE) {
       return {
@@ -46,8 +54,7 @@ jobs:
       };
     }
 '''
-          count = s.count(gate)
-          if count < 1: raise SystemExit('RW decision gate not found')
+          if s.count(gate) < 1: raise SystemExit('RW decision gate not found')
           s = s.replace(gate, '')
 
           panel_old = '''      if (rwState.phase === RW_PHASE.LIVE) {
@@ -63,32 +70,44 @@ jobs:
         $("rw-status").title = "Ranked War start state cannot be verified; DIBS remains disabled";
       }
 '''
-          panel_count = s.count(panel_old)
-          if panel_count < 1: raise SystemExit('RW panel block not found')
           panel_new = '''      $("rw-status").textContent = "DIBS: ACTIVE";
       $("rw-status").title = "RW start lock removed; Hospital and FF gates remain active";
 '''
+          if s.count(panel_old) < 1: raise SystemExit('RW panel block not found')
           s = s.replace(panel_old, panel_new)
 
+          hidden = '''    const rwPhase = currentRwPhase();
+    if (rwPhase.phase !== RW_PHASE.LIVE) { scanWarRows(); return; }
+
+    const eligibility = currentDecisionForTarget(targetId);
+'''
+          if s.count(hidden) != 1: raise SystemExit(f'hidden claim guard mismatch: {s.count(hidden)}')
+          s = s.replace(hidden, '    const eligibility = currentDecisionForTarget(targetId);\n', 1)
+
           marker = ' * TEST ONLY: Hospital countdown/gating uses FFScouter-aligned second-boundary semantics (ceil + 1s).\n'
-          if marker not in s: raise SystemExit('marker missing')
-          s = s.replace(marker, marker + ' * TEST ONLY: Ranked War start lock removed; Hospital <=2:00 and FF 2.00-5.00 gates retained.\n', 1)
+          if marker in s:
+              s = s.replace(marker, ' * Hospital countdown/gating uses FFScouter-aligned second-boundary semantics (ceil + 1s).\n * RW start lock and hidden claim-path RW guard removed; Hospital <=2:00 and FF 2.00-5.00 gates retained.\n', 1)
+
           p.write_text(s)
+          Path('KS_Torn_War_Dibs_v1.5.138.user.js').write_text(s)
           PY
-          cp KS_Torn_War_Dibs_v1.5.136_RW_LOCK_REMOVED_TEST.txt /tmp/check.js
-          node --check /tmp/check.js
-          grep -q '^// @version      1.5.136$' KS_Torn_War_Dibs_v1.5.136_RW_LOCK_REMOVED_TEST.txt
-          grep -q 'DIBS: ACTIVE' KS_Torn_War_Dibs_v1.5.136_RW_LOCK_REMOVED_TEST.txt
-          ! grep -q 'if (rwPhase?.phase !== RW_PHASE.LIVE)' KS_Torn_War_Dibs_v1.5.136_RW_LOCK_REMOVED_TEST.txt
-          grep -q 'gateSeconds: 120' KS_Torn_War_Dibs_v1.5.136_RW_LOCK_REMOVED_TEST.txt
-          grep -q 'minFairFight: 2.0' KS_Torn_War_Dibs_v1.5.136_RW_LOCK_REMOVED_TEST.txt
-          grep -q 'maxFairFight: 5.0' KS_Torn_War_Dibs_v1.5.136_RW_LOCK_REMOVED_TEST.txt
-      - name: Commit test file
+
+          node --check KS_Torn_War_Dibs.user.js
+          grep -q '^// @version      1.5.138$' KS_Torn_War_Dibs.user.js
+          grep -q '^// @downloadURL  https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs.user.js$' KS_Torn_War_Dibs.user.js
+          grep -q 'DIBS: ACTIVE' KS_Torn_War_Dibs.user.js
+          ! grep -q 'DIBS: LOCKED · RW' KS_Torn_War_Dibs.user.js
+          ! grep -q 'if (rwPhase.phase !== RW_PHASE.LIVE) { scanWarRows(); return; }' KS_Torn_War_Dibs.user.js
+          grep -q 'gateSeconds: 120' KS_Torn_War_Dibs.user.js
+          grep -q 'minFairFight: 2.0' KS_Torn_War_Dibs.user.js
+          grep -q 'maxFairFight: 5.0' KS_Torn_War_Dibs.user.js
+
+      - name: Commit release branch
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add KS_Torn_War_Dibs_v1.5.136_RW_LOCK_REMOVED_TEST.txt
-          git commit -m 'test: KS Torn War Dibs v1.5.136 remove RW start lock'
-          git push origin HEAD:test/ks-war-dibs-v1.5.136-rw-lock-removed
+          git add KS_Torn_War_Dibs.user.js KS_Torn_War_Dibs_v1.5.138.user.js
+          git commit -m 'release: KS Torn War Dibs v1.5.138'
+          git push --force origin HEAD:release/ks-war-dibs-v1.5.138-live
