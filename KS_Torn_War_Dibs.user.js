@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KS Torn War Dibs
 // @namespace    kingshade.torn
-// @version      1.5.133
+// @version      1.5.138
 // @downloadURL  https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs.user.js
 // @updateURL    https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs.user.js
 // @description  Shared Ranked War DIBS with live Hospital countdown, FF 2.00-5.00 gating, Est/FF display and synchronized claims.
@@ -16,8 +16,10 @@
 // ==/UserScript==
 
 /*
- * KS Torn War Dibs v1.5.133 PATCH RELEASE
+ * KS Torn War Dibs v1.5.138 RW CLAIM GUARD REMOVED TEST
  * FF / Est separator, Hospital countdown, FF 2.00-5.00 gate and shared DIBS retained.
+ * Hospital countdown uses v1.5.135 FFScouter-aligned second-boundary semantics.
+ * TEST ONLY: RW start lock removed. Hospital <=2:00 and FF 2.00-5.00 gates retained.
  * Country eligibility remains internal; country labels are not shown in DIBS buttons.
  */
 
@@ -26,7 +28,7 @@
 
   const SCRIPT = Object.freeze({
     name: "KS Torn War Dibs",
-    version: "1.5.133",
+    version: "1.5.138",
     instanceKey: "__ksTornWarDibsV1517",
     rowHostPrefix: "ks-twd-v1517-row-",
     panelId: "ks-twd-v1517-panel",
@@ -1199,7 +1201,7 @@
       const hospital = isHospitalStatusValue(apiStatus.state) || isHospitalStatusValue(apiStatus.description);
       if (!hospital) return { isHospital: false, seconds: null, source: "torn-api" };
       if (Number.isFinite(apiStatus.until) && apiStatus.until > 0) {
-        const remaining = Math.max(0, Math.round(apiStatus.until - getTornNowMs() / 1000));
+        const remaining = Math.max(0, Math.ceil(apiStatus.until - nowMs() / 1000) + 1);
         if (remaining < CONFIG.maxHospitalSeconds) return { isHospital: true, seconds: remaining, source: "torn-api" };
       }
       return { isHospital: true, seconds: null, source: "torn-api" };
@@ -1209,7 +1211,7 @@
     const untilRaw = row.li.getAttribute("data-until");
     if (untilRaw) {
       const until = Number(untilRaw);
-      const remaining = Math.round(until - getTornNowMs() / 1000);
+      const remaining = Math.ceil(until - nowMs() / 1000) + 1;
       if (Number.isFinite(remaining) && remaining >= 0 && remaining < CONFIG.maxHospitalSeconds) return { isHospital: true, seconds: remaining, source: "dom-until" };
     }
     return { isHospital: true, seconds: parseHospitalSecondsFromText(row.statusDiv.textContent || row.li.textContent), source: "dom-text" };
@@ -1406,17 +1408,6 @@
       if (ownTargetId === playerId) return { state: TARGET_STATE.CLAIMED, seconds, fairFight: ff, reason: "active-own-dibs", mode: "live" };
       return { state: TARGET_STATE.BLOCKED, seconds, fairFight: ff, reason: "another-active-dibs", mode: "live" };
     }
-    if (rwPhase?.phase !== RW_PHASE.LIVE) {
-      return {
-        state: TARGET_STATE.LOCKED,
-        seconds: isHospital ? seconds : null,
-        fairFight: ff,
-        reason: rwPhase?.phase === RW_PHASE.PREWAR ? "rw-not-started" : "rw-phase-unverifiable",
-        mode: "live",
-        rwPhase,
-        prewarHospital: !!isHospital
-      };
-    }
     if (!isHospital) return { state: TARGET_STATE.UNAVAILABLE, seconds: null, fairFight: ff, reason: "not-hospital", mode: "live" };
     if (seconds === null) return { state: TARGET_STATE.UNKNOWN, seconds: null, fairFight: ff, reason: "hospital-timer-unverifiable", mode: "live" };
     if (seconds > CONFIG.gateSeconds) return { state: TARGET_STATE.LOCKED, seconds, fairFight: ff, reason: "hospital-too-early", mode: "live" };
@@ -1479,9 +1470,6 @@
     const targetId = String(playerId || "");
     if (!runtimeActive || !isRuntimeEligible() || sharedWriteBusy || !sharedApiKey || !validTargetId(targetId)) return;
     if (currentOwnClaim() || sharedClaimForTarget(targetId)) return;
-    const rwPhase = currentRwPhase();
-    if (rwPhase.phase !== RW_PHASE.LIVE) { scanWarRows(); return; }
-
     const eligibility = currentDecisionForTarget(targetId);
     if (!eligibility || eligibility.state !== TARGET_STATE.READY) { scanWarRows(); return; }
 
@@ -2326,18 +2314,8 @@
         : (rwState.phase === RW_PHASE.PREWAR ? "idle" : "error");
     }
     if ($("rw-status")) {
-      if (rwState.phase === RW_PHASE.LIVE) {
-        $("rw-status").textContent = "DIBS: LIVE";
-        $("rw-status").title = "Ranked War is live";
-      } else if (rwState.phase === RW_PHASE.PREWAR) {
-        $("rw-status").textContent = Number.isFinite(rwState.runwaySeconds)
-          ? `DIBS: LOCKED · RW ${formatRwRunway(rwState.runwaySeconds)}`
-          : "DIBS: LOCKED · PRE-WAR";
-        $("rw-status").title = "DIBS remains disabled until Ranked War starts";
-      } else {
-        $("rw-status").textContent = "DIBS: LOCKED · RW ?";
-        $("rw-status").title = "Ranked War start state cannot be verified; DIBS remains disabled";
-      }
+      $("rw-status").textContent = "DIBS: ACTIVE";
+      $("rw-status").title = "RW start lock removed; Hospital and FF gates remain active";
     }
     if (countryItem) {
       const ownCountry = displayCountryName(ownLocationState.country);
