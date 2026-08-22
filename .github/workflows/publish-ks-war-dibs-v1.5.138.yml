@@ -3,6 +3,7 @@ name: Build KS Torn War Dibs v1.5.138 final release branch
 on:
   push:
     branches:
+      - main
       - ops/v15138-final-builder
     paths:
       - '.tmp/v15138-final-builder/GO'
