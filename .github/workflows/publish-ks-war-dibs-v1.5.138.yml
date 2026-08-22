@@ -1,0 +1,125 @@
+name: Publish KS Torn War Dibs v1.5.138
+
+on:
+  push:
+    branches:
+      - trigger-v15138-live
+    paths:
+      - '.tmp/ks-war-dibs-v1.5.138-live/GO'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: test/ks-war-dibs-v1.5.135-hospital-clock-exact
+          fetch-depth: 0
+
+      - name: Build verified live release
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp KS_Torn_War_Dibs_v1.5.135_HOSPITAL_CLOCK_EXACT_TEST.txt KS_Torn_War_Dibs.user.js
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('KS_Torn_War_Dibs.user.js')
+          s = p.read_text()
+
+          for old, new in [
+              ('// @version      1.5.135', '// @version      1.5.138'),
+              ('version: "1.5.135"', 'version: "1.5.138"'),
+              ('KS Torn War Dibs v1.5.135 HOSPITAL CLOCK EXACT TEST', 'KS Torn War Dibs v1.5.138 RW LOCK REMOVED RELEASE'),
+          ]:
+              if s.count(old) != 1:
+                  raise SystemExit(f'mismatch: {old} -> {s.count(old)}')
+              s = s.replace(old, new, 1)
+
+          version_line = '// @version      1.5.138\n'
+          remote = ('// @downloadURL  https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs.user.js\n'
+                    '// @updateURL    https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs.user.js\n')
+          if '@downloadURL' not in s:
+              s = s.replace(version_line, version_line + remote, 1)
+
+          gate = '''    if (rwPhase?.phase !== RW_PHASE.LIVE) {
+      return {
+        state: TARGET_STATE.LOCKED,
+        seconds: isHospital ? seconds : null,
+        fairFight: ff,
+        reason: rwPhase?.phase === RW_PHASE.PREWAR ? "rw-not-started" : "rw-phase-unverifiable",
+        mode: "live",
+        rwPhase,
+        prewarHospital: !!isHospital
+      };
+    }
+'''
+          if s.count(gate) < 1:
+              raise SystemExit('RW decision gate not found')
+          s = s.replace(gate, '')
+
+          panel_old = '''      if (rwState.phase === RW_PHASE.LIVE) {
+        $("rw-status").textContent = "DIBS: LIVE";
+        $("rw-status").title = "Ranked War is live";
+      } else if (rwState.phase === RW_PHASE.PREWAR) {
+        $("rw-status").textContent = Number.isFinite(rwState.runwaySeconds)
+          ? `DIBS: LOCKED · RW ${formatRwRunway(rwState.runwaySeconds)}`
+          : "DIBS: LOCKED · PRE-WAR";
+        $("rw-status").title = "DIBS remains disabled until Ranked War starts";
+      } else {
+        $("rw-status").textContent = "DIBS: LOCKED · RW ?";
+        $("rw-status").title = "Ranked War start state cannot be verified; DIBS remains disabled";
+      }
+'''
+          panel_new = '''      $("rw-status").textContent = "DIBS: ACTIVE";
+      $("rw-status").title = "RW start lock removed; Hospital and FF gates remain active";
+'''
+          if s.count(panel_old) < 1:
+              raise SystemExit('RW panel block not found')
+          s = s.replace(panel_old, panel_new)
+
+          hidden_guard = '''    const rwPhase = currentRwPhase();
+    if (rwPhase.phase !== RW_PHASE.LIVE) { scanWarRows(); return; }
+
+    const eligibility = currentDecisionForTarget(targetId);
+'''
+          hidden_guard_new = '''    const eligibility = currentDecisionForTarget(targetId);
+'''
+          if s.count(hidden_guard) != 1:
+              raise SystemExit(f'hidden claim guard mismatch: {s.count(hidden_guard)}')
+          s = s.replace(hidden_guard, hidden_guard_new, 1)
+
+          marker = ' * TEST ONLY: Hospital countdown/gating uses FFScouter-aligned second-boundary semantics (ceil + 1s).\n'
+          if marker in s:
+              s = s.replace(marker, ' * Hospital countdown/gating uses FFScouter-aligned second-boundary semantics (ceil + 1s).\n * RW start lock and hidden claim-path RW guard removed; Hospital <=2:00 and FF 2.00-5.00 gates retained.\n', 1)
+
+          p.write_text(s)
+          Path('KS_Torn_War_Dibs_v1.5.138.user.js').write_text(s)
+          PY
+
+          node --check KS_Torn_War_Dibs.user.js
+          grep -q '^// @version      1.5.138$' KS_Torn_War_Dibs.user.js
+          grep -q '^// @downloadURL  https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs.user.js$' KS_Torn_War_Dibs.user.js
+          grep -q 'DIBS: ACTIVE' KS_Torn_War_Dibs.user.js
+          ! grep -q 'DIBS: LOCKED · RW' KS_Torn_War_Dibs.user.js
+          ! grep -q 'if (rwPhase.phase !== RW_PHASE.LIVE) { scanWarRows(); return; }' KS_Torn_War_Dibs.user.js
+          grep -q 'gateSeconds: 120' KS_Torn_War_Dibs.user.js
+          grep -q 'minFairFight: 2.0' KS_Torn_War_Dibs.user.js
+          grep -q 'maxFairFight: 5.0' KS_Torn_War_Dibs.user.js
+
+      - name: Publish to main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch origin main
+          git checkout main
+          git checkout test/ks-war-dibs-v1.5.135-hospital-clock-exact -- KS_Torn_War_Dibs_v1.5.135_HOSPITAL_CLOCK_EXACT_TEST.txt
+          cp /home/runner/work/Kingshade-Torn-Suite/Kingshade-Torn-Suite/KS_Torn_War_Dibs.user.js KS_Torn_War_Dibs.user.js
+          cp /home/runner/work/Kingshade-Torn-Suite/Kingshade-Torn-Suite/KS_Torn_War_Dibs_v1.5.138.user.js KS_Torn_War_Dibs_v1.5.138.user.js
+          git add KS_Torn_War_Dibs.user.js KS_Torn_War_Dibs_v1.5.138.user.js
+          git commit -m 'release: KS Torn War Dibs v1.5.138'
+          git push origin main
