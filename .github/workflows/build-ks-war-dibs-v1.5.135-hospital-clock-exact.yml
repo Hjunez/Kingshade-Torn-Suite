@@ -1,0 +1,57 @@
+name: Build KS Torn War Dibs 1.5.135 Hospital Clock Exact Test
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.tmp/ks-war-dibs-v1.5.135/GO'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: test/ks-war-dibs-v1.5.135-hospital-clock-exact
+      - name: Build isolated exact-clock test version
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp KS_Torn_War_Dibs_v1.5.134_HOSPITAL_CLOCK_SYNC_TEST.txt KS_Torn_War_Dibs_v1.5.135_HOSPITAL_CLOCK_EXACT_TEST.txt
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('KS_Torn_War_Dibs_v1.5.135_HOSPITAL_CLOCK_EXACT_TEST.txt')
+          s = p.read_text()
+          reps = [
+              ('// @version      1.5.134', '// @version      1.5.135'),
+              ('version: "1.5.134"', 'version: "1.5.135"'),
+              ('KS Torn War Dibs v1.5.134 HOSPITAL CLOCK SYNC TEST', 'KS Torn War Dibs v1.5.135 HOSPITAL CLOCK EXACT TEST'),
+              ('Math.round(apiStatus.until - nowMs() / 1000)', 'Math.ceil(apiStatus.until - nowMs() / 1000) + 1'),
+              ('Math.round(until - nowMs() / 1000)', 'Math.ceil(until - nowMs() / 1000) + 1'),
+          ]
+          for old, new in reps:
+              count = s.count(old)
+              if count != 1:
+                  raise SystemExit(f'Expected exactly one occurrence of {old!r}, found {count}')
+              s = s.replace(old, new, 1)
+          s = s.replace(' * TEST ONLY: Hospital countdown/gating uses the same local browser clock basis as FFScouter War Room.\n', ' * TEST ONLY: Hospital countdown/gating uses FFScouter-aligned second-boundary semantics (ceil + 1s).\n', 1)
+          p.write_text(s)
+          PY
+          cp KS_Torn_War_Dibs_v1.5.135_HOSPITAL_CLOCK_EXACT_TEST.txt /tmp/ks_twd_check.js
+          node --check /tmp/ks_twd_check.js
+          grep -q '^// @version      1.5.135$' KS_Torn_War_Dibs_v1.5.135_HOSPITAL_CLOCK_EXACT_TEST.txt
+          grep -q 'Math.ceil(apiStatus.until - nowMs() / 1000) + 1' KS_Torn_War_Dibs_v1.5.135_HOSPITAL_CLOCK_EXACT_TEST.txt
+          grep -q 'Math.ceil(until - nowMs() / 1000) + 1' KS_Torn_War_Dibs_v1.5.135_HOSPITAL_CLOCK_EXACT_TEST.txt
+      - name: Commit test file
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add KS_Torn_War_Dibs_v1.5.135_HOSPITAL_CLOCK_EXACT_TEST.txt
+          git commit -m 'test: KS Torn War Dibs v1.5.135 exact hospital clock'
+          git push origin HEAD:test/ks-war-dibs-v1.5.135-hospital-clock-exact
