@@ -1,0 +1,101 @@
+name: Build KS time source sync tests
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.tmp/ks-time-source-sync-tests/GO'
+      - '.github/workflows/build-ks-time-source-sync-tests.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Build test files
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp KS_Torn_War_Dibs.user.js /tmp/KS_Torn_War_Dibs_v1.5.139_TIME_SOURCE_SYNC_TEST.txt
+          cp KS_FFScouter_Call_Guard.user.js /tmp/KS_FFScouter_Call_Guard_v1.1.3_TIME_SOURCE_SYNC_TEST.txt
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('/tmp/KS_Torn_War_Dibs_v1.5.139_TIME_SOURCE_SYNC_TEST.txt')
+          s = p.read_text()
+          reps = [
+              ('// @version      1.5.138', '// @version      1.5.139'),
+              ('version: "1.5.138"', 'version: "1.5.139"'),
+              ('KS Torn War Dibs v1.5.138 RW CLAIM GUARD REMOVED TEST', 'KS Torn War Dibs v1.5.139 FFSCOUTER TIME SOURCE SYNC TEST'),
+              ('function nowSeconds() { return Math.floor(nowMs() / 1000); }', 'function nowSeconds() { return Math.floor(getTornNowMs() / 1000); }'),
+              ('Math.ceil(apiStatus.until - nowMs() / 1000) + 1', 'Math.ceil(apiStatus.until - getTornNowMs() / 1000) + 1'),
+              ('Math.ceil(until - nowMs() / 1000) + 1', 'Math.ceil(until - getTornNowMs() / 1000) + 1'),
+          ]
+          for old,new in reps:
+              if s.count(old) != 1:
+                  raise SystemExit(f'War Dibs mismatch {old!r}: {s.count(old)}')
+              s=s.replace(old,new,1)
+          marker=' * TEST ONLY: RW start lock removed. Hospital <=2:00 and FF 2.00-5.00 gates retained.\n'
+          if marker not in s:
+              raise SystemExit('War Dibs marker missing')
+          s=s.replace(marker, marker+' * TIME TEST: Hospital and FFScouter claim-expiry epoch comparisons use Torn/FFScouter-compatible synchronized time.\n',1)
+          p.write_text(s)
+
+          p = Path('/tmp/KS_FFScouter_Call_Guard_v1.1.3_TIME_SOURCE_SYNC_TEST.txt')
+          s = p.read_text()
+          reps = [
+              ('// @version      1.1.2', '// @version      1.1.3'),
+              ('version: "1.1.2"', 'version: "1.1.3"'),
+              ('KS FFScouter Call Guard v1.1.2 COMPLIANCE RELEASE', 'KS FFScouter Call Guard v1.1.3 FFSCOUTER TIME SOURCE SYNC TEST'),
+              ('__ksFFScouterCallGuardV112', '__ksFFScouterCallGuardV113Test'),
+              ('ks-ffcg-dibs-v112-', 'ks-ffcg-dibs-v113-test-'),
+              ('ks-ffcg-shared-v112', 'ks-ffcg-shared-v113-test'),
+          ]
+          for old,new in reps:
+              if s.count(old) < 1:
+                  raise SystemExit(f'Call Guard mismatch {old!r}: {s.count(old)}')
+              s=s.replace(old,new)
+          anchor='''  function normalizeText(value) {\n    return String(value ?? "").replace(/\\s+/g, " ").trim();\n  }\n'''
+          helper='''  function normalizeText(value) {\n    return String(value ?? "").replace(/\\s+/g, " ").trim();\n  }\n\n  function ffscouterNowMs() {\n    for (const candidate of [window.timeNow, window.getCurrentTimestamp]) {\n      if (typeof candidate !== "function") continue;\n      try {\n        const value = Number(candidate.call(window));\n        if (!Number.isFinite(value) || value <= 0) continue;\n        const milliseconds = value < 100000000000 ? value * 1000 : value;\n        if (milliseconds > 1500000000000 && milliseconds < 2500000000000) return milliseconds;\n      } catch {}\n    }\n    return Date.now();\n  }\n\n  function ffscouterNowSeconds() {\n    return Math.floor(ffscouterNowMs() / 1000);\n  }\n'''
+          if s.count(anchor) != 1:
+              raise SystemExit(f'Call Guard normalize anchor mismatch: {s.count(anchor)}')
+          s=s.replace(anchor,helper,1)
+          s=s.replace('expiresAt <= Date.now() / 1000','expiresAt <= ffscouterNowSeconds()')
+          s=s.replace('Number(ownSharedClaim.expiresAt) <= Date.now() / 1000','Number(ownSharedClaim.expiresAt) <= ffscouterNowSeconds()')
+          s=s.replace('Math.floor(Date.now() / 1000)','ffscouterNowSeconds()')
+          s=s.replace('(Date.now() / 1000 + 900)','(ffscouterNowSeconds() + 900)')
+          marker=' * Deterministic no-flicker button rendering retained.\n'
+          if marker not in s:
+              raise SystemExit('Call Guard marker missing')
+          s=s.replace(marker, marker+' * TIME TEST: FFScouter-native timeNow/getCurrentTimestamp is preferred for shared claim epoch comparisons; War Room Hospital gating remains based on FFScouter native rendered countdown.\n',1)
+          p.write_text(s)
+          PY
+
+          node --check /tmp/KS_Torn_War_Dibs_v1.5.139_TIME_SOURCE_SYNC_TEST.txt
+          node --check /tmp/KS_FFScouter_Call_Guard_v1.1.3_TIME_SOURCE_SYNC_TEST.txt
+          grep -q '^// @version      1.5.139$' /tmp/KS_Torn_War_Dibs_v1.5.139_TIME_SOURCE_SYNC_TEST.txt
+          grep -q 'getTornNowMs() / 1000' /tmp/KS_Torn_War_Dibs_v1.5.139_TIME_SOURCE_SYNC_TEST.txt
+          grep -q '^// @version      1.1.3$' /tmp/KS_FFScouter_Call_Guard_v1.1.3_TIME_SOURCE_SYNC_TEST.txt
+          grep -q 'function ffscouterNowMs()' /tmp/KS_FFScouter_Call_Guard_v1.1.3_TIME_SOURCE_SYNC_TEST.txt
+
+      - name: Publish test branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          branch='test/ks-time-source-sync-20260823'
+          git checkout -B "$branch" main
+          cp /tmp/KS_Torn_War_Dibs_v1.5.139_TIME_SOURCE_SYNC_TEST.txt .
+          cp /tmp/KS_FFScouter_Call_Guard_v1.1.3_TIME_SOURCE_SYNC_TEST.txt .
+          git add KS_Torn_War_Dibs_v1.5.139_TIME_SOURCE_SYNC_TEST.txt KS_FFScouter_Call_Guard_v1.1.3_TIME_SOURCE_SYNC_TEST.txt
+          git commit -m 'test: synchronize KS scripts to FFScouter-compatible time source'
+          git push --force-with-lease origin "$branch"
