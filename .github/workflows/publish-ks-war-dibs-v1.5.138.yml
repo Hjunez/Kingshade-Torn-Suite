@@ -8,7 +8,7 @@ on:
       - '.tmp/ks-war-dibs-v1.5.138-live/GO'
   push:
     branches:
-      - trigger-v15138-live
+      - main
     paths:
       - '.tmp/ks-war-dibs-v1.5.138-live/GO'
 
