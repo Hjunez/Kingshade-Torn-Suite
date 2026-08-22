@@ -1,6 +1,11 @@
 name: Build KS time source sync tests
 
 on:
+  workflow_run:
+    workflows:
+      - Validate Kingshade Suite
+    types:
+      - completed
   push:
     branches:
       - main
