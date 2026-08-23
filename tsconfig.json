@@ -18,6 +18,7 @@
   "include": [
     "vitest.config.js",
     "playwright.config.js",
+    "playwright.desktop.config.js",
     "tools/**/*.mjs",
     "test-support/**/*.js",
     "tests/**/*.js"

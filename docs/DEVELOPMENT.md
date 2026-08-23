@@ -42,15 +42,16 @@ The single verification command runs, in order:
 
 Useful focused commands:
 
-| Command                    | Purpose                                      |
-| -------------------------- | -------------------------------------------- |
-| `npm.cmd run syntax`       | Parse-check repository JavaScript with Node. |
-| `npm.cmd run lint`         | Run ESLint without applying fixes.           |
-| `npm.cmd run format:check` | Check formatting without writing files.      |
-| `npm.cmd run typecheck`    | Run strict `checkJs`/JSDoc type analysis.    |
-| `npm.cmd test`             | Run Vitest once.                             |
-| `npm.cmd run test:watch`   | Run Vitest in watch mode.                    |
-| `npm.cmd run test:browser` | Run the Playwright Chromium tests.           |
+| Command                            | Purpose                                              |
+| ---------------------------------- | ---------------------------------------------------- |
+| `npm.cmd run syntax`               | Parse-check repository JavaScript with Node.         |
+| `npm.cmd run lint`                 | Run ESLint without applying fixes.                   |
+| `npm.cmd run format:check`         | Check formatting without writing files.              |
+| `npm.cmd run typecheck`            | Run strict `checkJs`/JSDoc type analysis.            |
+| `npm.cmd test`                     | Run Vitest once.                                     |
+| `npm.cmd run test:watch`           | Run Vitest in watch mode.                            |
+| `npm.cmd run test:browser`         | Run the portable Playwright Chromium tests.          |
+| `npm.cmd run test:browser:desktop` | Run War Dibs UI stress tests in Chromium and Chrome. |
 
 Run only the War Dibs browser regressions with:
 
@@ -93,6 +94,20 @@ countdowns; claim expiry remains on its existing local-clock path. Live FFScoute
 Torn/FFScouter schema drift, and Torn PDA-specific generated CSS remain integration concerns; the
 offline suite verifies the userscript's client-side contracts without making prohibited live
 requests.
+
+### Desktop UI stress testing
+
+The desktop UI suite repeatedly scrolls, reorders, replaces, and recycles rows; remounts the SPA;
+changes visibility and viewport width; and checks long names and titles. Its integrity oracle binds
+each fixture player to unique FF/Est values, then verifies exactly one correctly owned decoration
+and DIBS control per row. Geometry checks detect hidden or clipped text, overlapping rows,
+vertically shifted decorations, and controls outside their action cells.
+
+`npm.cmd run test:browser:desktop` runs this focused suite serially against Playwright's bundled full
+Chromium and the locally installed stable Google Chrome. Unlike the portable default suite, this
+command requires a Chrome installation. The regressions are intentionally evaluated against the
+unchanged published userscript, so a red test documents a reproducible production baseline failure
+until a separately authorized production fix is made.
 
 ## Continuous integration
 

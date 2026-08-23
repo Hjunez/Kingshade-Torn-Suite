@@ -12,6 +12,10 @@ const ownClaimStorageKey = 'ks_torn_war_dibs_bridge_own_claim_v1';
  *   untilOffsetSeconds: number,
  *   fairFight: number,
  *   datasetId?: string,
+ *   title?: string,
+ *   battleStatsEstimate?: number,
+ *   battleStatsEstimateHuman?: string,
+ *   attackCellClass?: string,
  * }} WarDibsRow
  */
 
@@ -78,8 +82,8 @@ function statsForRows(fixture, rows) {
       row.id,
       {
         fair_fight: row.fairFight,
-        bs_estimate: 1_000_000 + index * 10_000,
-        bs_estimate_human: `${1 + index / 100}m`,
+        bs_estimate: row.battleStatsEstimate ?? 1_000_000 + index * 10_000,
+        bs_estimate_human: row.battleStatsEstimateHuman ?? `${1 + index / 100}m`,
       },
     ]),
   );
@@ -467,12 +471,16 @@ export async function renderWarRows(page, fixture, rows) {
         item.className = 'enemy';
         item.dataset.playerId = row.datasetId || row.id;
         item.dataset.until = String(Math.floor(baseNowMs / 1000) + row.untilOffsetSeconds);
+        const attackCellClass = row.attackCellClass || 'attack';
         item.innerHTML = `
-          <div class="member"><a class="user name" href="/profiles.php?XID=${row.id}">${row.name}</a></div>
+          <div class="member">
+            <a class="user name" data-test-player-name href="/profiles.php?XID=${row.id}">${row.name}</a>
+            <span class="player-title" data-test-player-title>${row.title || ''}</span>
+          </div>
           <div class="level">50</div>
           <div class="points">0</div>
           <div class="status hospital">Hospital in Torn City</div>
-          <div class="attack"><a href="/loader.php?sid=attack&user2ID=${row.id}">Attack</a></div>
+          <div class="${attackCellClass}"><a href="/loader.php?sid=attack&user2ID=${row.id}">Attack</a></div>
         `;
         list.append(item);
       }

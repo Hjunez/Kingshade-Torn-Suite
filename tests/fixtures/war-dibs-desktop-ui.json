@@ -1,0 +1,20 @@
+{
+  "basePlayerId": 200000,
+  "rowCount": 24,
+  "scrollCycles": 12,
+  "churnRounds": 6,
+  "longNameIndex": 5,
+  "longTitleIndex": 17,
+  "longName": "Alexandria-Northstar-Very-Long-Player-Name",
+  "longTitle": "Distinguished Veteran Strategist of Kingshade",
+  "desktopViewports": [
+    { "width": 1600, "height": 900 },
+    { "width": 1280, "height": 720 },
+    { "width": 1024, "height": 720 },
+    { "width": 800, "height": 700 }
+  ],
+  "responsiveBoundary": {
+    "above": { "width": 784, "height": 700 },
+    "below": { "width": 783, "height": 700 }
+  }
+}
