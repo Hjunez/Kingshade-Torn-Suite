@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>KS Torn War Dibs deterministic fixture</title>
+    <style>
+      .white-grad,
+      li.enemy {
+        display: flex;
+        position: relative;
+      }
+
+      .member {
+        width: 180px;
+      }
+
+      .level,
+      .status {
+        width: 120px;
+      }
+
+      .attack {
+        width: 96px;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="faction-war">
+      <section class="enemy-faction" data-test-war-scope>
+        <div class="white-grad table-header">
+          <div class="member">Member</div>
+          <div class="level">Level</div>
+          <div class="status">Status</div>
+          <div class="attack">Attack</div>
+        </div>
+        <div id="faction_war_list_id">
+          <li class="act" role="button">Ranked War</li>
+          <ul class="members-list" data-test-enemy-rows></ul>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

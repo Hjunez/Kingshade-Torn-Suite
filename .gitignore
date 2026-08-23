@@ -8,3 +8,10 @@ KS_Status_Diagnostics*.user.js
 Thumbs.db
 *.swp
 *.tmp
+
+# Local JavaScript tooling and test output
+node_modules/
+coverage/
+playwright-report/
+test-results/
+.vitest/

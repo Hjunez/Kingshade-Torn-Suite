@@ -1,0 +1,12 @@
+# Published and pre-existing production artifacts are deliberately immutable.
+*.user.js
+worker.js
+*_CODE_REVIEW.txt
+
+# Dependencies and generated reports.
+node_modules/
+coverage/
+playwright-report/
+test-results/
+.vitest/
+.tmp/

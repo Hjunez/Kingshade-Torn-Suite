@@ -1,0 +1,33 @@
+{
+  "name": "kingshade-torn-suite",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Development and regression tooling for the Kingshade Torn Suite userscripts.",
+  "engines": {
+    "node": ">=22.15.0"
+  },
+  "scripts": {
+    "validate:suite": "node tools/run-suite-validator.mjs",
+    "syntax": "node tools/check-js-syntax.mjs",
+    "lint": "eslint . --max-warnings 0",
+    "format:check": "prettier --check \"package*.json\" .prettierrc.json eslint.config.mjs tsconfig.json vitest.config.js playwright.config.js \"tools/*.mjs\" \"test-support/**/*.js\" \"tests/**/*.{js,json,html}\" docs/DEVELOPMENT.md .github/workflows/development-tests.yml",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:browser": "playwright test",
+    "browser:install": "playwright install chromium",
+    "verify": "node tools/run-verification.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.62.1",
+    "@types/node": "^24.13.3",
+    "eslint": "^10.9.0",
+    "globals": "^17.11.0",
+    "jsdom": "^30.0.1",
+    "prettier": "^3.9.6",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
+  }
+}
