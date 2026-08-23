@@ -83,6 +83,10 @@
       "fairFight": 4.5
     }
   ],
+  "timeSync": {
+    "tornClockOffsetsMs": [1000, -1000],
+    "hospitalUntilFromLocalNowSeconds": 120
+  },
   "claimIds": {
     "first": "10000000-0000-4000-8000-000000000001",
     "second": "10000000-0000-4000-8000-000000000002",

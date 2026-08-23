@@ -25,6 +25,10 @@ const ownClaimStorageKey = 'ks_torn_war_dibs_bridge_own_claim_v1';
  *   claimRow: WarDibsRow,
  *   sharedRow: WarDibsRow,
  *   spaRows: WarDibsRow[],
+ *   timeSync: {
+ *     tornClockOffsetsMs: number[],
+ *     hospitalUntilFromLocalNowSeconds: number,
+ *   },
  *   claimIds: Record<string, string>,
  * }} WarDibsFixture
  */
@@ -85,7 +89,12 @@ function statsForRows(fixture, rows) {
  * Runs in the page before the userscript. It provides the only API transport used
  * by the system under test and exposes deterministic, test-owned server controls.
  *
- * @param {{baseNowMs: number, self: {id: string, name: string}, claimIds: string[]}} options
+ * @param {{
+ *   baseNowMs: number,
+ *   tornClockOffsetMs: number,
+ *   self: {id: string, name: string},
+ *   claimIds: string[],
+ * }} options
  */
 function installWarDibsEnvironment(options) {
   /**
@@ -119,8 +128,8 @@ function installWarDibsEnvironment(options) {
    */
   const state = {
     nowMs: options.baseNowMs,
-    tornTimestampSeconds: Math.floor(options.baseNowMs / 1000),
-    currentTimestampMs: options.baseNowMs,
+    tornTimestampSeconds: Math.floor((options.baseNowMs + options.tornClockOffsetMs) / 1000),
+    currentTimestampMs: options.baseNowMs + options.tornClockOffsetMs,
     self: copy(options.self),
     members: {},
     basics: {
@@ -316,6 +325,11 @@ function installWarDibsEnvironment(options) {
     },
     setCurrentTimestampMs(/** @type {number} */ value) {
       state.currentTimestampMs = Number(value);
+    },
+    setClocks(/** @type {number} */ localNowMs, /** @type {number} */ tornNowMs) {
+      state.nowMs = Number(localNowMs);
+      state.currentTimestampMs = Number(tornNowMs);
+      state.tornTimestampSeconds = Math.floor(Number(tornNowMs) / 1000);
     },
     setTornTimestampSeconds(/** @type {number} */ value) {
       state.tornTimestampSeconds = Number(value);
@@ -523,6 +537,7 @@ export async function requestsFor(page, route) {
 /**
  * @param {import('@playwright/test').Page} page
  * @param {WarDibsRow[] | WarDibsRow} requestedRows
+ * @param {{tornClockOffsetMs?: number}} [options]
  * @returns {Promise<{
  *   fixture: WarDibsFixture,
  *   pageErrors: Error[],
@@ -531,9 +546,13 @@ export async function requestsFor(page, route) {
  *   replaceRows: (rows: WarDibsRow[]) => Promise<void>,
  * }>}
  */
-export async function startWarDibsHarness(page, requestedRows) {
+export async function startWarDibsHarness(page, requestedRows, options = {}) {
   const fixture = await readWarDibsFixture();
   const rows = Array.isArray(requestedRows) ? requestedRows : [requestedRows];
+  const tornClockOffsetMs = Number(options.tornClockOffsetMs ?? 0);
+  if (!Number.isFinite(tornClockOffsetMs)) {
+    throw new TypeError('tornClockOffsetMs must be finite');
+  }
   const pageHtml = await readRepositoryFile('tests/fixtures/war-dibs-page.html');
   /** @type {Error[]} */
   const pageErrors = [];
@@ -543,6 +562,7 @@ export async function startWarDibsHarness(page, requestedRows) {
   page.on('pageerror', (error) => pageErrors.push(error));
   await page.addInitScript(installWarDibsEnvironment, {
     baseNowMs: fixture.baseNowMs,
+    tornClockOffsetMs,
     self: fixture.self,
     claimIds: Object.values(fixture.claimIds),
   });

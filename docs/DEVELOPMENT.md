@@ -84,11 +84,14 @@ out-of-order responses, foreground inactivity, blur/resume, SPA remounts, and pl
 The mock deliberately returns FF rows in reverse order so tests cannot accidentally rely on API
 array position.
 
-Current v1.5.138 behavior uses local `Date.now()` for Hospital countdown and claim expiry even after
-a Torn server-clock sample is recorded. The suite characterizes that shipped behavior rather than
-pretending server-synchronized Hospital time is already implemented. Live FFScouter atomicity,
-live Torn/FFScouter schema drift, and Torn PDA-specific generated CSS remain integration concerns;
-the offline suite verifies the userscript's client-side contracts without making prohibited live
+Hospital countdowns intentionally use local client `Date.now()` so their displayed seconds follow
+the same wall-clock phase observed in FFScouter War Room. Deterministic tests skew Torn synchronized
+time by +1 second and -1 second while checking exact and sub-second transitions through
+2:01 → 2:00 → 1:59, including inactive recovery. Torn response-time offsets and
+`getCurrentTimestamp()` remain available for Torn-specific timing but do not drive Hospital
+countdowns; claim expiry remains on its existing local-clock path. Live FFScouter atomicity, live
+Torn/FFScouter schema drift, and Torn PDA-specific generated CSS remain integration concerns; the
+offline suite verifies the userscript's client-side contracts without making prohibited live
 requests.
 
 ## Continuous integration
