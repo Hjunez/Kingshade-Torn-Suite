@@ -14,7 +14,7 @@ export interface DeliveryVerification {
   status: 'passed' | 'failed' | 'error' | 'skipped';
 }
 
-export interface DeliveryGateInput {
+export interface TestCandidateVerificationInput {
   baselineSha: string | null;
   baselineOwnerVerified: boolean;
   candidateSha: string | null;
@@ -27,6 +27,9 @@ export interface DeliveryGateInput {
   changedPaths: readonly string[];
   requiredProfileIds: readonly string[];
   verification: readonly DeliveryVerification[];
+}
+
+export interface DeliveryGateInput extends TestCandidateVerificationInput {
   independentReview: 'passed' | 'failed' | 'not_run';
   independentReviewId: string | null;
   independentReviewSummary: string;
@@ -65,7 +68,7 @@ export function canStartImplementation(input: ImplementationGateInput): GateDeci
   return { allowed: blockers.length === 0, blockers: [...new Set(blockers)] };
 }
 
-function requiredProfileBlockers(input: DeliveryGateInput): readonly string[] {
+function requiredProfileBlockers(input: TestCandidateVerificationInput): readonly string[] {
   if (input.requiredProfileIds.length === 0) {
     return ['no required test profiles were declared'];
   }
@@ -87,7 +90,7 @@ function requiredProfileBlockers(input: DeliveryGateInput): readonly string[] {
   return blockers;
 }
 
-export function canDeliverTestCandidate(input: DeliveryGateInput): GateDecision {
+export function canVerifyTestCandidate(input: TestCandidateVerificationInput): GateDecision {
   const blockers: string[] = [];
   if (!isFullCommitSha(input.baselineSha)) {
     blockers.push('delivery baseline is not an exact commit SHA');
@@ -140,6 +143,11 @@ export function canDeliverTestCandidate(input: DeliveryGateInput): GateDecision 
   ) {
     blockers.push('one or more executed verification profiles failed');
   }
+  return { allowed: blockers.length === 0, blockers: [...new Set(blockers)] };
+}
+
+export function canDeliverTestCandidate(input: DeliveryGateInput): GateDecision {
+  const blockers = [...canVerifyTestCandidate(input).blockers];
   if (input.independentReview !== 'passed') {
     blockers.push(
       input.independentReview === 'failed'

@@ -813,7 +813,7 @@ describe('C3.5 trusted write approval boundary', () => {
     expect(calls.filter((call) => call === 'task-f')).toHaveLength(1);
   });
 
-  it('rejects skipped transitions and exposes no Worker, patch, test, review, or delivery surface', async () => {
+  it('rejects skipped transitions and exposes no direct Worker, patch, test, review, or delivery surface', async () => {
     const calls: string[] = [];
     const controller = controllerFor({ calls });
     const baselineReady = await baselineReadyState(controller);
@@ -834,6 +834,7 @@ describe('C3.5 trusted write approval boundary', () => {
       'completeDiscovery',
       'createCase',
       'evaluateImplementationGate',
+      'evaluateVerification',
       'executeApprovedImplementation',
       'recordEvidenceAndRootCause',
       'requestWriteApproval',

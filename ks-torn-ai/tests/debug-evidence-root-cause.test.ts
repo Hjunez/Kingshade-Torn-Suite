@@ -511,12 +511,13 @@ describe('C3.4 evidence and root-cause implementation gates', () => {
     }
   });
 
-  it('keeps Worker internals, patch, verification decisions, and review unavailable', () => {
+  it('keeps Worker internals, patch authority, model verification decisions, and review unavailable', () => {
     const controller = controllerFor();
     expect(Object.keys(controller).sort()).toEqual([
       'completeDiscovery',
       'createCase',
       'evaluateImplementationGate',
+      'evaluateVerification',
       'executeApprovedImplementation',
       'recordEvidenceAndRootCause',
       'requestWriteApproval',

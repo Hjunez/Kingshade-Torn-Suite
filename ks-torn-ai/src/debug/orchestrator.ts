@@ -34,6 +34,10 @@ import {
   type SyntheticDebugTransitionReason,
   type SyntheticDebugTransitionRecord,
 } from './state-machine.js';
+import {
+  verifySyntheticDebugWorkerExecution,
+  type SyntheticDebugVerificationDecision,
+} from './verification.js';
 
 const MAX_DISCOVERY_EVIDENCE = 200;
 const CANONICAL_UTC_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
@@ -222,6 +226,7 @@ export interface SyntheticDebugOrchestrationSnapshot {
   readonly writeProposal: DeepReadonly<SyntheticDebugWriteProposal> | null;
   readonly writeApprovalDecision: DeepReadonly<TrustedSyntheticDebugApprovalDecision> | null;
   readonly workerExecution: DeepReadonly<SyntheticDebugWorkerExecutionRecord> | null;
+  readonly verificationDecision: DeepReadonly<SyntheticDebugVerificationDecision> | null;
 }
 
 export type SyntheticDebugOrchestrationOperation =
@@ -233,7 +238,8 @@ export type SyntheticDebugOrchestrationOperation =
   | 'EVALUATE_IMPLEMENTATION_GATE'
   | 'REQUEST_WRITE_APPROVAL'
   | 'RESOLVE_WRITE_APPROVAL'
-  | 'EXECUTE_APPROVED_IMPLEMENTATION';
+  | 'EXECUTE_APPROVED_IMPLEMENTATION'
+  | 'EVALUATE_VERIFICATION';
 
 export type SyntheticDebugOrchestrationErrorCode =
   | 'MALFORMED_MODEL_RECORD'
@@ -250,6 +256,7 @@ export type SyntheticDebugOrchestrationErrorCode =
   | 'TRUSTED_APPROVAL_SCOPE_MISMATCH'
   | 'TRUSTED_APPROVAL_REPLAY_MISMATCH'
   | 'WORKER_EXECUTION_INTEGRITY_MISMATCH'
+  | 'VERIFICATION_EXECUTION_INTEGRITY_MISMATCH'
   | 'OUT_OF_ORDER'
   | 'TERMINAL_STATE'
   | 'TRANSITION_REJECTED';
@@ -311,6 +318,9 @@ export interface SyntheticDebugDiscoveryController {
     snapshot: SyntheticDebugOrchestrationSnapshot,
   ): Promise<SyntheticDebugOrchestrationResult>;
   executeApprovedImplementation(
+    snapshot: SyntheticDebugOrchestrationSnapshot,
+  ): Promise<SyntheticDebugOrchestrationResult>;
+  evaluateVerification(
     snapshot: SyntheticDebugOrchestrationSnapshot,
   ): Promise<SyntheticDebugOrchestrationResult>;
 }
@@ -381,6 +391,7 @@ type SyntheticDebugSnapshotPatch = Partial<
     | 'writeProposal'
     | 'writeApprovalDecision'
     | 'workerExecution'
+    | 'verificationDecision'
   >
 >;
 
@@ -428,8 +439,9 @@ function fail(
   operation: SyntheticDebugOrchestrationOperation,
   code: string,
   summary: string,
+  patch: SyntheticDebugSnapshotPatch = {},
 ): SyntheticDebugOrchestrationResult {
-  return apply(snapshot, operation, 'FAIL', [{ code, summary }], 'FAILED');
+  return apply(snapshot, operation, 'FAIL', [{ code, summary }], 'FAILED', patch);
 }
 
 function request(
@@ -591,6 +603,19 @@ function writeApprovalBindingKey(
   proposal: DeepReadonly<SyntheticDebugWriteProposal>,
 ): string {
   return JSON.stringify([snapshot.projectId, snapshot.caseId, proposal.proposalId]);
+}
+
+function workerExecutionBindingKey(
+  snapshot: SyntheticDebugOrchestrationSnapshot,
+  proposal: DeepReadonly<SyntheticDebugWriteProposal>,
+  decision: DeepReadonly<TrustedSyntheticDebugApprovalDecision>,
+): string {
+  return JSON.stringify([
+    snapshot.projectId,
+    snapshot.caseId,
+    proposal.proposalId,
+    decision.decisionReferenceId,
+  ]);
 }
 
 async function authorize(
@@ -828,6 +853,7 @@ export function createSyntheticDebugDiscoveryController(
   const writeProposalResults = new Map<string, SyntheticDebugOrchestrationResult>();
   const writeApprovalResults = new Map<string, Promise<SyntheticDebugOrchestrationResult>>();
   const workerExecutionResults = new Map<string, Promise<SyntheticDebugOrchestrationResult>>();
+  const verificationResults = new Map<string, Promise<SyntheticDebugOrchestrationResult>>();
   const approvalDecisionBindings = new Map<
     string,
     {
@@ -900,6 +926,115 @@ export function createSyntheticDebugDiscoveryController(
         adaptSyntheticDebugWorkerError(workerError, proposal),
       );
     }
+  }
+
+  function capturedWorkerExecutionMatches(
+    snapshotRecord: DeepReadonly<SyntheticDebugWorkerExecutionRecord>,
+    trustedRecord: DeepReadonly<SyntheticDebugWorkerExecutionRecord>,
+  ): boolean {
+    try {
+      return JSON.stringify(snapshotRecord) === JSON.stringify(trustedRecord);
+    } catch {
+      return false;
+    }
+  }
+
+  function verificationTransitionReasons(
+    verification: DeepReadonly<SyntheticDebugVerificationDecision>,
+  ): readonly [SyntheticDebugTransitionReason, ...SyntheticDebugTransitionReason[]] | null {
+    if (verification.blockers.length === 0) return null;
+    return verification.blockers.map(({ code, summary }) => ({ code, summary })) as [
+      SyntheticDebugTransitionReason,
+      ...SyntheticDebugTransitionReason[],
+    ];
+  }
+
+  async function evaluatePendingVerification(
+    snapshot: SyntheticDebugOrchestrationSnapshot,
+    proposal: DeepReadonly<SyntheticDebugWriteProposal>,
+    decision: DeepReadonly<TrustedSyntheticDebugApprovalDecision>,
+    bindingKey: string,
+    trustedExecutionPromise: Promise<SyntheticDebugOrchestrationResult>,
+  ): Promise<SyntheticDebugOrchestrationResult> {
+    const operation = 'EVALUATE_VERIFICATION';
+    const trustedExecution = await trustedExecutionPromise;
+    const snapshotRecord = snapshot.workerExecution;
+    const trustedRecord = trustedExecution.ok ? trustedExecution.snapshot.workerExecution : null;
+    if (
+      snapshotRecord === null ||
+      trustedRecord === null ||
+      !trustedExecution.ok ||
+      trustedExecution.status !== 'ADVANCED' ||
+      trustedExecution.snapshot.machine.state !== 'VERIFYING' ||
+      trustedExecution.snapshot.caseId !== snapshot.caseId ||
+      trustedExecution.snapshot.projectId !== snapshot.projectId ||
+      trustedExecution.snapshot.writeProposal?.proposalId !== proposal.proposalId ||
+      trustedExecution.snapshot.writeApprovalDecision?.decisionReferenceId !==
+        decision.decisionReferenceId ||
+      !capturedWorkerExecutionMatches(snapshotRecord, trustedRecord)
+    ) {
+      return fail(
+        snapshot,
+        operation,
+        'VERIFICATION_EXECUTION_INTEGRITY_MISMATCH',
+        'Verification rejected Worker evidence that was not the cached trusted C3.6 result.',
+      );
+    }
+
+    const existing = verificationResults.get(bindingKey);
+    if (existing !== undefined) return await existing;
+
+    const verification = deepFreeze(
+      verifySyntheticDebugWorkerExecution({
+        caseId: snapshot.caseId,
+        projectId: snapshot.projectId,
+        baselineOwnerVerified:
+          snapshot.knownGoodBaseline?.ownerVerification.status === 'OWNER_VERIFIED',
+        problemEvidenceItems: snapshot.reproducibleDefectEvidence.length,
+        rootCauseRecorded:
+          snapshot.rootCause !== null && snapshot.rootCause.explanation.trim().length > 0,
+        proposal,
+        workerExecution: trustedRecord,
+      }),
+    );
+    const patch = { verificationDecision: verification } as const;
+    if (verification.status === 'PASSED') {
+      const result = apply(
+        snapshot,
+        operation,
+        'START_REVIEW',
+        [
+          {
+            code: 'PRE_REVIEW_VERIFICATION_PASSED',
+            summary:
+              'The cached trusted C3.6 result passed the centralized pre-review verification policy.',
+          },
+        ],
+        'ADVANCED',
+        patch,
+      );
+      verificationResults.set(bindingKey, Promise.resolve(result));
+      return result;
+    }
+
+    const reasons = verificationTransitionReasons(verification);
+    if (reasons === null) {
+      const result = fail(
+        snapshot,
+        operation,
+        'VERIFICATION_DECISION_INTEGRITY_MISMATCH',
+        'A non-passing verification decision requires at least one structured blocker.',
+        patch,
+      );
+      verificationResults.set(bindingKey, Promise.resolve(result));
+      return result;
+    }
+    const result =
+      verification.status === 'FAILED'
+        ? apply(snapshot, operation, 'FAIL', reasons, 'FAILED', patch)
+        : block(snapshot, operation, reasons, patch);
+    verificationResults.set(bindingKey, Promise.resolve(result));
+    return result;
   }
 
   async function resolvePendingWriteApproval(
@@ -1060,6 +1195,7 @@ export function createSyntheticDebugDiscoveryController(
           writeProposal: null,
           writeApprovalDecision: null,
           workerExecution: null,
+          verificationDecision: null,
         }),
       });
     },
@@ -1578,18 +1714,87 @@ export function createSyntheticDebugDiscoveryController(
         );
       }
 
-      const bindingKey = JSON.stringify([
-        snapshot.projectId,
-        snapshot.caseId,
-        proposal.proposalId,
-        decision.decisionReferenceId,
-      ]);
+      const bindingKey = workerExecutionBindingKey(snapshot, proposal, decision);
       const existing = workerExecutionResults.get(bindingKey);
       if (existing !== undefined) return await existing;
 
       const execution = executePendingWorker(snapshot, proposal, decision);
       workerExecutionResults.set(bindingKey, execution);
       return await execution;
+    },
+
+    async evaluateVerification(snapshot: SyntheticDebugOrchestrationSnapshot) {
+      const operation = 'EVALUATE_VERIFICATION';
+      const invalid = requireState(snapshot, operation, 'VERIFYING');
+      if (invalid !== null) return invalid;
+
+      const proposal = snapshot.writeProposal;
+      const decisionInput = snapshot.writeApprovalDecision;
+      if (
+        proposal === null ||
+        decisionInput === null ||
+        snapshot.workerExecution === null ||
+        snapshot.verificationDecision !== null
+      ) {
+        return fail(
+          snapshot,
+          operation,
+          'VERIFICATION_EXECUTION_INTEGRITY_MISMATCH',
+          'Verification requires one unevaluated cached C3.6 Worker execution.',
+        );
+      }
+
+      const parsedProposal = syntheticDebugWriteProposalSchema.safeParse(proposal);
+      const parsedDecision = trustedSyntheticDebugApprovalDecisionSchema.safeParse(decisionInput);
+      if (!parsedProposal.success || !parsedDecision.success) {
+        return fail(
+          snapshot,
+          operation,
+          'VERIFICATION_EXECUTION_INTEGRITY_MISMATCH',
+          'Verification requires the strict sealed proposal and trusted approval records.',
+        );
+      }
+      const decision = parsedDecision.data;
+      if (!approvedWriteProposalMatchesSnapshot(snapshot, proposal, decision)) {
+        return fail(
+          snapshot,
+          operation,
+          'VERIFICATION_EXECUTION_INTEGRITY_MISMATCH',
+          'Verification rejected a proposal or approval outside the active sealed case.',
+        );
+      }
+
+      const approvalBinding = writeApprovalBindingKey(snapshot, proposal);
+      const recordedApproval = approvalDecisionBindings.get(decision.decisionReferenceId);
+      if (
+        recordedApproval?.bindingKey !== approvalBinding ||
+        recordedApproval.decision !== 'APPROVED'
+      ) {
+        return fail(
+          snapshot,
+          operation,
+          'VERIFICATION_EXECUTION_INTEGRITY_MISMATCH',
+          'Verification requires the controller-bound application approval decision.',
+        );
+      }
+
+      const bindingKey = workerExecutionBindingKey(snapshot, proposal, decision);
+      const trustedExecution = workerExecutionResults.get(bindingKey);
+      if (trustedExecution === undefined) {
+        return fail(
+          snapshot,
+          operation,
+          'VERIFICATION_EXECUTION_INTEGRITY_MISMATCH',
+          'Verification could not resolve a cached trusted C3.6 Worker result.',
+        );
+      }
+      return await evaluatePendingVerification(
+        snapshot,
+        proposal,
+        decision,
+        bindingKey,
+        trustedExecution,
+      );
     },
   });
 }
