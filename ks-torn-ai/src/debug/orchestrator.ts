@@ -1,11 +1,13 @@
 import { z } from 'zod';
 
 import { selectKnownGoodBaseline, type BaselineEvidence } from '../repository/baseline.js';
-import { isFullCommitSha } from './gates.js';
+import { canStartImplementation, isFullCommitSha, type GateDecision } from './gates.js';
 import {
   parseModelSyntheticDebugRecord,
+  type SyntheticDebugEvidenceReference,
   parseTrustedSyntheticDebugBaselineRecord,
   type SyntheticDebugIntakeRecord,
+  type SyntheticDebugRootCauseRecord,
   type TrustedSyntheticDebugBaselineRecord,
 } from './records.js';
 import {
@@ -21,6 +23,11 @@ import {
 
 const MAX_DISCOVERY_EVIDENCE = 200;
 const CANONICAL_UTC_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const REPRODUCIBLE_EVIDENCE_KINDS = new Set<SyntheticDebugEvidenceReference['kind']>([
+  'REPRODUCIBLE',
+  'AUTOMATED_TEST',
+  'SYNTHETIC_FIXTURE',
+]);
 
 const exactCommitShaSchema = z
   .string()
@@ -159,17 +166,24 @@ export interface SyntheticDebugOrchestrationSnapshot {
   readonly intake: DeepReadonly<SyntheticDebugIntakeRecord>;
   readonly discovery: SyntheticDebugDiscoverySummary | null;
   readonly knownGoodBaseline: DeepReadonly<TrustedSyntheticDebugBaselineRecord> | null;
+  readonly reproducibleDefectEvidence: readonly DeepReadonly<SyntheticDebugEvidenceReference>[];
+  readonly rootCause: DeepReadonly<SyntheticDebugRootCauseRecord> | null;
+  readonly implementationGate: DeepReadonly<GateDecision> | null;
 }
 
 export type SyntheticDebugOrchestrationOperation =
   | 'CREATE_CASE'
   | 'START_DISCOVERY'
   | 'COMPLETE_DISCOVERY'
-  | 'RESOLVE_TRUSTED_BASELINE';
+  | 'RESOLVE_TRUSTED_BASELINE'
+  | 'RECORD_EVIDENCE_AND_ROOT_CAUSE'
+  | 'EVALUATE_IMPLEMENTATION_GATE';
 
 export type SyntheticDebugOrchestrationErrorCode =
   | 'MALFORMED_MODEL_RECORD'
   | 'UNSUPPORTED_RECORD_KIND'
+  | 'EVIDENCE_SCOPE_MISMATCH'
+  | 'ROOT_CAUSE_SCOPE_MISMATCH'
   | 'OUT_OF_ORDER'
   | 'TERMINAL_STATE'
   | 'TRANSITION_REJECTED';
@@ -216,6 +230,13 @@ export interface SyntheticDebugDiscoveryController {
   resolveTrustedBaseline(
     snapshot: SyntheticDebugOrchestrationSnapshot,
   ): Promise<SyntheticDebugOrchestrationResult>;
+  recordEvidenceAndRootCause(
+    snapshot: SyntheticDebugOrchestrationSnapshot,
+    rootCauseInput: unknown,
+  ): SyntheticDebugOrchestrationResult;
+  evaluateImplementationGate(
+    snapshot: SyntheticDebugOrchestrationSnapshot,
+  ): SyntheticDebugOrchestrationResult;
 }
 
 function deepFreeze<T>(value: T): DeepReadonly<T> {
@@ -279,7 +300,16 @@ function apply(
   event: SyntheticDebugEvent,
   reasons: readonly [SyntheticDebugTransitionReason, ...SyntheticDebugTransitionReason[]],
   status: 'ADVANCED' | 'BLOCKED' | 'FAILED',
-  patch: Partial<Pick<SyntheticDebugOrchestrationSnapshot, 'discovery' | 'knownGoodBaseline'>> = {},
+  patch: Partial<
+    Pick<
+      SyntheticDebugOrchestrationSnapshot,
+      | 'discovery'
+      | 'knownGoodBaseline'
+      | 'reproducibleDefectEvidence'
+      | 'rootCause'
+      | 'implementationGate'
+    >
+  > = {},
 ): SyntheticDebugOrchestrationResult {
   const transitioned = transitionSyntheticDebugMachine(snapshot.machine, { event, reasons });
   if (!transitioned.ok) {
@@ -298,8 +328,14 @@ function block(
   snapshot: SyntheticDebugOrchestrationSnapshot,
   operation: SyntheticDebugOrchestrationOperation,
   reasons: readonly [SyntheticDebugTransitionReason, ...SyntheticDebugTransitionReason[]],
+  patch: Partial<
+    Pick<
+      SyntheticDebugOrchestrationSnapshot,
+      'reproducibleDefectEvidence' | 'rootCause' | 'implementationGate'
+    >
+  > = {},
 ): SyntheticDebugOrchestrationResult {
-  return apply(snapshot, operation, 'BLOCK', reasons, 'BLOCKED');
+  return apply(snapshot, operation, 'BLOCK', reasons, 'BLOCKED', patch);
 }
 
 function fail(
@@ -494,6 +530,63 @@ function baselineBlockers(
   return blockers;
 }
 
+function reproducibleEvidenceFor(
+  intake: DeepReadonly<SyntheticDebugIntakeRecord>,
+  evidenceIds: readonly string[],
+): readonly DeepReadonly<SyntheticDebugEvidenceReference>[] {
+  const referenced = new Set(evidenceIds);
+  return intake.evidenceReferences.filter(
+    (evidence) =>
+      referenced.has(evidence.evidenceId) && REPRODUCIBLE_EVIDENCE_KINDS.has(evidence.kind),
+  );
+}
+
+function unresolvedBaselineBlocker(
+  baseline: DeepReadonly<TrustedSyntheticDebugBaselineRecord> | null,
+): string | null {
+  if (baseline === null || baseline.knownBlockers.length === 0) return null;
+  return [...new Set(baseline.knownBlockers)].join('; ');
+}
+
+function rootCauseUncertainty(
+  rootCause: DeepReadonly<SyntheticDebugRootCauseRecord> | null,
+): readonly string[] {
+  if (rootCause === null) return [];
+  return [
+    ...(rootCause.status === 'verified' ? [] : [`root cause status remains ${rootCause.status}`]),
+    ...rootCause.unresolvedUncertainty,
+  ];
+}
+
+function implementationDecision(
+  snapshot: SyntheticDebugOrchestrationSnapshot,
+  evidence: readonly DeepReadonly<SyntheticDebugEvidenceReference>[],
+  rootCause: DeepReadonly<SyntheticDebugRootCauseRecord> | null,
+): GateDecision {
+  const baseline = snapshot.knownGoodBaseline;
+  const baselineBlocker = unresolvedBaselineBlocker(baseline);
+  return canStartImplementation({
+    knownGoodBaselineSha: baseline?.commitSha ?? null,
+    baselineOwnerVerified: baseline?.ownerVerification.status === 'OWNER_VERIFIED',
+    evidenceItems: evidence.length,
+    rootCauseRecorded: rootCause !== null && rootCause.explanation.trim().length > 0,
+    ...(baselineBlocker === null ? {} : { unresolvedBaselineBlocker: baselineBlocker }),
+    unresolvedBlockingUncertainty: rootCauseUncertainty(rootCause),
+  });
+}
+
+function gateBlockers(
+  decision: GateDecision,
+): readonly [SyntheticDebugTransitionReason, ...SyntheticDebugTransitionReason[]] {
+  if (decision.blockers.length === 0) {
+    throw new Error('A blocked implementation decision requires at least one gate blocker');
+  }
+  return decision.blockers.map((summary) => ({
+    code: 'IMPLEMENTATION_GATE_BLOCKER',
+    summary,
+  })) as [SyntheticDebugTransitionReason, ...SyntheticDebugTransitionReason[]];
+}
+
 export function createSyntheticDebugDiscoveryController(
   dependencies: SyntheticDebugOrchestratorDependencies = {},
 ): SyntheticDebugDiscoveryController {
@@ -540,6 +633,9 @@ export function createSyntheticDebugDiscoveryController(
           intake,
           discovery: null,
           knownGoodBaseline: null,
+          reproducibleDefectEvidence: [],
+          rootCause: null,
+          implementationGate: null,
         }),
       });
     },
@@ -735,6 +831,134 @@ export function createSyntheticDebugDiscoveryController(
         ],
         'ADVANCED',
         { knownGoodBaseline: deepFreeze(baseline) },
+      );
+    },
+
+    recordEvidenceAndRootCause(
+      snapshot: SyntheticDebugOrchestrationSnapshot,
+      rootCauseInput: unknown,
+    ) {
+      const operation = 'RECORD_EVIDENCE_AND_ROOT_CAUSE';
+      const invalid = requireState(snapshot, operation, 'BASELINE_READY');
+      if (invalid !== null) return invalid;
+
+      if (
+        snapshot.intake.caseId !== snapshot.caseId ||
+        snapshot.intake.projectId !== snapshot.projectId
+      ) {
+        return reject(
+          snapshot,
+          operation,
+          'EVIDENCE_SCOPE_MISMATCH',
+          'The evidence container does not match the active case and project',
+        );
+      }
+
+      if (rootCauseInput === null || rootCauseInput === undefined) {
+        const evidence = reproducibleEvidenceFor(
+          snapshot.intake,
+          snapshot.intake.evidenceReferences.map(({ evidenceId }) => evidenceId),
+        );
+        const decision = deepFreeze(implementationDecision(snapshot, evidence, null));
+        return block(snapshot, operation, gateBlockers(decision), {
+          reproducibleDefectEvidence: evidence,
+          rootCause: null,
+          implementationGate: decision,
+        });
+      }
+
+      let parsed;
+      try {
+        parsed = parseModelSyntheticDebugRecord(rootCauseInput);
+      } catch {
+        return reject(
+          snapshot,
+          operation,
+          'MALFORMED_MODEL_RECORD',
+          'Expected a strict model-safe synthetic root-cause record',
+        );
+      }
+      if (parsed.recordKind !== 'ROOT_CAUSE') {
+        return reject(
+          snapshot,
+          operation,
+          'UNSUPPORTED_RECORD_KIND',
+          `Record kind ${parsed.recordKind} is not accepted for Task E`,
+        );
+      }
+      if (parsed.caseId !== snapshot.caseId || parsed.projectId !== snapshot.projectId) {
+        return reject(
+          snapshot,
+          operation,
+          'ROOT_CAUSE_SCOPE_MISMATCH',
+          'The root-cause record does not match the active case and project',
+        );
+      }
+
+      const evidenceCounts = new Map<string, number>();
+      for (const evidence of snapshot.intake.evidenceReferences) {
+        evidenceCounts.set(evidence.evidenceId, (evidenceCounts.get(evidence.evidenceId) ?? 0) + 1);
+      }
+      const unresolvedEvidence = parsed.evidenceReferences.filter(
+        (evidenceId) => evidenceCounts.get(evidenceId) !== 1,
+      );
+      if (unresolvedEvidence.length > 0) {
+        return reject(
+          snapshot,
+          operation,
+          'EVIDENCE_SCOPE_MISMATCH',
+          `Root-cause evidence is absent or ambiguous in the active case: ${unresolvedEvidence.join(', ')}`,
+        );
+      }
+
+      const rootCause = deepFreeze(parsed);
+      const evidence = deepFreeze(
+        reproducibleEvidenceFor(snapshot.intake, rootCause.evidenceReferences),
+      );
+      return apply(
+        snapshot,
+        operation,
+        'MARK_ROOT_CAUSE_READY',
+        [
+          {
+            code: 'EVIDENCE_AND_ROOT_CAUSE_RECORDED',
+            summary: `Recorded the root cause with ${String(evidence.length)} reproducible defect-evidence item(s).`,
+          },
+        ],
+        'ADVANCED',
+        {
+          reproducibleDefectEvidence: evidence,
+          rootCause,
+          implementationGate: null,
+        },
+      );
+    },
+
+    evaluateImplementationGate(snapshot: SyntheticDebugOrchestrationSnapshot) {
+      const operation = 'EVALUATE_IMPLEMENTATION_GATE';
+      const invalid = requireState(snapshot, operation, 'ROOT_CAUSE_READY');
+      if (invalid !== null) return invalid;
+
+      const decision = deepFreeze(
+        implementationDecision(snapshot, snapshot.reproducibleDefectEvidence, snapshot.rootCause),
+      );
+      if (!decision.allowed) {
+        return block(snapshot, operation, gateBlockers(decision), {
+          implementationGate: decision,
+        });
+      }
+      return apply(
+        snapshot,
+        operation,
+        'MARK_IMPLEMENTATION_READY',
+        [
+          {
+            code: 'IMPLEMENTATION_GATE_PASSED',
+            summary: 'The existing implementation gate accepted every Task E precondition.',
+          },
+        ],
+        'ADVANCED',
+        { implementationGate: decision },
       );
     },
   });

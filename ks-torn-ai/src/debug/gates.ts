@@ -6,6 +6,7 @@ export interface ImplementationGateInput {
   evidenceItems: number;
   rootCauseRecorded: boolean;
   unresolvedBaselineBlocker?: string | null;
+  unresolvedBlockingUncertainty?: readonly string[];
 }
 
 export interface DeliveryVerification {
@@ -58,7 +59,10 @@ export function canStartImplementation(input: ImplementationGateInput): GateDeci
   if (input.unresolvedBaselineBlocker !== undefined && input.unresolvedBaselineBlocker !== null) {
     blockers.push('baseline blocker: ' + input.unresolvedBaselineBlocker);
   }
-  return { allowed: blockers.length === 0, blockers };
+  blockers.push(
+    ...(input.unresolvedBlockingUncertainty ?? []).map((item) => 'blocking uncertainty: ' + item),
+  );
+  return { allowed: blockers.length === 0, blockers: [...new Set(blockers)] };
 }
 
 function requiredProfileBlockers(input: DeliveryGateInput): readonly string[] {

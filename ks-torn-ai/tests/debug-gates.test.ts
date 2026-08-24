@@ -61,6 +61,28 @@ describe('Debug MVP gates', () => {
     ).toBe(true);
   });
 
+  it('preserves and blocks unresolved implementation uncertainty deterministically', () => {
+    expect(
+      canStartImplementation({
+        knownGoodBaselineSha: baseline,
+        baselineOwnerVerified: true,
+        evidenceItems: 1,
+        rootCauseRecorded: true,
+        unresolvedBlockingUncertainty: [
+          'The root-cause hypothesis is not verified.',
+          'The root-cause hypothesis is not verified.',
+          'The affected surface is still uncertain.',
+        ],
+      }),
+    ).toEqual({
+      allowed: false,
+      blockers: [
+        'blocking uncertainty: The root-cause hypothesis is not verified.',
+        'blocking uncertainty: The affected surface is still uncertain.',
+      ],
+    });
+  });
+
   it('blocks failed or skipped required tests and missing independent review evidence', () => {
     const decision = canDeliverTestCandidate({
       ...delivery,
