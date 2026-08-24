@@ -8,6 +8,12 @@ KS Leslie is one shared Torn intelligence platform with strict per-user capabili
 
 Access is denied unless a role and policy explicitly grant it. Authorization is evaluated server-side before retrieval and before every tool invocation. Prompt instructions are not an authorization boundary.
 
+## Phase C2 local runtime boundary
+
+Phase C2 constructs one explicit local `OWNER_DEVELOPER` context in trusted application wiring. It carries the actor identity, role/capability identity, project grants, allowed knowledge zones, and any owner or faction scope used for authorization. The model cannot provide, replace, or escalate those fields.
+
+This context is the minimum boundary needed for safe local memory. It is not a full identity service, account-management system, faction administrator, sharing workflow, or multi-user RBAC implementation. The broader roles below remain the intended access model, not a claim that the complete product exists in Phase C2.
+
 ## Initial roles
 
 ### OWNER_DEVELOPER
@@ -76,7 +82,23 @@ A user's own conversations, preferences, saved analyses, and private notes. This
 
 ## Memory isolation
 
-Each conversation and durable memory record carries an owner, tenant/faction scope where relevant, allowed knowledge zones, and provenance. Retrieval must filter by authorization before semantic ranking. Unauthorized material must never be retrieved and then hidden by the model afterward.
+Conversation sessions and durable project memory are separate. A conversation identifier provides dialogue continuity; it does not authorize memory access and its transcript is not silently converted into durable records.
+
+Each durable record carries its project, knowledge zone, provenance, verification state, and owner or tenant/faction scope where relevant. Trusted application context, rather than model input, determines the actor, role, grants, and allowed zones. Retrieval first excludes every unauthorized project, zone, owner, and faction record and only then scores and ranks the remaining records. Unauthorized material must not influence rankings or summaries and must never be retrieved and then hidden by the model afterward.
+
+Missing context, unknown zones, ungranted projects, mismatched `USER_PRIVATE` owners, and mismatched `FACTION_SHARED` tenant/faction scopes are denied. `PRIVATE_KINGSHADE_DEV` is never exposed to a public or advisor-style context merely because another agent or user can retrieve it.
+
+## Provenance and verification
+
+Durable records distinguish official/current, trusted owner/user-verified, community-derived, automated/test, and inference/hypothesis evidence. Owner verification requires an explicit trusted application or user-verification event. CI success, passing tests, release records, newer commits, and model inference can support a candidate but cannot create owner verification.
+
+Model-originated writes remain pending hypotheses. Persistence alone never promotes them. Supersession and invalidation retain prior records for audit, and contradictory active evidence remains visible until an explicit trusted resolution; there is no automatic latest-wins rule for known-good evidence.
+
+## Curated ingestion boundary
+
+Curated Torn/Kingshade knowledge is accepted only through an explicit schema-validated manifest. The ingestion path does not recursively scan folders, discover arbitrary files, or fetch remote URLs. Every entry supplies its project, zone, provenance, source description, content, and verification state and passes through the same authorization and durable-write service as other records.
+
+Before persistence, bounded content checks reject NUL/binary-like payloads, likely credentials or session material, and identifiable unrelated personal-data categories. Detection is layered and best-effort rather than a guarantee. Rejection errors and audit metadata do not echo the rejected value.
 
 ## Tool authorization
 
@@ -112,7 +134,10 @@ Security-relevant operations record actor, role, requested capability, project, 
 
 - Roles are enforced in application code, never only in prompts.
 - Knowledge filtering happens before retrieval.
+- Unauthorized records cannot influence ranking or summaries.
 - Tool authorization happens before invocation.
+- Model input cannot select or escalate actor identity, role, project grants, allowed zones, or tenant/faction authority.
+- Automated, release, or inferred evidence cannot fabricate owner verification.
 - No Torn gameplay automation.
 - Torn API access remains read-only.
 - No role receives a private development source through summaries, citations, embeddings, cached answers, or cross-user memory leakage.

@@ -11,8 +11,8 @@ The AI model is not the source of truth. Evidence, repository state, test output
 3. Engineering specialist — architecture, debugging, state machines, and implementation reasoning.
 4. Review specialist — independent challenge of assumptions, regressions, compliance, and test coverage.
 5. Identity and authorization — server-side role, capability, project, and knowledge-zone enforcement.
-6. Session memory — persistent conversational context isolated by user and scope.
-7. Knowledge memory — vector-store retrieval with provenance metadata and authorization filtering; added in v0.2.
+6. Session memory — OpenAI Conversations dialogue continuity, stored independently from project memory.
+7. Project memory — local, schema-validated Torn/Kingshade records with provenance, verification, lifecycle history, and pre-ranking authorization.
 8. Core service — remote-accessible Leslie brain, conversations, policies, research, and orchestration.
 9. Local Worker — authenticated outbound-connected Windows worker for isolated repository and test execution.
 10. External tools — Torn API, Git/GitHub, documentation sources, and test runners, each with explicit permissions.
@@ -26,7 +26,24 @@ Phase C1 makes the Core capability topology explicit and enforces it through age
 - Torn Engineering receives read-only Repository Intelligence and, only when trusted application configuration supplies it, the existing Worker tool layer. Worker operations that can create a candidate are reachable only through Engineering and still require the existing private application-issued grant, SDK approval, exact baseline, isolated worktree, scoped paths, and verification gates. Engineering cannot self-approve a candidate.
 - Torn Review independently inspects repository evidence, assumptions, regression risk, Torn compliance, secret leakage, state-machine behavior, PDA/mobile/browser impact, and missing coverage. Review is read-only, receives no Worker tools, and does not grant implementation approval.
 
-No Core agent receives a generic shell or process-execution primitive. Persistent project memory and knowledge ingestion, plus the full Debug MVP orchestration state machine, remain pending after Phase C1.
+No Core agent receives a generic shell or process-execution primitive. Persistent project memory and knowledge ingestion, plus the full Debug MVP orchestration state machine, remain pending after Phase C1. Phase C2 adds the bounded memory and curated-ingestion foundation; the Debug MVP orchestration state machine remains pending.
+
+## Phase C2 persistent project memory
+
+Phase C2 composes two deliberately separate forms of continuity:
+
+- A conversation session retains dialogue through an OpenAI Conversations identifier.
+- Durable project memory retains explicit structured facts, decisions, baselines, failures, test evidence, security decisions, and curated Torn notes in the configured local state directory.
+
+Conversations are not automatically copied, summarized, or indexed into project memory. Each durable record identifies its project, knowledge zone, source and provenance class, verification state, timestamps, and lifecycle or supersession relationship. Exact duplicates and identifier collisions are handled deterministically. Supersession and invalidation preserve the older record for audit, and unresolved contradictory active records remain visible instead of allowing the newest record to win automatically.
+
+Trusted application wiring supplies actor identity, role, project grants, allowed zones, and any owner or faction scope. Records are filtered against that context before text scoring or result ranking, so unauthorized records cannot affect ranking or summaries. Missing context, unknown zones, ungranted projects, mismatched private owners, and mismatched faction scopes deny access. The model cannot change or escalate this context.
+
+The local CLI uses an explicit `OWNER_DEVELOPER` context as the minimum safe Phase C2 runtime boundary. It is not account management, faction administration, or a complete multi-user RBAC implementation. Agent-originated memory writes remain pending hypotheses and cannot assert owner verification.
+
+Curated knowledge enters through a bounded, schema-validated manifest passed to the ingestion service. The parser does not recursively scan directories or fetch source URLs. The same access, validation, provenance, and persistence path applies to curated entries and direct memory writes. Content checks reject oversized, NUL/binary-like, likely-secret, and identifiable unrelated personal-data payloads on a best-effort basis without echoing rejected values.
+
+See `docs/PERSISTENT_MEMORY.md` for the complete C2 boundary.
 
 ## Access model
 
@@ -59,9 +76,12 @@ KS Leslie is designed as a remotely reachable Core plus an optional local Worker
 Every material conclusion should be attributable to one of these classes:
 
 - OFFICIAL_CURRENT — current Torn documentation, Swagger/API, rules, or directly observed live Torn state.
-- USER_VERIFIED — reproducible user artifact or test result.
+- USER_VERIFIED — explicit trusted owner/user verification or a reproducible user artifact; automated evidence alone cannot grant this classification.
+- AUTOMATED_TEST — CI, test, or other automated evidence that may support or invalidate a candidate but cannot establish owner verification by itself.
 - COMMUNITY — community-derived evidence that has not been officially confirmed.
 - INFERENCE — a hypothesis or deduction requiring validation.
+
+Persistence does not improve evidence quality: releases, newer commits, CI success, and model inference remain supporting or hypothetical evidence unless a trusted owner/user verification event explicitly says otherwise.
 
 ## Windows execution
 
