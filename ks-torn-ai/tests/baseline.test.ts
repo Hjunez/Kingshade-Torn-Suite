@@ -6,7 +6,7 @@ import {
 } from '../src/repository/baseline.js';
 
 describe('selectKnownGoodBaseline', () => {
-  it('does not promote a newer candidate above an older verified baseline', () => {
+  it('does not promote a newer candidate above an older owner-verified baseline', () => {
     const evidence: BaselineEvidence[] = [
       {
         project: 'war-dibs',
@@ -31,7 +31,32 @@ describe('selectKnownGoodBaseline', () => {
     );
   });
 
-  it('invalidates an earlier verification when newer evidence marks the same commit failed', () => {
+  it('does not treat passing automation or a release record as owner verification', () => {
+    const evidence: BaselineEvidence[] = [
+      {
+        project: 'war-dibs',
+        commitSha: 'automated-only',
+        version: '1.5.145',
+        state: 'verified_good',
+        source: 'regression_suite',
+        observedAt: '2026-08-24T04:00:00Z',
+      },
+      {
+        project: 'war-dibs',
+        commitSha: 'automated-only',
+        version: '1.5.145',
+        state: 'verified_good',
+        source: 'release_record',
+        observedAt: '2026-08-24T04:01:00Z',
+      },
+    ];
+
+    const decision = selectKnownGoodBaseline(evidence, 'war-dibs');
+    expect(decision.baseline).toBeNull();
+    expect(decision.assessments[0]?.rejectionReason).toBe('no_owner_verification');
+  });
+
+  it('invalidates an earlier owner verification when newer evidence marks the same commit failed', () => {
     const evidence: BaselineEvidence[] = [
       {
         project: 'war-dibs',
@@ -44,12 +69,14 @@ describe('selectKnownGoodBaseline', () => {
         project: 'war-dibs',
         commitSha: 'same-commit',
         state: 'failed',
-        source: 'owner_verification',
+        source: 'regression_suite',
         observedAt: '2026-08-24T05:00:00Z',
       },
     ];
 
-    expect(selectKnownGoodBaseline(evidence, 'war-dibs').baseline).toBeNull();
+    const decision = selectKnownGoodBaseline(evidence, 'war-dibs');
+    expect(decision.baseline).toBeNull();
+    expect(decision.assessments[0]?.rejectionReason).toBe('invalidated_after_verification');
   });
 
   it('fails safe when there is no verified-good evidence', () => {
