@@ -1,111 +1,68 @@
 # KS Leslie
 
-KS Leslie is a dedicated Torn City engineering and research agent. Its first objective is not to become a complete Torn platform; its first objective is to reduce the time required to diagnose, modify, test, and review Kingshade scripts.
+KS Leslie is a Torn-specific engineering and research agent. Its current priority is the Debug MVP: diagnose, change, test, independently review, and report on Kingshade scripts while preserving a verified rollback baseline.
 
-## Current priority: Debug MVP
+## Debug MVP workflow
 
-All non-essential product work is deferred until the Debug MVP is usable.
+1. Resolve the project and inspect its source, history, and evidence.
+2. Distinguish owner-verified facts from release, CI, community, and inferred evidence.
+3. Record reproducible problem evidence and a root-cause statement.
+4. Create a bounded change from an exact commit in an isolated branch and Git worktree.
+5. Run only repository-owned, allowlisted verification profiles.
+6. Block delivery on failed tests, scope violations, missing review, or unresolved uncertainty.
+7. Produce a machine-readable TEST report with candidate and rollback SHAs.
 
-The Debug MVP must let the owner give Leslie a bug or engineering goal in natural language and have Leslie:
+The Debug MVP is accepted only after this loop succeeds on a real Kingshade regression with materially less manual work from the owner. Stage B proves the mechanism with a synthetic fixture; it does not claim that real-regression acceptance yet.
 
-1. Inspect the correct repository, current implementation, Git history, and known-good baseline.
-2. Search relevant source, tests, DOM evidence, logs, and prior regression information.
-3. Form a root-cause hypothesis and distinguish verified evidence from inference.
-4. Create a bounded change in an isolated workspace or branch without modifying the known-good baseline.
-5. Run the relevant TypeScript, ESLint, Vitest, Playwright, and project-specific checks that are available.
-6. Iterate on failures without claiming success until evidence supports it.
-7. Perform an independent review for regressions, Torn compliance, secret leakage, and PDA/browser compatibility.
-8. Produce a concise TEST result containing the change, evidence, test status, remaining uncertainty, and rollback baseline.
+## Implemented
 
-The Debug MVP is considered useful only when it can complete that loop on a real Kingshade script with materially less manual work from the owner.
+- GPT-5.6 Sol coordinator with GPT-5.6 Terra research, engineering, and review specialists.
+- Persistent OpenAI conversation state, current web research, and optional vector-store search.
+- Deterministic project resolution for War Dibs, FFScouter Call Guard, War Tools, and Scout.
+- Read-only GitHub and local Git readers with origin validation, immutable-ref provenance, and bounded outputs.
+- Six strict Repository Intelligence tools for project resolution, metadata, source chunks, history, ref comparison, and supporting baseline evidence.
+- Evidence-weighted baseline logic that cannot promote CI or release history to human-verified known-good.
+- High-level Worker tools with no model-facing shell, executable, repository-root, patch, or approval-token input.
+- Private one-time application grants, SDK approval, exact baselines, isolated Git worktrees, scoped patches, required tests, and stale-baseline rejection.
+- Deterministic test profiles and structured implementation and delivery gates.
+- Synthetic end-to-end acceptance covering read-only analysis, failed-test blocking, scoped patching, candidate commit, cleanup, source-worktree preservation, and rollback reporting.
+- Strict TypeScript, Vitest, ESLint, Prettier, locked installs, and runtime-only dependency auditing.
 
-## Current pre-PC implementation status
+Worker tools are added only when trusted application code injects a `WorkerAgentService`. The default CLI does not construct a production write policy. The controlled-write tool additionally requires both an SDK approval and a pending application-issued grant.
 
-Implemented and locally strict-TypeScript/smoke-verified where dependency-free:
+See [Stage B](docs/STAGE_B.md), [architecture](docs/ARCHITECTURE.md), and [Debug MVP](docs/DEBUG_MVP.md) for the exact boundaries.
 
-- deterministic project resolution for War Dibs, FFScouter Call Guard, War Tools, and Scout;
-- strict userscript-header and version inspection;
-- evidence-weighted known-good baseline selection that requires explicit owner verification;
-- Git release history and CI/test evidence adapters that cannot promote a baseline by themselves;
-- read-only GitHub repository client for file reads, commit history, and ref comparison;
-- composed Repository Intelligence Service with capped source-chunk retrieval;
-- Worker job contract with read-only versus controlled-write modes;
-- Worker path sandboxing, explicit write approval, isolated-branch requirement, and stale-baseline guard;
-- allowlisted test-profile model rather than model-generated arbitrary shell commands;
-- hard implementation and TEST-delivery gates;
-- evidence-derived TEST readiness reporting that cannot mark failing verification as ready;
-- Node 22 GitHub Actions validation workflow for the Leslie project;
-- external-agent/Jarvis quarantine and component-reuse process.
+## Remaining before a real regression
 
-Not implemented yet:
+- Owner confirmation of a known-good full commit SHA and reproducible defect evidence.
+- A real independent review bound to the candidate rather than fixture-supplied review evidence.
+- Restored remote War Dibs browser/compatibility profiles with portable, passing fixtures.
+- Direct PDA/mobile and relevant browser evidence; CI alone cannot establish Torn PDA behavior.
+- Application UI or service code that creates trusted project policies and explicit owner approval grants.
 
-- a running local Worker connected to the Windows repository;
-- actual filesystem editing or patch application;
-- local Git branch creation/commit execution from Leslie;
-- execution of the existing Kingshade Vitest/Playwright stack through Worker;
-- agent-facing wrappers around Repository Intelligence;
-- the first real end-to-end regression acceptance test.
+## Roadmap
 
-## v0.1 bootstrap
+### Stage A - Repository intelligence
 
-The bootstrap contains:
+Core and agent-facing read-only tools are implemented. Durable owner-verified baseline evidence remains application data.
 
-- GPT-5.6 Sol coordinator.
-- GPT-5.6 Terra research, engineering, and independent-review specialists.
-- Current web research capability for the research specialist.
-- Optional OpenAI vector-store/file-search capability for a Torn/Kingshade knowledge base.
-- Persistent conversation state using the OpenAI Conversations API.
-- Strict TypeScript configuration.
-- Vitest, ESLint, and Prettier verification.
-- A permanent Torn-specific evidence hierarchy and engineering policy.
-- Core/Worker direction, RBAC, and isolated knowledge zones documented for later product stages.
+### Stage B - Controlled Worker
 
-It does not yet edit repositories or execute shell commands. Those are now the highest-priority capabilities to add safely.
+Implemented for local Windows execution using native Git worktree isolation. Docker is an optional future backend, not a current requirement.
 
-## Critical path
+### Stage C - Automated verification loop
 
-### Stage A — Repository intelligence
+Connect restored project regression profiles, capture structured failures, and permit bounded repair iterations.
 
-Core foundation implemented. Remaining work is agent-facing tool wiring, richer project discovery, and importing durable owner-verified baseline evidence.
+### Stage D - Regression and release gate
 
-### Stage B — Controlled Worker
-
-Add an isolated Windows/Docker-backed engineering workspace that can modify files, create patches, preserve snapshots, and resume work without unrestricted writes to production repositories.
-
-### Stage C — Automated verification loop
-
-Run the existing Kingshade validation stack, capture structured results, map failures back to the attempted change, and permit bounded repair iterations.
-
-### Stage D — Regression and release gate
-
-Use the implemented gates and report model with real Worker evidence, independent review, known-good rollback protection, PDA/mobile-browser/PC compatibility profiles, and clear TEST-build reporting.
-
-### Debug MVP acceptance test
-
-A real request such as a reproducible PDA userscript regression must be traceable from report to root-cause evidence, isolated change, relevant automated tests, independent review, and a prepared TEST branch while preserving the verified rollback baseline.
-
-## Deferred until after Debug MVP
-
-These remain planned but must not delay the debugging core:
-
-- Mobile/PWA client and remote job queue.
-- Faction accounts and user-facing RBAC administration.
-- Faction knowledge features.
-- Advanced Torn Intelligence Graph.
-- Change-radar and background monitoring features.
-- Cosmetic Leslie identity features and dashboards.
-
-Security architecture for those features is still designed now where necessary to avoid rework, but their product implementation is deferred.
-
-## Later platform stages
-
-After Debug MVP, continue with curated Torn/Kingshade knowledge ingestion, read-only Torn API v2 tools, Core/Worker remote access, multi-user RBAC, faction-facing Torn Advisor access, and the broader KS Leslie platform.
+Exercise the complete workflow on a real Kingshade defect with independent review and PDA/mobile/browser evidence.
 
 ## Safety invariants
 
-- Never commit API keys, cookies, passwords, tokens, or other secrets.
+- Never commit, prompt, or log API keys, cookies, passwords, tokens, or other secrets.
 - Torn API access is read-only and minimum-permission.
-- Do not automate gameplay actions.
-- Do not claim a change was tested unless test output exists.
-- Do not patch-stack on an unverified regression; preserve and use the known-good rollback baseline.
-- Treat Torn PDA/mobile behavior as a first-class compatibility target.
+- Do not automate Torn gameplay actions.
+- Do not claim a change was tested unless its test output exists.
+- Do not infer known-good from the newest version, release history, or CI success.
+- Preserve an owner-verified rollback baseline and treat PDA/mobile behavior as first-class evidence.

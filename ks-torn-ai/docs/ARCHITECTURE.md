@@ -29,7 +29,7 @@ KS Leslie is designed as a remotely reachable Core plus an optional local Worker
 
 - Core remains available from PC and mobile for conversations, current research, authorized knowledge retrieval, GitHub-based reads, and orchestration.
 - Worker runs on the owner's Windows PC and establishes an outbound authenticated connection to Core.
-- Worker owns local repository access, Docker-backed sandboxes, local tests, and other workstation-only capabilities.
+- Worker owns local repository access, native Git-worktree isolation, allowlisted local tests, and other workstation-only capabilities.
 - If Worker is offline, Core remains usable but cannot execute Worker-only jobs.
 - Non-development roles cannot address the Worker.
 
@@ -38,7 +38,7 @@ KS Leslie is designed as a remotely reachable Core plus an optional local Worker
 - OpenAI API key: environment only; never indexed or committed.
 - Torn API key: future environment/secret store only; never indexed or committed.
 - Production repositories: read-only before controlled workspace support.
-- Write operations: scoped to an isolated branch/workspace with explicit policy and rollback state.
+- Write operations: scoped to an exact commit, separate branch, isolated worktree, approved paths, private one-time grant, SDK approval, required tests, and rollback state.
 - Authorization: enforced in application code before retrieval or tool use.
 - Mobile access: authenticates to Core; the PC is not exposed directly to the public internet.
 - Torn gameplay: no automated gameplay actions.
@@ -52,6 +52,10 @@ Every material conclusion should be attributable to one of these classes:
 - COMMUNITY — community-derived evidence that has not been officially confirmed.
 - INFERENCE — a hypothesis or deduction requiring validation.
 
-## Windows execution plan
+## Windows execution
 
-OpenAI's current Sandbox Agents documentation requires Node.js 22+. On Windows, the supported local path is DockerSandboxClient rather than UnixLocalSandboxClient. The controlled-editing stage therefore targets Docker-backed isolation instead of executing unrestricted shell commands directly on the Windows host.
+Stage B runs on Node.js 22 or newer and uses Git's native worktree isolation on Windows. The model receives only fixed, schema-validated Worker operations; process execution remains inside trusted application code and test-profile definitions. Controlled writes require an exact 40-character baseline, a private application-issued approval grant, an SDK approval interruption, an approved path set, a separate `ks-leslie/...` branch, and cleanup on failure or scope violation.
+
+Docker is optional and was not available for the Stage B acceptance run. It may become an additional isolation backend later, but it is not required by the current Worker implementation.
+
+Repository Intelligence uses the same read-only interface for local Git and fixed-host GitHub reads. Mutable refs are resolved once to full commit SHAs, repository-origin checks guard local fallback selection, and agent-facing evidence is bounded, provenance-labelled, treated as untrusted data, and secret-redacted.

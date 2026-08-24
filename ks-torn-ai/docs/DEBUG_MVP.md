@@ -53,6 +53,12 @@ Debug MVP is accepted only after a real Kingshade regression can be handled end-
 - The known-good rollback baseline remains intact.
 - The owner did not need to manually shuttle large code blocks between tools.
 
+## Stage B acceptance boundary
+
+The Stage B fixture exercise proves the local mechanism without changing a production userscript: read-only inspection, exact-baseline approval, isolated worktree and branch creation, scoped patching, required-test failure blocking, successful candidate commit, source-worktree preservation, cleanup, and machine-readable rollback reporting.
+
+The fixture supplies a deterministic synthetic review record to exercise the delivery gate. It does not prove that the live Leslie review specialist reviewed a real change, that a production userscript works in Torn PDA, or that historical War Dibs browser profiles are currently portable and green. Those facts require the first real regression exercise and cannot be inferred from CI success.
+
 ## Priority order
 
 1. Repository intelligence and baseline detection.
