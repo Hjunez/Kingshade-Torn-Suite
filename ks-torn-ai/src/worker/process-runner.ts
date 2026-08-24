@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { win32 } from 'node:path';
 
 export interface ProcessRunRequest {
   executable: string;
@@ -6,6 +7,7 @@ export interface ProcessRunRequest {
   cwd: string;
   timeoutMs: number;
   maxOutputBytes?: number;
+  env?: NodeJS.ProcessEnv;
 }
 
 export interface ProcessRunResult {
@@ -22,14 +24,41 @@ export interface ProcessRunResult {
 
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 
-function platformExecutable(executable: string): string {
-  if (process.platform !== 'win32') {
-    return executable;
+export interface ProcessInvocation {
+  executable: string;
+  args: readonly string[];
+}
+
+export interface ProcessInvocationOptions {
+  platform?: NodeJS.Platform;
+  nodeExecutable?: string;
+  npmExecPath?: string;
+}
+
+export function resolveProcessInvocation(
+  executable: string,
+  args: readonly string[],
+  options: ProcessInvocationOptions = {},
+): ProcessInvocation {
+  const platform = options.platform ?? process.platform;
+  if (platform !== 'win32' || (executable !== 'npm' && executable !== 'npx')) {
+    return { executable, args };
   }
-  if (executable === 'npm' || executable === 'npx') {
-    return `${executable}.cmd`;
-  }
-  return executable;
+
+  const nodeExecutable = options.nodeExecutable ?? process.execPath;
+  const configuredNpmPath = options.npmExecPath;
+  const npmCliPath =
+    configuredNpmPath !== undefined &&
+    win32.basename(configuredNpmPath).toLowerCase() === 'npm-cli.js'
+      ? configuredNpmPath
+      : win32.join(win32.dirname(nodeExecutable), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  const cliPath =
+    executable === 'npm' ? npmCliPath : win32.join(win32.dirname(npmCliPath), 'npx-cli.js');
+
+  return {
+    executable: nodeExecutable,
+    args: [cliPath, ...args],
+  };
 }
 
 function appendCapped(
@@ -57,8 +86,10 @@ export async function runProcess(request: ProcessRunRequest): Promise<ProcessRun
   }
 
   return await new Promise<ProcessRunResult>((resolve, reject) => {
-    const child = spawn(platformExecutable(request.executable), [...request.args], {
+    const invocation = resolveProcessInvocation(request.executable, request.args);
+    const child = spawn(invocation.executable, [...invocation.args], {
       cwd: request.cwd,
+      ...(request.env === undefined ? {} : { env: request.env }),
       windowsHide: true,
       shell: false,
       stdio: ['ignore', 'pipe', 'pipe'],
