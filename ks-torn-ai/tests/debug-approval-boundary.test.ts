@@ -834,6 +834,7 @@ describe('C3.5 trusted write approval boundary', () => {
       'completeDiscovery',
       'createCase',
       'evaluateImplementationGate',
+      'executeApprovedImplementation',
       'recordEvidenceAndRootCause',
       'requestWriteApproval',
       'resolveTrustedBaseline',

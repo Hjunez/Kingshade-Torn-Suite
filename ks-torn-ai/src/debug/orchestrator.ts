@@ -9,6 +9,8 @@ import {
   parseModelSyntheticDebugRecord,
   parseTrustedSyntheticDebugApprovalDecision,
   parseTrustedSyntheticDebugBaselineRecord,
+  syntheticDebugWriteProposalSchema,
+  trustedSyntheticDebugApprovalDecisionSchema,
   type SyntheticDebugEvidenceReference,
   type SyntheticDebugImplementationPlanRecord,
   type SyntheticDebugIntakeRecord,
@@ -17,6 +19,11 @@ import {
   type TrustedSyntheticDebugApprovalDecision,
   type TrustedSyntheticDebugBaselineRecord,
 } from './records.js';
+import {
+  adaptSyntheticDebugWorkerError,
+  adaptSyntheticDebugWorkerResult,
+  type SyntheticDebugWorkerExecutionRecord,
+} from './worker-execution.js';
 import {
   createSyntheticDebugMachine,
   isSyntheticDebugTerminalState,
@@ -155,9 +162,27 @@ export interface SyntheticDebugTaskFCapability {
   readonly readTrustedWriteApprovalDecision: (request: SyntheticDebugTaskFRequest) => unknown;
 }
 
+export type SyntheticDebugTaskGOperation = 'EXECUTE_APPROVED_SYNTHETIC_IMPLEMENTATION';
+
+export interface SyntheticDebugTaskGRequest {
+  readonly schemaVersion: '1.0';
+  readonly workflowKind: 'synthetic';
+  readonly accessMode: 'TRUSTED_WORKER_EXECUTION_ONLY';
+  readonly operation: SyntheticDebugTaskGOperation;
+  readonly caseId: string;
+  readonly projectId: string;
+  readonly approvalDecisionReferenceId: string;
+  readonly proposal: DeepReadonly<SyntheticDebugWriteProposal>;
+}
+
+export interface SyntheticDebugTaskGCapability {
+  readonly executeApprovedSyntheticImplementation: (request: SyntheticDebugTaskGRequest) => unknown;
+}
+
 export interface SyntheticDebugOrchestratorDependencies {
   readonly taskD?: SyntheticDebugTaskDCapability;
   readonly taskF?: SyntheticDebugTaskFCapability;
+  readonly taskG?: SyntheticDebugTaskGCapability;
 }
 
 export interface SyntheticDebugCurrentCandidate {
@@ -196,6 +221,7 @@ export interface SyntheticDebugOrchestrationSnapshot {
   readonly implementationGate: DeepReadonly<GateDecision> | null;
   readonly writeProposal: DeepReadonly<SyntheticDebugWriteProposal> | null;
   readonly writeApprovalDecision: DeepReadonly<TrustedSyntheticDebugApprovalDecision> | null;
+  readonly workerExecution: DeepReadonly<SyntheticDebugWorkerExecutionRecord> | null;
 }
 
 export type SyntheticDebugOrchestrationOperation =
@@ -206,7 +232,8 @@ export type SyntheticDebugOrchestrationOperation =
   | 'RECORD_EVIDENCE_AND_ROOT_CAUSE'
   | 'EVALUATE_IMPLEMENTATION_GATE'
   | 'REQUEST_WRITE_APPROVAL'
-  | 'RESOLVE_WRITE_APPROVAL';
+  | 'RESOLVE_WRITE_APPROVAL'
+  | 'EXECUTE_APPROVED_IMPLEMENTATION';
 
 export type SyntheticDebugOrchestrationErrorCode =
   | 'MALFORMED_MODEL_RECORD'
@@ -222,6 +249,7 @@ export type SyntheticDebugOrchestrationErrorCode =
   | 'MALFORMED_TRUSTED_APPROVAL'
   | 'TRUSTED_APPROVAL_SCOPE_MISMATCH'
   | 'TRUSTED_APPROVAL_REPLAY_MISMATCH'
+  | 'WORKER_EXECUTION_INTEGRITY_MISMATCH'
   | 'OUT_OF_ORDER'
   | 'TERMINAL_STATE'
   | 'TRANSITION_REJECTED';
@@ -280,6 +308,9 @@ export interface SyntheticDebugDiscoveryController {
     implementationPlanInput: unknown,
   ): SyntheticDebugOrchestrationResult;
   resolveWriteApproval(
+    snapshot: SyntheticDebugOrchestrationSnapshot,
+  ): Promise<SyntheticDebugOrchestrationResult>;
+  executeApprovedImplementation(
     snapshot: SyntheticDebugOrchestrationSnapshot,
   ): Promise<SyntheticDebugOrchestrationResult>;
 }
@@ -349,6 +380,7 @@ type SyntheticDebugSnapshotPatch = Partial<
     | 'implementationGate'
     | 'writeProposal'
     | 'writeApprovalDecision'
+    | 'workerExecution'
   >
 >;
 
@@ -468,7 +500,7 @@ function buildWriteProposal(
   });
 }
 
-function writeProposalMatchesSnapshot(
+function sealedWriteProposalMatchesSnapshot(
   snapshot: SyntheticDebugOrchestrationSnapshot,
   proposal: DeepReadonly<SyntheticDebugWriteProposal>,
 ): boolean {
@@ -476,12 +508,35 @@ function writeProposalMatchesSnapshot(
   return (
     snapshot.knownGoodBaseline !== null &&
     snapshot.implementationGate?.allowed === true &&
-    snapshot.writeApprovalDecision === null &&
     proposal.caseId === snapshot.caseId &&
     proposal.projectId === snapshot.projectId &&
     proposal.baselineSha === snapshot.knownGoodBaseline.commitSha.toLowerCase() &&
     proposal.rollbackSha === proposal.baselineSha &&
     proposalId === writeProposalIdentifier(snapshot, content)
+  );
+}
+
+function pendingWriteProposalMatchesSnapshot(
+  snapshot: SyntheticDebugOrchestrationSnapshot,
+  proposal: DeepReadonly<SyntheticDebugWriteProposal>,
+): boolean {
+  return (
+    snapshot.writeApprovalDecision === null &&
+    sealedWriteProposalMatchesSnapshot(snapshot, proposal)
+  );
+}
+
+function approvedWriteProposalMatchesSnapshot(
+  snapshot: SyntheticDebugOrchestrationSnapshot,
+  proposal: DeepReadonly<SyntheticDebugWriteProposal>,
+  decision: DeepReadonly<TrustedSyntheticDebugApprovalDecision>,
+): boolean {
+  return (
+    decision.decision === 'APPROVED' &&
+    decision.caseId === snapshot.caseId &&
+    decision.projectId === snapshot.projectId &&
+    decision.proposalId === proposal.proposalId &&
+    sealedWriteProposalMatchesSnapshot(snapshot, proposal)
   );
 }
 
@@ -510,8 +565,32 @@ function taskFRequest(
   });
 }
 
+function taskGRequest(
+  snapshot: SyntheticDebugOrchestrationSnapshot,
+  proposal: DeepReadonly<SyntheticDebugWriteProposal>,
+  decision: DeepReadonly<TrustedSyntheticDebugApprovalDecision>,
+): SyntheticDebugTaskGRequest {
+  return deepFreeze({
+    schemaVersion: '1.0',
+    workflowKind: 'synthetic',
+    accessMode: 'TRUSTED_WORKER_EXECUTION_ONLY',
+    operation: 'EXECUTE_APPROVED_SYNTHETIC_IMPLEMENTATION',
+    caseId: snapshot.caseId,
+    projectId: snapshot.projectId,
+    approvalDecisionReferenceId: decision.decisionReferenceId,
+    proposal,
+  });
+}
+
 function caseBindingKey(snapshot: SyntheticDebugOrchestrationSnapshot): string {
   return JSON.stringify([snapshot.projectId, snapshot.caseId]);
+}
+
+function writeApprovalBindingKey(
+  snapshot: SyntheticDebugOrchestrationSnapshot,
+  proposal: DeepReadonly<SyntheticDebugWriteProposal>,
+): string {
+  return JSON.stringify([snapshot.projectId, snapshot.caseId, proposal.proposalId]);
 }
 
 async function authorize(
@@ -745,9 +824,83 @@ export function createSyntheticDebugDiscoveryController(
 ): SyntheticDebugDiscoveryController {
   const capability = dependencies.taskD;
   const taskFCapability = dependencies.taskF;
+  const taskGCapability = dependencies.taskG;
   const writeProposalResults = new Map<string, SyntheticDebugOrchestrationResult>();
   const writeApprovalResults = new Map<string, Promise<SyntheticDebugOrchestrationResult>>();
-  const approvalDecisionBindings = new Map<string, string>();
+  const workerExecutionResults = new Map<string, Promise<SyntheticDebugOrchestrationResult>>();
+  const approvalDecisionBindings = new Map<
+    string,
+    {
+      readonly bindingKey: string;
+      readonly decision: TrustedSyntheticDebugApprovalDecision['decision'];
+    }
+  >();
+
+  function transitionWorkerExecution(
+    snapshot: SyntheticDebugOrchestrationSnapshot,
+    adaptation: ReturnType<typeof adaptSyntheticDebugWorkerResult>,
+  ): SyntheticDebugOrchestrationResult {
+    const operation = 'EXECUTE_APPROVED_IMPLEMENTATION';
+    const workerExecution = deepFreeze(adaptation.record);
+    if (adaptation.disposition === 'VERIFYING') {
+      return apply(
+        snapshot,
+        operation,
+        'START_VERIFICATION',
+        [
+          {
+            code: 'WORKER_EXECUTION_CAPTURED',
+            summary:
+              'The existing Worker completed one bounded isolated implementation for verification.',
+          },
+        ],
+        'ADVANCED',
+        { workerExecution },
+      );
+    }
+
+    const failure = workerExecution.failure;
+    if (failure === null) {
+      return fail(
+        snapshot,
+        operation,
+        'INTERNAL_WORKER_ERROR',
+        'The Worker adapter returned an inconsistent failure classification.',
+      );
+    }
+    const reasons = [{ code: failure.code, summary: failure.summary }] as const;
+    return adaptation.disposition === 'BLOCKED'
+      ? block(snapshot, operation, reasons, { workerExecution })
+      : apply(snapshot, operation, 'FAIL', reasons, 'FAILED', { workerExecution });
+  }
+
+  async function executePendingWorker(
+    snapshot: SyntheticDebugOrchestrationSnapshot,
+    proposal: DeepReadonly<SyntheticDebugWriteProposal>,
+    decision: DeepReadonly<TrustedSyntheticDebugApprovalDecision>,
+  ): Promise<SyntheticDebugOrchestrationResult> {
+    const operation = 'EXECUTE_APPROVED_IMPLEMENTATION';
+    if (taskGCapability === undefined) {
+      return block(snapshot, operation, [
+        {
+          code: 'WORKER_EXECUTION_CAPABILITY_MISSING',
+          summary: 'The trusted application Worker execution capability was not injected.',
+        },
+      ]);
+    }
+
+    try {
+      const result = await taskGCapability.executeApprovedSyntheticImplementation(
+        taskGRequest(snapshot, proposal, decision),
+      );
+      return transitionWorkerExecution(snapshot, adaptSyntheticDebugWorkerResult(result, proposal));
+    } catch (workerError: unknown) {
+      return transitionWorkerExecution(
+        snapshot,
+        adaptSyntheticDebugWorkerError(workerError, proposal),
+      );
+    }
+  }
 
   async function resolvePendingWriteApproval(
     snapshot: SyntheticDebugOrchestrationSnapshot,
@@ -803,7 +956,7 @@ export function createSyntheticDebugDiscoveryController(
     }
 
     const existingBinding = approvalDecisionBindings.get(decision.decisionReferenceId);
-    if (existingBinding !== undefined && existingBinding !== bindingKey) {
+    if (existingBinding !== undefined && existingBinding.bindingKey !== bindingKey) {
       return reject(
         snapshot,
         operation,
@@ -811,7 +964,10 @@ export function createSyntheticDebugDiscoveryController(
         'The trusted approval decision reference is already bound to another proposal.',
       );
     }
-    approvalDecisionBindings.set(decision.decisionReferenceId, bindingKey);
+    approvalDecisionBindings.set(
+      decision.decisionReferenceId,
+      Object.freeze({ bindingKey, decision: decision.decision }),
+    );
 
     const trustedDecision = deepFreeze(decision);
     const patch = { writeApprovalDecision: trustedDecision } as const;
@@ -903,6 +1059,7 @@ export function createSyntheticDebugDiscoveryController(
           implementationGate: null,
           writeProposal: null,
           writeApprovalDecision: null,
+          workerExecution: null,
         }),
       });
     },
@@ -1343,7 +1500,7 @@ export function createSyntheticDebugDiscoveryController(
       const invalid = requireState(snapshot, operation, 'AWAITING_WRITE_APPROVAL');
       if (invalid !== null) return invalid;
       const proposal = snapshot.writeProposal;
-      if (proposal === null || !writeProposalMatchesSnapshot(snapshot, proposal)) {
+      if (proposal === null || !pendingWriteProposalMatchesSnapshot(snapshot, proposal)) {
         return reject(
           snapshot,
           operation,
@@ -1352,13 +1509,87 @@ export function createSyntheticDebugDiscoveryController(
         );
       }
 
-      const bindingKey = JSON.stringify([snapshot.projectId, snapshot.caseId, proposal.proposalId]);
+      const bindingKey = writeApprovalBindingKey(snapshot, proposal);
       const existing = writeApprovalResults.get(bindingKey);
       if (existing !== undefined) return await existing;
 
       const resolution = resolvePendingWriteApproval(snapshot, proposal, bindingKey);
       writeApprovalResults.set(bindingKey, resolution);
       return await resolution;
+    },
+
+    async executeApprovedImplementation(snapshot: SyntheticDebugOrchestrationSnapshot) {
+      const operation = 'EXECUTE_APPROVED_IMPLEMENTATION';
+      const invalid = requireState(snapshot, operation, 'IMPLEMENTING');
+      if (invalid !== null) return invalid;
+
+      const proposal = snapshot.writeProposal;
+      const decisionInput = snapshot.writeApprovalDecision;
+      if (proposal === null || decisionInput === null || snapshot.workerExecution !== null) {
+        return reject(
+          snapshot,
+          operation,
+          'WORKER_EXECUTION_INTEGRITY_MISMATCH',
+          'Worker execution requires one sealed proposal and its bound trusted approval.',
+        );
+      }
+
+      if (typeof proposal.baselineSha !== 'string' || !isFullCommitSha(proposal.baselineSha)) {
+        return transitionWorkerExecution(
+          snapshot,
+          adaptSyntheticDebugWorkerError(
+            new Error('Worker execution requires a full 40-character baseline SHA.'),
+            proposal,
+          ),
+        );
+      }
+
+      const parsedProposal = syntheticDebugWriteProposalSchema.safeParse(proposal);
+      const parsedDecision = trustedSyntheticDebugApprovalDecisionSchema.safeParse(decisionInput);
+      if (!parsedProposal.success || !parsedDecision.success) {
+        return reject(
+          snapshot,
+          operation,
+          'WORKER_EXECUTION_INTEGRITY_MISMATCH',
+          'Worker execution requires strict sealed proposal and trusted approval records.',
+        );
+      }
+      const decision = parsedDecision.data;
+      if (!approvedWriteProposalMatchesSnapshot(snapshot, proposal, decision)) {
+        return reject(
+          snapshot,
+          operation,
+          'WORKER_EXECUTION_INTEGRITY_MISMATCH',
+          'The approved write proposal no longer matches its sealed case snapshot.',
+        );
+      }
+
+      const approvalBinding = writeApprovalBindingKey(snapshot, proposal);
+      const recordedApproval = approvalDecisionBindings.get(decision.decisionReferenceId);
+      if (
+        recordedApproval?.bindingKey !== approvalBinding ||
+        recordedApproval.decision !== 'APPROVED'
+      ) {
+        return reject(
+          snapshot,
+          operation,
+          'WORKER_EXECUTION_INTEGRITY_MISMATCH',
+          'The trusted approval decision was not issued and bound by this active controller.',
+        );
+      }
+
+      const bindingKey = JSON.stringify([
+        snapshot.projectId,
+        snapshot.caseId,
+        proposal.proposalId,
+        decision.decisionReferenceId,
+      ]);
+      const existing = workerExecutionResults.get(bindingKey);
+      if (existing !== undefined) return await existing;
+
+      const execution = executePendingWorker(snapshot, proposal, decision);
+      workerExecutionResults.set(bindingKey, execution);
+      return await execution;
     },
   });
 }
