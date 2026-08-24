@@ -5,8 +5,10 @@ export interface PatchInspection {
   errors: readonly string[];
 }
 
+const PATCH_PATH_PATTERN = /^(?:---|\+\+\+|rename from|rename to)\s+(?:(?:a|b)\/)?(.+)$/;
+
 function extractPatchPath(line: string): string | null {
-  const match = line.match(/^(?:---|\+\+\+|rename from|rename to)\s+(?:(?:a|b)\/)?(.+)$/);
+  const match = PATCH_PATH_PATTERN.exec(line);
   if (match === null) {
     return null;
   }
