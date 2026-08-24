@@ -2,6 +2,16 @@ import { Agent, fileSearchTool, webSearchTool } from '@openai/agents';
 
 import type { KsLeslieConfig } from './config.js';
 import { KS_LESLIE_SYSTEM_PROMPT } from './prompt.js';
+import { createConfiguredRepositoryReader } from './repository/factory.js';
+import { RepositoryIntelligenceService } from './repository/intelligence.js';
+import type { RepositoryReader } from './repository/reader.js';
+import { createRepositoryTools } from './repository/tools.js';
+import { createWorkerAgentTools, type WorkerAgentService } from './worker/agent-tools.js';
+
+export interface KsLeslieAgentDependencies {
+  repositoryReader?: RepositoryReader;
+  workerAgentService?: WorkerAgentService;
+}
 
 function researchTools(config: KsLeslieConfig) {
   const tools = [webSearchTool({ searchContextSize: 'medium' })];
@@ -18,7 +28,26 @@ function researchTools(config: KsLeslieConfig) {
   return tools;
 }
 
-export function createKsLeslieAgent(config: KsLeslieConfig) {
+export function createKsLeslieAgent(
+  config: KsLeslieConfig,
+  dependencies: KsLeslieAgentDependencies = {},
+) {
+  const repositoryReader =
+    dependencies.repositoryReader ??
+    createConfiguredRepositoryReader({
+      repository: config.githubRepository,
+      ...(config.githubToken === undefined ? {} : { token: config.githubToken }),
+      ...(config.localRepositoryRoot === undefined
+        ? {}
+        : { localRepositoryRoot: config.localRepositoryRoot }),
+    });
+  const repositoryTools = createRepositoryTools(
+    new RepositoryIntelligenceService(repositoryReader),
+  );
+  const workerTools =
+    dependencies.workerAgentService === undefined
+      ? []
+      : [...createWorkerAgentTools(dependencies.workerAgentService)];
   const researchAgent = new Agent({
     name: 'Torn Research',
     model: config.specialistModel,
@@ -30,6 +59,7 @@ export function createKsLeslieAgent(config: KsLeslieConfig) {
     name: 'Torn Engineering',
     model: config.specialistModel,
     instructions: `${KS_LESLIE_SYSTEM_PROMPT}\n\nRole: analyze software architecture, source code, state machines, tests, regressions, and implementation options. Do not claim code was tested unless test output is available.`,
+    tools: [...repositoryTools, ...workerTools],
   });
 
   const reviewAgent = new Agent({
@@ -57,6 +87,8 @@ export function createKsLeslieAgent(config: KsLeslieConfig) {
         toolDescription:
           'Independently review a Torn engineering proposal or change before release.',
       }),
+      ...repositoryTools,
+      ...workerTools,
     ],
   });
 }
