@@ -19,7 +19,9 @@ export async function createPersistentSession(
     return new OpenAIConversationsSession({ conversationId: saved.conversationId });
   } catch (error: unknown) {
     const isMissingFile =
-      error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT';
+      error instanceof Error &&
+      'code' in error &&
+      (error as NodeJS.ErrnoException).code === 'ENOENT';
 
     if (!isMissingFile) {
       throw error;

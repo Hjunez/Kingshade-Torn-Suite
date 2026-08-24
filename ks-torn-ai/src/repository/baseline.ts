@@ -16,9 +16,7 @@ export interface BaselineEvidence {
   note?: string;
 }
 
-export type BaselineRejectionReason =
-  | 'no_owner_verification'
-  | 'invalidated_after_verification';
+export type BaselineRejectionReason = 'no_owner_verification' | 'invalidated_after_verification';
 
 export interface BaselineCandidateAssessment {
   commitSha: string;
@@ -120,7 +118,9 @@ export function selectKnownGoodBaseline(
   const assessments = [...byCommit.values()].map(assessCommit);
   const eligible = assessments
     .filter(
-      (assessment): assessment is BaselineCandidateAssessment & {
+      (
+        assessment,
+      ): assessment is BaselineCandidateAssessment & {
         ownerVerification: BaselineEvidence;
       } => assessment.eligible && assessment.ownerVerification !== undefined,
     )

@@ -25,7 +25,10 @@ async function commandCheck(
       timeoutMs: 15_000,
       maxOutputBytes: 100_000,
     });
-    const detail = (result.stdout.trim() || result.stderr.trim() || `exit ${String(result.exitCode)}`).split(/\r?\n/)[0] ?? '';
+    const detail =
+      (result.stdout.trim() || result.stderr.trim() || `exit ${String(result.exitCode)}`).split(
+        /\r?\n/,
+      )[0] ?? '';
     if (result.exitCode === 0 && !result.timedOut) {
       return { name, required, status: 'pass', detail };
     }
@@ -75,7 +78,10 @@ async function repositoryCheck(repositoryRoot: string): Promise<DoctorCheck> {
       };
     }
     const top = await realpath(result.stdout.trim());
-    const same = process.platform === 'win32' ? top.toLowerCase() === canonical.toLowerCase() : top === canonical;
+    const same =
+      process.platform === 'win32'
+        ? top.toLowerCase() === canonical.toLowerCase()
+        : top === canonical;
     return {
       name: 'Kingshade repository',
       required: true,
@@ -100,7 +106,13 @@ async function main(): Promise<void> {
     await commandCheck('npm', 'npm', ['--version'], true, process.cwd()),
     await repositoryCheck(repositoryRoot),
     await commandCheck('Bash', 'bash', ['--version'], false, process.cwd()),
-    await commandCheck('Docker', 'docker', ['version', '--format', '{{.Server.Version}}'], false, process.cwd()),
+    await commandCheck(
+      'Docker',
+      'docker',
+      ['version', '--format', '{{.Server.Version}}'],
+      false,
+      process.cwd(),
+    ),
   ];
 
   const requiredFailures = checks.filter((check) => check.required && check.status !== 'pass');

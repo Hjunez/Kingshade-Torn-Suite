@@ -20,7 +20,10 @@ const HEADER_START = '// ==UserScript==';
 const HEADER_END = '// ==/UserScript==';
 const STATUS_MARKERS: readonly ScriptStatusMarker[] = ['TEST', 'RELEASE', 'RC', 'ALPHA', 'BETA'];
 
-function firstValue(fields: Readonly<Record<string, readonly string[]>>, key: string): string | null {
+function firstValue(
+  fields: Readonly<Record<string, readonly string[]>>,
+  key: string,
+): string | null {
   return fields[key]?.[0] ?? null;
 }
 

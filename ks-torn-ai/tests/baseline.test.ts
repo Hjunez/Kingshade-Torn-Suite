@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  selectKnownGoodBaseline,
-  type BaselineEvidence,
-} from '../src/repository/baseline.js';
+import { selectKnownGoodBaseline, type BaselineEvidence } from '../src/repository/baseline.js';
 
 describe('selectKnownGoodBaseline', () => {
   it('does not promote a newer candidate above an older owner-verified baseline', () => {
@@ -26,9 +23,7 @@ describe('selectKnownGoodBaseline', () => {
       },
     ];
 
-    expect(selectKnownGoodBaseline(evidence, 'war-dibs').baseline?.commitSha).toBe(
-      'verified-old',
-    );
+    expect(selectKnownGoodBaseline(evidence, 'war-dibs').baseline?.commitSha).toBe('verified-old');
   });
 
   it('does not treat passing automation or a release record as owner verification', () => {

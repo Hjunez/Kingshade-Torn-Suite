@@ -49,11 +49,13 @@ export function createKsLeslieAgent(config: KsLeslieConfig) {
       }),
       engineeringAgent.asTool({
         toolName: 'analyze_torn_engineering',
-        toolDescription: 'Analyze Torn script architecture, code behavior, state machines, or regressions.',
+        toolDescription:
+          'Analyze Torn script architecture, code behavior, state machines, or regressions.',
       }),
       reviewAgent.asTool({
         toolName: 'review_torn_change',
-        toolDescription: 'Independently review a Torn engineering proposal or change before release.',
+        toolDescription:
+          'Independently review a Torn engineering proposal or change before release.',
       }),
     ],
   });

@@ -5,7 +5,9 @@ import { isPathAllowed, normalizeRelativeWorkerPath } from '../src/worker/path-p
 
 describe('Worker safety policy', () => {
   it('normalizes safe relative paths and rejects escapes or absolute paths', () => {
-    expect(normalizeRelativeWorkerPath('src\\worker\\contracts.ts')).toBe('src/worker/contracts.ts');
+    expect(normalizeRelativeWorkerPath('src\\worker\\contracts.ts')).toBe(
+      'src/worker/contracts.ts',
+    );
     expect(normalizeRelativeWorkerPath('../.env')).toBeNull();
     expect(normalizeRelativeWorkerPath('C:\\secret')).toBeNull();
     expect(isPathAllowed('src/worker/contracts.ts', ['src'])).toBe(true);

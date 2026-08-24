@@ -2,21 +2,12 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 
-import type {
-  WorkerAction,
-  WorkerActionResult,
-  WorkerJob,
-  WorkerJobResult,
-} from './contracts.js';
+import type { WorkerAction, WorkerActionResult, WorkerJob, WorkerJobResult } from './contracts.js';
 import { validateWorkerJob, workerJobContainsWrite } from './contracts.js';
 import { inspectPatch } from './patch-policy.js';
 import { isPathAllowed, normalizeRelativeWorkerPath } from './path-policy.js';
 import { runProcess, type ProcessRunResult } from './process-runner.js';
-import {
-  KS_LESLIE_TEST_PROFILES,
-  resolveTestProfile,
-  type TestProfile,
-} from './test-profiles.js';
+import { KS_LESLIE_TEST_PROFILES, resolveTestProfile, type TestProfile } from './test-profiles.js';
 
 const MAX_FILE_BYTES = 1_000_000;
 const MAX_ACTION_OUTPUT = 1_000_000;
@@ -62,7 +53,11 @@ async function safeExistingPath(root: string, workerPath: string): Promise<strin
   return target;
 }
 
-async function git(root: string, args: readonly string[], timeoutMs = 60_000): Promise<ProcessRunResult> {
+async function git(
+  root: string,
+  args: readonly string[],
+  timeoutMs = 60_000,
+): Promise<ProcessRunResult> {
   return await runProcess({
     executable: 'git',
     args,
@@ -77,7 +72,8 @@ function requireSuccess(result: ProcessRunResult, operation: string): string {
     throw new Error(`${operation} timed out`);
   }
   if (result.exitCode !== 0) {
-    const detail = result.stderr.trim() || result.stdout.trim() || `exit ${String(result.exitCode)}`;
+    const detail =
+      result.stderr.trim() || result.stdout.trim() || `exit ${String(result.exitCode)}`;
     throw new Error(`${operation} failed: ${detail}`);
   }
   return result.stdout.trim();
@@ -146,7 +142,10 @@ function changedPathsFromPorcelain(status: string): readonly string[] {
 }
 
 function safeJobLabel(jobId: string): string {
-  const compact = jobId.replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
+  const compact = jobId
+    .replace(/[^A-Za-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
   return compact.length === 0 ? 'job' : compact;
 }
 
@@ -185,7 +184,11 @@ async function prepareControlledWorktree(
 
   try {
     requireSuccess(
-      await git(repository, ['worktree', 'add', '-b', branch, workspace, job.scope.baselineRef], 120_000),
+      await git(
+        repository,
+        ['worktree', 'add', '-b', branch, workspace, job.scope.baselineRef],
+        120_000,
+      ),
       'create isolated Worker worktree',
     );
     const actual = await repositoryRoot(workspace);
@@ -387,7 +390,9 @@ async function executeAction(
     case 'search_text': {
       const result = await searchText(root, action);
       return {
-        summary: result.matched ? 'Search completed with matches.' : 'Search completed with no matches.',
+        summary: result.matched
+          ? 'Search completed with matches.'
+          : 'Search completed with no matches.',
         output: result.output,
       };
     }

@@ -16,7 +16,9 @@ describe('repository evidence adapters', () => {
 
     expect(release?.version).toBe('1.5.138');
     expect(release?.state).toBe('candidate');
-    expect(selectKnownGoodBaseline(release === null ? [] : [release], 'war-dibs').baseline).toBeNull();
+    expect(
+      selectKnownGoodBaseline(release === null ? [] : [release], 'war-dibs').baseline,
+    ).toBeNull();
   });
 
   it('lets a later regression failure invalidate owner verification', () => {

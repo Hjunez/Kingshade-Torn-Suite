@@ -15,6 +15,7 @@ Access is denied unless a role and policy explicitly grant it. Authorization is 
 Intended for the system owner.
 
 Capabilities:
+
 - Public Torn research and current-web research.
 - Private Kingshade development knowledge.
 - Faction knowledge where explicitly granted.
@@ -30,12 +31,14 @@ Capabilities:
 Intended for trusted faction leadership or invited Torn-only users.
 
 Capabilities:
+
 - Public Torn knowledge.
 - Current Torn research.
 - Read-only Torn API information exposed by approved advisor tools.
 - Optional faction-shared knowledge explicitly assigned to the user.
 
 Explicitly denied:
+
 - Source repositories and source-code retrieval.
 - Script source, private development memory, DOM probes, private logs, internal test fixtures, and rollback history.
 - Git/GitHub development tools.
@@ -80,6 +83,7 @@ Each conversation and durable memory record carries an owner, tenant/faction sco
 Every tool declares required capabilities. The authorization layer validates the authenticated user before the tool can be invoked.
 
 Examples:
+
 - Public web research: TORN_RESEARCH.
 - Torn API advisor query: TORN_API_READ.
 - Repository search: REPO_READ plus project grant.

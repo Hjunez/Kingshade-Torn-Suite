@@ -60,7 +60,9 @@ export function canDeliverTestCandidate(input: DeliveryGateInput): GateDecision 
         : 'independent review was not run',
     );
   }
-  blockers.push(...input.unresolvedBlockingUncertainty.map((item) => `blocking uncertainty: ${item}`));
+  blockers.push(
+    ...input.unresolvedBlockingUncertainty.map((item) => `blocking uncertainty: ${item}`),
+  );
 
   return { allowed: blockers.length === 0, blockers };
 }

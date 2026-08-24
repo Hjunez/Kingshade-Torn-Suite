@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  KS_LESLIE_TEST_PROFILES,
-  resolveTestProfile,
-} from '../src/worker/test-profiles.js';
+import { KS_LESLIE_TEST_PROFILES, resolveTestProfile } from '../src/worker/test-profiles.js';
 
 describe('Worker test profiles', () => {
   it('resolves allowlisted profiles by id', () => {

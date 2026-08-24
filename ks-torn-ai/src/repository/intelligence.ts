@@ -30,7 +30,10 @@ export class RepositoryIntelligenceService {
   readonly #reader: RepositoryReader;
   readonly #projects: readonly ProjectDescriptor[];
 
-  constructor(reader: RepositoryReader, projects: readonly ProjectDescriptor[] = KINGSHADE_PROJECTS) {
+  constructor(
+    reader: RepositoryReader,
+    projects: readonly ProjectDescriptor[] = KINGSHADE_PROJECTS,
+  ) {
     this.#reader = reader;
     this.#projects = projects;
   }
@@ -110,6 +113,9 @@ export class RepositoryIntelligenceService {
     }
 
     const file = await this.#reader.readFile(filePath, options.ref ?? 'main');
-    return file.content.split(/\r?\n/).slice(options.startLine - 1, options.endLine).join('\n');
+    return file.content
+      .split(/\r?\n/)
+      .slice(options.startLine - 1, options.endLine)
+      .join('\n');
   }
 }

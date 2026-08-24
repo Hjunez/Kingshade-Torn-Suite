@@ -16,9 +16,7 @@ describe('userscript inspection', () => {
   });
 
   it('flags files that do not begin directly with the userscript header', () => {
-    const inspection = inspectUserscript(
-      `note\n// ==UserScript==\n// @name X\n// ==/UserScript==`,
-    );
+    const inspection = inspectUserscript(`note\n// ==UserScript==\n// @name X\n// ==/UserScript==`);
 
     expect(inspection.beginsWithHeader).toBe(false);
     expect(inspection.diagnostics).toContain(

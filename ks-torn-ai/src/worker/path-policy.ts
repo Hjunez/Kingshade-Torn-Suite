@@ -7,7 +7,11 @@ export function normalizeRelativeWorkerPath(value: string): string | null {
   if (normalized.length === 0 || normalized.includes('\0')) {
     return null;
   }
-  if (normalized.startsWith('/') || normalized.startsWith('//') || /^[A-Za-z]:\//.test(normalized)) {
+  if (
+    normalized.startsWith('/') ||
+    normalized.startsWith('//') ||
+    /^[A-Za-z]:\//.test(normalized)
+  ) {
     return null;
   }
 
@@ -35,7 +39,8 @@ export function isPathAllowed(candidate: string, allowedPaths: readonly string[]
       return true;
     }
     return (
-      normalizedCandidate === normalizedAllowed || normalizedCandidate.startsWith(`${normalizedAllowed}/`)
+      normalizedCandidate === normalizedAllowed ||
+      normalizedCandidate.startsWith(`${normalizedAllowed}/`)
     );
   });
 }

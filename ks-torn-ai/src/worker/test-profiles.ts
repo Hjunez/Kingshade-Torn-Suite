@@ -14,7 +14,8 @@ export interface TestProfile {
 export const KS_LESLIE_TEST_PROFILES: readonly TestProfile[] = [
   {
     id: 'suite-layout',
-    purpose: 'Validate Kingshade Suite versions and repository layout using the repository-owned validator.',
+    purpose:
+      'Validate Kingshade Suite versions and repository layout using the repository-owned validator.',
     steps: [
       {
         executable: 'bash',
