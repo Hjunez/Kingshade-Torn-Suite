@@ -6,6 +6,11 @@ const envSchema = z.object({
   OPENAI_SPECIALIST_MODEL: z.string().min(1).default('gpt-5.6-terra'),
   OPENAI_VECTOR_STORE_ID: z.string().min(1).optional(),
   KS_LESLIE_STATE_DIR: z.string().min(1).default('.state'),
+  KS_LESLIE_GITHUB_REPOSITORY: z
+    .string()
+    .regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/)
+    .default('Hjunez/Kingshade-Torn-Suite'),
+  KS_LESLIE_GITHUB_TOKEN: z.string().min(1).optional(),
 });
 
 export interface KsLeslieConfig {
@@ -13,6 +18,8 @@ export interface KsLeslieConfig {
   specialistModel: string;
   vectorStoreId?: string;
   stateDir: string;
+  githubRepository: string;
+  githubToken?: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): KsLeslieConfig {
@@ -25,5 +32,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): KsLeslieConfig
       ? {}
       : { vectorStoreId: parsed.OPENAI_VECTOR_STORE_ID }),
     stateDir: parsed.KS_LESLIE_STATE_DIR,
+    githubRepository: parsed.KS_LESLIE_GITHUB_REPOSITORY,
+    ...(parsed.KS_LESLIE_GITHUB_TOKEN === undefined
+      ? {}
+      : { githubToken: parsed.KS_LESLIE_GITHUB_TOKEN }),
   };
 }
