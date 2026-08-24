@@ -1,3 +1,5 @@
+import { isPathAllowed } from './path-policy.js';
+
 export type WorkerMode = 'read_only' | 'controlled_write';
 
 export type WorkerCapability =
@@ -56,19 +58,48 @@ export interface WorkerJobResult {
 
 const WRITE_ACTIONS = new Set<WorkerAction['kind']>(['apply_patch']);
 
+function actionPaths(action: WorkerAction): readonly string[] {
+  switch (action.kind) {
+    case 'inspect_file':
+      return [action.path];
+    case 'search_text':
+    case 'git_history':
+      return action.paths ?? ['.'];
+    default:
+      return [];
+  }
+}
+
 export function validateWorkerJob(job: WorkerJob): readonly string[] {
   const errors: string[] = [];
+  const containsWrite = job.actions.some((action) => WRITE_ACTIONS.has(action.kind));
 
-  if (job.mode === 'read_only' && job.actions.some((action) => WRITE_ACTIONS.has(action.kind))) {
+  if (job.mode === 'read_only' && containsWrite) {
     errors.push('read_only jobs cannot contain write actions');
   }
 
-  if (!job.approvedWrite && job.actions.some((action) => WRITE_ACTIONS.has(action.kind))) {
+  if (containsWrite && !job.approvedWrite) {
     errors.push('write actions require explicit approval');
+  }
+
+  if (containsWrite && job.mode === 'controlled_write' && job.scope.branch === undefined) {
+    errors.push('controlled_write jobs require an isolated branch');
   }
 
   if (job.scope.allowedPaths.length === 0) {
     errors.push('worker scope must contain at least one allowed path');
+  }
+
+  for (const action of job.actions) {
+    for (const path of actionPaths(action)) {
+      if (!isPathAllowed(path, job.scope.allowedPaths)) {
+        errors.push(`action path is outside worker scope: ${path}`);
+      }
+    }
+
+    if (action.kind === 'apply_patch' && action.expectedBaseSha !== job.scope.baselineRef) {
+      errors.push('patch expected base does not match worker baseline');
+    }
   }
 
   return errors;
