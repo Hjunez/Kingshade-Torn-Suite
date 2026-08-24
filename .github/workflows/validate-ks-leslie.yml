@@ -1,0 +1,35 @@
+name: Validate KS Leslie
+
+on:
+  push:
+    branches:
+      - feature/ks-torn-ai-v0.1-bootstrap
+  pull_request:
+    paths:
+      - "ks-torn-ai/**"
+      - ".github/workflows/validate-ks-leslie.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: ks-torn-ai
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install --ignore-scripts
+
+      - name: Verify KS Leslie
+        run: npm run verify
