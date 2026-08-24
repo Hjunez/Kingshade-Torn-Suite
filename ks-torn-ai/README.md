@@ -1,6 +1,6 @@
-# KS Torn AI
+# KS Leslie
 
-KS Torn AI is a dedicated Torn City engineering and research agent. It is intentionally separate from individual userscripts and is designed to become the control plane for research, implementation analysis, review, project memory, and eventually sandboxed repository work.
+KS Leslie is a dedicated Torn City engineering and research agent. It is intentionally separate from individual userscripts and is designed to become the control plane for research, implementation analysis, review, project memory, and eventually sandboxed repository work.
 
 ## v0.1 bootstrap
 
@@ -51,6 +51,6 @@ Add read-only Torn API v2 tools with allowlisted endpoints, minimum-permission c
 
 Add independent review, regression gates, known-good rollback baselines, PDA/browser compatibility profiles, and release-candidate reporting.
 
-### v1.0 — KS Torn AI
+### v1.0 — KS Leslie
 
 A persistent Torn-only engineering system that can research current Torn behavior, understand Kingshade projects, inspect and modify code in an isolated workspace, run tests, review itself, and prepare controlled Git changes without performing gameplay actions.
