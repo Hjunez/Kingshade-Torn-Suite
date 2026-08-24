@@ -1,4 +1,18 @@
+import { z } from 'zod';
+
 import type { GitCommitObservation } from './evidence-adapters.js';
+import type { RepositoryBackend } from './reader.js';
+import {
+  MAX_COMPARE_FILES,
+  MAX_GITHUB_RESPONSE_BYTES,
+  MAX_HISTORY_COMMITS,
+  MAX_REPOSITORY_FILE_BYTES,
+  normalizeCommitObservation,
+  normalizeRepositoryPath,
+  validateGitHubRepository,
+  validateHistoryLimit,
+  validateRepositoryRef,
+} from './validation.js';
 
 export interface GitHubFileObservation {
   path: string;
@@ -8,14 +22,15 @@ export interface GitHubFileObservation {
 
 export interface GitHubCompareFile {
   filename: string;
-  status: string;
+  previousFilename?: string;
+  status: 'added' | 'removed' | 'modified' | 'renamed' | 'copied' | 'changed' | 'unchanged';
   additions: number;
   deletions: number;
   changes: number;
 }
 
 export interface GitHubCompareObservation {
-  status: string;
+  status: 'identical' | 'ahead' | 'behind' | 'diverged';
   aheadBy: number;
   behindBy: number;
   totalCommits: number;
@@ -25,76 +40,148 @@ export interface GitHubCompareObservation {
 export interface GitHubRepositoryReaderOptions {
   repository: string;
   token?: string;
-  apiBaseUrl?: string;
   fetchImpl?: typeof fetch;
 }
 
-interface GitHubContentsResponse {
-  type: string;
-  path: string;
-  sha: string;
-  encoding?: string;
-  content?: string;
-}
+const GITHUB_API_ORIGIN = 'https://api.github.com';
+const REQUEST_TIMEOUT_MS = 20_000;
+const MAX_BASE64_CHARS = Math.ceil((MAX_REPOSITORY_FILE_BYTES * 4) / 3) + 8;
 
-interface GitHubCommitResponse {
-  sha: string;
-  commit: {
-    message: string;
-    committer?: { date?: string | null } | null;
-    author?: { date?: string | null } | null;
-  };
-}
+const contentsResponseSchema = z.object({
+  type: z.string().max(32),
+  path: z.string().min(1).max(1_024),
+  sha: z.string().min(1).max(128),
+  encoding: z.string().max(32).optional(),
+  content: z.string().max(MAX_BASE64_CHARS).optional(),
+});
 
-interface GitHubCompareResponse {
-  status: string;
-  ahead_by: number;
-  behind_by: number;
-  total_commits: number;
-  files?: {
-    filename: string;
-    status: string;
-    additions: number;
-    deletions: number;
-    changes: number;
-  }[];
-}
+const resolvedCommitResponseSchema = z.object({
+  sha: z.string().regex(/^[0-9a-f]{40}$/i),
+});
 
-function validateRepository(value: string): void {
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value)) {
-    throw new Error('GitHub repository must be in owner/name form');
-  }
-}
+const commitResponseSchema = z
+  .array(
+    z.object({
+      sha: z.string().min(1).max(128),
+      commit: z.object({
+        message: z.string().max(100_000),
+        committer: z
+          .object({ date: z.string().max(64).nullable().optional() })
+          .nullable()
+          .optional(),
+        author: z
+          .object({ date: z.string().max(64).nullable().optional() })
+          .nullable()
+          .optional(),
+      }),
+    }),
+  )
+  .max(MAX_HISTORY_COMMITS);
+
+const compareResponseSchema = z.object({
+  status: z.enum(['identical', 'ahead', 'behind', 'diverged']),
+  ahead_by: z.number().int().nonnegative(),
+  behind_by: z.number().int().nonnegative(),
+  total_commits: z.number().int().nonnegative(),
+  files: z
+    .array(
+      z.object({
+        filename: z.string().min(1).max(1_024),
+        previous_filename: z.string().min(1).max(1_024).optional(),
+        status: z.enum([
+          'added',
+          'removed',
+          'modified',
+          'renamed',
+          'copied',
+          'changed',
+          'unchanged',
+        ]),
+        additions: z.number().int().nonnegative(),
+        deletions: z.number().int().nonnegative(),
+        changes: z.number().int().nonnegative(),
+      }),
+    )
+    .max(MAX_COMPARE_FILES)
+    .optional(),
+});
 
 function decodeBase64Utf8(value: string): string {
   const binary = atob(value.replace(/\s/g, ''));
   const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-  return new TextDecoder().decode(bytes);
+  if (bytes.byteLength > MAX_REPOSITORY_FILE_BYTES) {
+    throw new Error('GitHub file exceeds repository read limit');
+  }
+  return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
 }
 
 function encodePath(value: string): string {
-  const parts = value.split('/');
-  if (parts.some((part) => part.length === 0 || part === '.' || part === '..')) {
+  const normalized = normalizeRepositoryPath(value);
+  if (normalized === null) {
     throw new Error(`Invalid repository path: ${value}`);
   }
-  return parts.map(encodeURIComponent).join('/');
+  return normalized.split('/').map(encodeURIComponent).join('/');
+}
+
+async function readBoundedResponse(response: Response): Promise<string> {
+  if (response.body === null) {
+    const raw = await response.text();
+    if (Buffer.byteLength(raw, 'utf8') > MAX_GITHUB_RESPONSE_BYTES) {
+      throw new Error('GitHub response exceeds repository read limit');
+    }
+    return raw;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let byteLength = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    byteLength += value.byteLength;
+    if (byteLength > MAX_GITHUB_RESPONSE_BYTES) {
+      await reader.cancel();
+      throw new Error('GitHub response exceeds repository read limit');
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error('GitHub returned invalid UTF-8');
+  }
 }
 
 export class GitHubRepositoryReader {
   readonly #repository: string;
   readonly #token: string | undefined;
-  readonly #apiBaseUrl: string;
   readonly #fetch: typeof fetch;
 
   constructor(options: GitHubRepositoryReaderOptions) {
-    validateRepository(options.repository);
+    validateGitHubRepository(options.repository);
     this.#repository = options.repository;
     this.#token = options.token;
-    this.#apiBaseUrl = (options.apiBaseUrl ?? 'https://api.github.com').replace(/\/$/, '');
     this.#fetch = options.fetchImpl ?? fetch;
   }
 
-  async #requestJson<T>(path: string): Promise<T> {
+  describeBackend(): Promise<RepositoryBackend> {
+    return Promise.resolve('github');
+  }
+
+  async #requestJson(path: string): Promise<unknown> {
+    const url = new URL(path, GITHUB_API_ORIGIN);
+    if (url.origin !== GITHUB_API_ORIGIN) {
+      throw new Error('GitHub read attempted to use an untrusted host');
+    }
+
     const headers: Record<string, string> = {
       Accept: 'application/vnd.github+json',
       'X-GitHub-Api-Version': '2022-11-28',
@@ -104,21 +191,50 @@ export class GitHubRepositoryReader {
       headers.Authorization = `Bearer ${this.#token}`;
     }
 
-    const response = await this.#fetch(`${this.#apiBaseUrl}${path}`, { headers });
+    const response = await this.#fetch(url, {
+      method: 'GET',
+      headers,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
     if (!response.ok) {
       throw new Error(`GitHub read failed with HTTP ${String(response.status)}`);
     }
-    return (await response.json()) as T;
+
+    const declaredLength = Number(response.headers.get('content-length'));
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_GITHUB_RESPONSE_BYTES) {
+      throw new Error('GitHub response exceeds repository read limit');
+    }
+    const raw = await readBoundedResponse(response);
+    try {
+      return JSON.parse(raw) as unknown;
+    } catch {
+      throw new Error('GitHub returned invalid JSON');
+    }
+  }
+
+  async resolveRef(ref: string): Promise<string> {
+    validateRepositoryRef(ref);
+    const encodedRef = encodeURIComponent(ref);
+    const data = resolvedCommitResponseSchema.parse(
+      await this.#requestJson(`/repos/${this.#repository}/commits/${encodedRef}`),
+    );
+    return data.sha.toLowerCase();
   }
 
   async readFile(path: string, ref: string): Promise<GitHubFileObservation> {
     const encodedPath = encodePath(path);
+    validateRepositoryRef(ref);
     const query = new URLSearchParams({ ref }).toString();
-    const data = await this.#requestJson<GitHubContentsResponse>(
-      `/repos/${this.#repository}/contents/${encodedPath}?${query}`,
+    const data = contentsResponseSchema.parse(
+      await this.#requestJson(`/repos/${this.#repository}/contents/${encodedPath}?${query}`),
     );
-    if (data.type !== 'file' || data.encoding !== 'base64' || data.content === undefined) {
-      throw new Error(`GitHub path is not a base64 file: ${path}`);
+    if (
+      data.type !== 'file' ||
+      data.path !== path ||
+      data.encoding !== 'base64' ||
+      data.content === undefined
+    ) {
+      throw new Error(`GitHub path is not the requested base64 file: ${path}`);
     }
     return {
       path: data.path,
@@ -132,13 +248,19 @@ export class GitHubRepositoryReader {
     path?: string;
     limit?: number;
   }): Promise<readonly GitCommitObservation[]> {
-    const limit = Math.min(Math.max(options.limit ?? 20, 1), 100);
+    validateRepositoryRef(options.ref);
+    const limit = options.limit ?? 20;
+    validateHistoryLimit(limit);
     const query = new URLSearchParams({ sha: options.ref, per_page: String(limit) });
     if (options.path !== undefined) {
-      query.set('path', options.path);
+      const normalized = normalizeRepositoryPath(options.path);
+      if (normalized === null) {
+        throw new Error(`Invalid repository path: ${options.path}`);
+      }
+      query.set('path', normalized);
     }
-    const data = await this.#requestJson<GitHubCommitResponse[]>(
-      `/repos/${this.#repository}/commits?${query.toString()}`,
+    const data = commitResponseSchema.parse(
+      await this.#requestJson(`/repos/${this.#repository}/commits?${query.toString()}`),
     );
 
     return data.map((record) => {
@@ -146,19 +268,21 @@ export class GitHubRepositoryReader {
       if (committedAt === null) {
         throw new Error(`GitHub commit has no timestamp: ${record.sha}`);
       }
-      return {
+      return normalizeCommitObservation({
         sha: record.sha,
         message: record.commit.message,
         committedAt,
-      };
+      });
     });
   }
 
   async compareRefs(baseRef: string, headRef: string): Promise<GitHubCompareObservation> {
+    validateRepositoryRef(baseRef);
+    validateRepositoryRef(headRef);
     const base = encodeURIComponent(baseRef);
     const head = encodeURIComponent(headRef);
-    const data = await this.#requestJson<GitHubCompareResponse>(
-      `/repos/${this.#repository}/compare/${base}...${head}`,
+    const data = compareResponseSchema.parse(
+      await this.#requestJson(`/repos/${this.#repository}/compare/${base}...${head}`),
     );
     return {
       status: data.status,
@@ -167,6 +291,9 @@ export class GitHubRepositoryReader {
       totalCommits: data.total_commits,
       files: (data.files ?? []).map((file) => ({
         filename: file.filename,
+        ...(file.previous_filename === undefined
+          ? {}
+          : { previousFilename: file.previous_filename }),
         status: file.status,
         additions: file.additions,
         deletions: file.deletions,
