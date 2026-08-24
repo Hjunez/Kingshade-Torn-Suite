@@ -5,17 +5,17 @@ import { createInterface } from 'node:readline/promises';
 
 import { run } from '@openai/agents';
 
-import { createKsTornAgent } from './agents.js';
+import { createKsLeslieAgent } from './agents.js';
 import { loadConfig } from './config.js';
 import { createPersistentSession } from './session.js';
 
 async function main(): Promise<void> {
   const config = loadConfig();
-  const agent = createKsTornAgent(config);
+  const agent = createKsLeslieAgent(config);
   const session = await createPersistentSession(config.stateDir);
   const terminal = createInterface({ input, output });
 
-  output.write('KS Torn AI v0.1.0\nType /exit to quit.\n\n');
+  output.write('KS Leslie v0.1.0\nType /exit to quit.\n\n');
 
   try {
     while (true) {
@@ -30,7 +30,7 @@ async function main(): Promise<void> {
       }
 
       const result = await run(agent, message, { session });
-      output.write(`\nKS Torn AI> ${String(result.finalOutput ?? '')}\n\n`);
+      output.write(`\nKS Leslie> ${String(result.finalOutput ?? '')}\n\n`);
     }
   } finally {
     terminal.close();
