@@ -5,17 +5,17 @@ const envSchema = z.object({
   OPENAI_MODEL: z.string().min(1).default('gpt-5.6-sol'),
   OPENAI_SPECIALIST_MODEL: z.string().min(1).default('gpt-5.6-terra'),
   OPENAI_VECTOR_STORE_ID: z.string().min(1).optional(),
-  KS_TORN_AI_STATE_DIR: z.string().min(1).default('.state'),
+  KS_LESLIE_STATE_DIR: z.string().min(1).default('.state'),
 });
 
-export type KsTornAiConfig = {
+export type KsLeslieConfig = {
   openAiModel: string;
   specialistModel: string;
   vectorStoreId?: string;
   stateDir: string;
 };
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): KsTornAiConfig {
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): KsLeslieConfig {
   const parsed = envSchema.parse(env);
 
   return {
@@ -24,6 +24,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): KsTornAiConfig
     ...(parsed.OPENAI_VECTOR_STORE_ID === undefined
       ? {}
       : { vectorStoreId: parsed.OPENAI_VECTOR_STORE_ID }),
-    stateDir: parsed.KS_TORN_AI_STATE_DIR,
+    stateDir: parsed.KS_LESLIE_STATE_DIR,
   };
 }
