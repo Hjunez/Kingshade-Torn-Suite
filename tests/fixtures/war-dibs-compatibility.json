@@ -1,0 +1,88 @@
+{
+  "contentWidth": 784,
+  "rowCount": 8,
+  "sources": {
+    "ffscouterV2": {
+      "version": "3.1",
+      "updated": "2026-07-23",
+      "source": "https://github.com/xentac/FFScouter/blob/main/CONTEXT.md"
+    },
+    "tornTools": {
+      "revision": "6beab14825caa14d951544c7af11c2b174cd3306",
+      "storeVersion": "9.1.2",
+      "source": "https://github.com/Mephiles/torntools_extension"
+    },
+    "warStuffEnhanced": {
+      "version": "2.1",
+      "updated": "2026-07-23",
+      "source": "https://greasyfork.org/en/scripts/529238-torn-war-stuff-enhanced/code"
+    }
+  },
+  "profiles": [
+    {
+      "id": "vanilla",
+      "label": "Vanilla Torn",
+      "support": "supported",
+      "features": []
+    },
+    {
+      "id": "ffscouter-v2",
+      "label": "Torn + FF Scouter V2",
+      "support": "supported",
+      "features": ["ffscouter-v2"]
+    },
+    {
+      "id": "torntools",
+      "label": "Torn + TornTools",
+      "support": "conditional",
+      "features": ["torntools-estimates"]
+    },
+    {
+      "id": "ffscouter-v2-torntools",
+      "label": "Torn + FF Scouter V2 + TornTools",
+      "support": "conditional",
+      "features": ["ffscouter-v2", "torntools-estimates"],
+      "tornToolsBuiltInFfscouter": false
+    },
+    {
+      "id": "war-stuff-enhanced",
+      "label": "Torn + War Stuff Enhanced",
+      "support": "unsupported",
+      "features": ["war-stuff-enhanced"]
+    },
+    {
+      "id": "war-stuff-enhanced-ffscouter-v2",
+      "label": "Torn + War Stuff Enhanced + FF Scouter V2",
+      "support": "unsupported",
+      "features": ["war-stuff-enhanced", "ffscouter-v2"]
+    }
+  ],
+  "duplicateFfProviderScenario": {
+    "id": "ffscouter-v2-torntools-duplicate-ff",
+    "label": "FF Scouter V2 + TornTools built-in FFScouter enabled",
+    "support": "misconfigured",
+    "features": ["ffscouter-v2", "torntools-estimates", "torntools-ffscouter"],
+    "tornToolsBuiltInFfscouter": true
+  },
+  "markers": {
+    "ffscouterV2": [
+      "html[__FF_SCOUTER_V2_INJECTED__='1']",
+      "[data-ffscouter-initialized]",
+      ".ffscouter-header",
+      ".ffscouter-cell",
+      "[data-ff-filter-box][data-mode='war']"
+    ],
+    "tornTools": [
+      ".tt-estimated[data-estimate]",
+      ".tt-stats-estimate",
+      ".tt-ff-scouter-indicator",
+      ".tt-ff-scouter-arrow"
+    ],
+    "warStuffEnhanced": [
+      "html[data-twse-injected]",
+      "li.enemy[data-twse-last-action-timestamp]",
+      ".twse-copy-btn[data-player-id]",
+      ".status[data-twse-overridden]"
+    ]
+  }
+}

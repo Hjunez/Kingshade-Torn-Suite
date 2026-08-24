@@ -109,6 +109,14 @@ command requires a Chrome installation. The regressions are intentionally evalua
 unchanged published userscript, so a red test documents a reproducible production baseline failure
 until a separately authorized production fix is made.
 
+For headed, interactive inspection in an isolated installed-Chrome session, see the
+[War Dibs offline Chrome arena](WAR_DIBS_ARENA.md). The arena reuses the deterministic fixtures and
+request barriers; it does not contact live Torn or FFScouter services.
+
+The [War Dibs desktop compatibility profiles](WAR_DIBS_COMPATIBILITY.md) document and exercise the
+source-derived FF Scouter V2, TornTools, and War Stuff Enhanced DOM contracts in both Chromium and
+installed Chrome.
+
 ## Continuous integration
 
 `.github/workflows/development-tests.yml` installs the locked npm dependencies and Chromium, then

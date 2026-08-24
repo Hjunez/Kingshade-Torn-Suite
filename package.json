@@ -8,10 +8,12 @@
     "node": ">=22.15.0"
   },
   "scripts": {
+    "arena:war-dibs": "node tools/launch-war-dibs-arena.mjs",
+    "arena:war-dibs:smoke": "node tools/launch-war-dibs-arena.mjs --smoke",
     "validate:suite": "node tools/run-suite-validator.mjs",
     "syntax": "node tools/check-js-syntax.mjs",
     "lint": "eslint . --max-warnings 0",
-    "format:check": "prettier --check \"package*.json\" .prettierrc.json eslint.config.mjs tsconfig.json vitest.config.js playwright.config.js playwright.desktop.config.js \"tools/*.mjs\" \"test-support/**/*.js\" \"tests/**/*.{js,json,html}\" docs/DEVELOPMENT.md .github/workflows/development-tests.yml",
+    "format:check": "prettier --check \"package*.json\" .prettierrc.json \".vscode/*.json\" eslint.config.mjs tsconfig.json vitest.config.js playwright.config.js playwright.desktop.config.js \"tools/*.mjs\" \"test-support/**/*.js\" \"tests/**/*.{js,json,html}\" docs/DEVELOPMENT.md docs/WAR_DIBS_ARENA.md docs/WAR_DIBS_COMPATIBILITY.md .github/workflows/development-tests.yml",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

@@ -17,7 +17,7 @@ export default defineConfig({
   reporter: process.env.CI ? 'line' : 'list',
   retries: 0,
   testDir: './tests/browser',
-  testMatch: 'war-dibs-desktop-ui.spec.js',
+  testMatch: ['war-dibs-desktop-ui.spec.js', 'war-dibs-compatibility.spec.js'],
   timeout: 30_000,
   use: {
     headless: true,

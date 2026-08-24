@@ -221,8 +221,8 @@ export async function recycleWarRowsInPlace(page, nextRows) {
  * @param {string} secondId
  */
 export async function swapRowIdentityAttributes(page, firstId, secondId) {
-  await page.evaluate(
-    ({ first, second }) => {
+  return page.evaluate(
+    async ({ attrs, first, hostPrefix, second }) => {
       const find = (/** @type {string} */ id) =>
         [...document.querySelectorAll('[data-test-enemy-rows] > li.enemy')].find((row) => {
           const href = row.querySelector('a[href*="XID="]')?.getAttribute('href') || '';
@@ -247,10 +247,46 @@ export async function swapRowIdentityAttributes(page, firstId, secondId) {
           attack.href = `/loader.php?sid=attack&user2ID=${id}`;
         }
       }
+
+      await new Promise((resolve) =>
+        queueMicrotask(() => queueMicrotask(() => resolve(undefined))),
+      );
+
+      const identityFor = (/** @type {Element} */ row) => {
+        const href = row.querySelector('a[href*="XID="]')?.getAttribute('href') || '';
+        return new URL(href, location.href).searchParams.get('XID') || '';
+      };
+      const rows = [...document.querySelectorAll('[data-test-enemy-rows] > li.enemy')].map(
+        (row) => {
+          const host = row.querySelector(`:scope > [id^="${hostPrefix}"]`);
+          const level = row.querySelector(':scope > .level');
+          const button = host?.shadowRoot?.querySelector('button');
+          return {
+            buttonReady: button?.getAttribute('data-ready') || '',
+            buttonState: button?.getAttribute('data-state') || '',
+            directHostCount: row.querySelectorAll(`:scope > [id^="${hostPrefix}"]`).length,
+            ffColorVariable:
+              row instanceof HTMLElement ? row.style.getPropertyValue('--ks-twd-ff-color') : '',
+            ffGauge: row.getAttribute(attrs.ffGauge),
+            ffLeftVariable:
+              row instanceof HTMLElement ? row.style.getPropertyValue('--ks-twd-ff-left-px') : '',
+            ffPlayerId: row.getAttribute(attrs.ffPlayer),
+            ffValue: row.getAttribute(attrs.ffValue),
+            hostDatasetId: host instanceof HTMLElement ? host.dataset.ksTwdPlayerId || '' : '',
+            hostId: host?.id || '',
+            identity: identityFor(row),
+            levelEstimate: level?.getAttribute(attrs.estimate) || '',
+            levelTitle: level?.getAttribute('title') || '',
+          };
+        },
+      );
+      return {
+        hostIds: [...document.querySelectorAll(`[id^="${hostPrefix}"]`)].map((host) => host.id),
+        rows,
+      };
     },
-    { first: firstId, second: secondId },
+    { attrs: attributes, first: firstId, hostPrefix: rowHostPrefix, second: secondId },
   );
-  await waitForUiFrames(page);
 }
 
 /**
@@ -468,7 +504,9 @@ export function captureWarDibsUi(page) {
           hostRect: rect(host),
           hostState: elementState(host),
           identity,
-          levelCount: row.querySelectorAll(':scope > .level').length,
+          levelCount: row.querySelectorAll(
+            ':scope > .level:not(.ffscouter-cell):not(.ffscouter-header)',
+          ).length,
           levelEstimate: level?.getAttribute(attrs.estimate) || '',
           levelPseudo: pseudo(level, '::after'),
           levelRect: rect(level),

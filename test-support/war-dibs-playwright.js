@@ -545,7 +545,14 @@ export async function requestsFor(page, route) {
 /**
  * @param {import('@playwright/test').Page} page
  * @param {WarDibsRow[] | WarDibsRow} requestedRows
- * @param {{tornClockOffsetMs?: number}} [options]
+ * @param {{
+ *   tornClockOffsetMs?: number,
+ *   beforeUserscript?: (
+ *     page: import('@playwright/test').Page,
+ *     fixture: WarDibsFixture,
+ *     rows: WarDibsRow[],
+ *   ) => Promise<void>,
+ * }} [options]
  * @returns {Promise<{
  *   fixture: WarDibsFixture,
  *   pageErrors: Error[],
@@ -585,6 +592,9 @@ export async function startWarDibsHarness(page, requestedRows, options = {}) {
   });
   await page.goto(fixturePageUrl);
   await configureRows(page, fixture, rows);
+  if (options.beforeUserscript) {
+    await options.beforeUserscript(page, fixture, rows);
+  }
   await page.addScriptTag({ path: repositoryPath('KS_Torn_War_Dibs.user.js') });
   await page.evaluate(() => {
     document.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
