@@ -1,4 +1,4 @@
-# KS Torn AI architecture
+# KS Leslie architecture
 
 ## Core principle
 
