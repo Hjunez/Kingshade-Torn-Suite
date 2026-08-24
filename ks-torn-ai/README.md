@@ -28,7 +28,7 @@ The Debug MVP is accepted only after this loop succeeds on a real Kingshade regr
 - Synthetic end-to-end acceptance covering read-only analysis, failed-test blocking, scoped patching, candidate commit, cleanup, source-worktree preservation, and rollback reporting.
 - Strict TypeScript, Vitest, ESLint, Prettier, locked installs, and runtime-only dependency auditing.
 
-Worker tools are added only when trusted application code injects a `WorkerAgentService`. The default CLI does not construct a production write policy. The controlled-write tool additionally requires both an SDK approval and a pending application-issued grant.
+Worker tools are added only when trusted application code injects a `WorkerAgentService`, or when the CLI's explicitly configured local repository root passes Worker Doctor. The CLI has no write-grant issuance flow, so its connected Worker remains read-only. The controlled-write tool additionally requires both an SDK approval and a pending application-issued grant.
 
 See [Stage B](docs/STAGE_B.md), [architecture](docs/ARCHITECTURE.md), and [Debug MVP](docs/DEBUG_MVP.md) for the exact boundaries.
 

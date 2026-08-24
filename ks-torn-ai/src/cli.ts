@@ -5,13 +5,13 @@ import { createInterface } from 'node:readline/promises';
 
 import { run } from '@openai/agents';
 
-import { createKsLeslieAgent } from './agents.js';
+import { createConfiguredKsLeslieApplication } from './application.js';
 import { loadConfig } from './config.js';
 import { createPersistentSession } from './session.js';
 
 async function main(): Promise<void> {
   const config = loadConfig();
-  const agent = createKsLeslieAgent(config);
+  const { agent } = await createConfiguredKsLeslieApplication(config);
   const session = await createPersistentSession(config.stateDir);
   const terminal = createInterface({ input, output });
 
