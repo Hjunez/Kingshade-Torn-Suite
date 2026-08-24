@@ -527,9 +527,6 @@ interface CandidateTreeSnapshot {
 
 async function stageCandidateTree(root: string, job: WorkerJob): Promise<CandidateTreeSnapshot> {
   const changedPaths = await requireScopedWorkspace(root, job);
-  if (changedPaths.length === 0) {
-    throw new Error('approved patch produced no scoped changes');
-  }
   requireSuccess(
     await git(root, ['add', '--all', '--', ...job.scope.allowedPaths]),
     'stage approved candidate tree',
@@ -778,7 +775,11 @@ export async function executeLocalWorkerJob(
         approvedTreeSha,
       );
       if (hasWrite && action.kind === 'apply_patch') {
-        approvedTreeSha = (await stageCandidateTree(workspaceRoot, job)).treeSha;
+        const snapshot = await stageCandidateTree(workspaceRoot, job);
+        if (snapshot.changedPaths.length === 0) {
+          throw new Error('approved patch produced no scoped changes');
+        }
+        approvedTreeSha = snapshot.treeSha;
       }
       if (hasWrite && action.kind === 'run_test_profile') {
         await requireApprovedCandidateTree(workspaceRoot, job, approvedTreeSha);

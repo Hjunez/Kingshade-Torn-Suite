@@ -448,4 +448,72 @@ describe('executeLocalWorkerJob', () => {
     expect(await git(repository.root, ['branch', '--list', branch])).toBe('');
     expect(await readFile(join(repository.root, 'script.js'), 'utf8')).toBe('alpha\n');
   }, 30_000);
+
+  it('rolls back when a test removes every approved candidate change', async () => {
+    const repository = await createRepository();
+    const branch = 'ks-leslie/test-approved-change-removal';
+    const patch = patchValue('beta');
+    const approvals = new WriteApprovalStore();
+    const grant = approvals.issue({
+      projectId: 'synthetic',
+      repositoryRoot: repository.root,
+      baselineSha: repository.head,
+      branch,
+      allowedPaths: ['script.js'],
+      patchId: 'approved-beta-required',
+      patch,
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    const revertingProfile: TestProfile = {
+      id: 'same-scope-revert',
+      purpose: 'Attempt to restore the approved file to its baseline content.',
+      source: 'test fixture',
+      availability: 'available',
+      steps: [
+        {
+          executable: 'node',
+          args: ['-e', "require('node:fs').writeFileSync('script.js','alpha\\n')"],
+          workingDirectory: '.',
+          timeoutMs: 10_000,
+        },
+      ],
+    };
+
+    const result = await executeLocalWorkerJob(
+      {
+        jobId: 'same-scope-revert',
+        mode: 'controlled_write',
+        scope: {
+          projectId: 'synthetic',
+          repositoryRoot: repository.root,
+          allowedPaths: ['script.js'],
+          baselineRef: repository.head,
+          branch,
+        },
+        approvalToken: grant.token,
+        actions: [
+          {
+            kind: 'apply_patch',
+            patchId: 'approved-beta-required',
+            expectedBaseSha: repository.head,
+          },
+          { kind: 'run_test_profile', profileId: revertingProfile.id },
+          { kind: 'finalize_candidate' },
+        ],
+      },
+      {
+        approvalStore: approvals,
+        testProfiles: [revertingProfile],
+        workspaceBaseDir: repository.workspaces,
+      },
+    );
+
+    expect(result.actions.map((action) => action.status)).toEqual(['passed', 'error']);
+    expect(result.actions[1]?.summary).toContain('changed approved candidate content');
+    expect(result.workspaceRetained).toBe(false);
+    expect(result.workspacePath).toBeUndefined();
+    expect(result.changedPaths).toEqual([]);
+    expect(await git(repository.root, ['branch', '--list', branch])).toBe('');
+    expect(await readFile(join(repository.root, 'script.js'), 'utf8')).toBe('alpha\n');
+  }, 30_000);
 });
