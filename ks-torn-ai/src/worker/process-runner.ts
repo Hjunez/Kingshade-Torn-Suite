@@ -33,10 +33,10 @@ function platformExecutable(executable: string): string {
 }
 
 function appendCapped(
-  current: Buffer<ArrayBufferLike>,
-  chunk: Buffer<ArrayBufferLike>,
+  current: Buffer,
+  chunk: Buffer,
   cap: number,
-): { buffer: Buffer<ArrayBufferLike>; truncated: boolean } {
+): { buffer: Buffer; truncated: boolean } {
   if (current.length >= cap) {
     return { buffer: current, truncated: chunk.length > 0 };
   }
@@ -64,8 +64,8 @@ export async function runProcess(request: ProcessRunRequest): Promise<ProcessRun
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
-    let stdout: Buffer<ArrayBufferLike> = Buffer.alloc(0);
-    let stderr: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+    let stdout: Buffer = Buffer.alloc(0);
+    let stderr: Buffer = Buffer.alloc(0);
     let outputTruncated = false;
     let timedOut = false;
     let settled = false;
@@ -77,14 +77,14 @@ export async function runProcess(request: ProcessRunRequest): Promise<ProcessRun
     }, request.timeoutMs);
 
     child.stdout.on('data', (chunk: Buffer | string) => {
-      const buffer: Buffer<ArrayBufferLike> = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      const buffer: Buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       const result = appendCapped(stdout, buffer, maxOutputBytes);
       stdout = result.buffer;
       outputTruncated ||= result.truncated;
     });
 
     child.stderr.on('data', (chunk: Buffer | string) => {
-      const buffer: Buffer<ArrayBufferLike> = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      const buffer: Buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       const result = appendCapped(stderr, buffer, maxOutputBytes);
       stderr = result.buffer;
       outputTruncated ||= result.truncated;
