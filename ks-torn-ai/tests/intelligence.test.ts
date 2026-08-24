@@ -6,20 +6,20 @@ import type { RepositoryReader } from '../src/repository/reader.js';
 const source = `// ==UserScript==\n// @name KS Torn War Dibs\n// @version 1.5.138\n// ==/UserScript==\nline5\nline6`;
 
 const reader: RepositoryReader = {
-  async readFile(path, ref) {
-    return { path, sha: `blob-${ref}`, content: source };
+  readFile(path, ref) {
+    return Promise.resolve({ path, sha: `blob-${ref}`, content: source });
   },
-  async listCommits() {
-    return [
+  listCommits() {
+    return Promise.resolve([
       {
         sha: 'c1',
         message: 'Release KS Torn War Dibs v1.5.138',
         committedAt: '2026-08-22T00:00:00Z',
       },
-    ];
+    ]);
   },
-  async compareRefs() {
-    return {
+  compareRefs() {
+    return Promise.resolve({
       status: 'ahead',
       aheadBy: 1,
       behindBy: 0,
@@ -40,7 +40,7 @@ const reader: RepositoryReader = {
           changes: 2,
         },
       ],
-    };
+    });
   },
 };
 
