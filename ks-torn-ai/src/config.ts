@@ -8,12 +8,12 @@ const envSchema = z.object({
   KS_LESLIE_STATE_DIR: z.string().min(1).default('.state'),
 });
 
-export type KsLeslieConfig = {
+export interface KsLeslieConfig {
   openAiModel: string;
   specialistModel: string;
   vectorStoreId?: string;
   stateDir: string;
-};
+}
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): KsLeslieConfig {
   const parsed = envSchema.parse(env);
