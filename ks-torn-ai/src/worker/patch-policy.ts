@@ -6,7 +6,7 @@ export interface PatchInspection {
 }
 
 function extractPatchPath(line: string): string | null {
-  const match = line.match(/^\+\+\+\s+(?:b\/)?(.+)$/);
+  const match = line.match(/^(?:---|\+\+\+|rename from|rename to)\s+(?:(?:a|b)\/)?(.+)$/);
   if (match === null) {
     return null;
   }
