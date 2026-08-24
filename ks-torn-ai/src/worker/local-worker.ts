@@ -367,7 +367,7 @@ async function applyPatch(
       throw new Error(`post-apply scope violation: ${unexpected.join(', ')}`);
     }
 
-    return `Applied patch ${action.patchId} to ${inspection.changedPaths.length} scoped path(s).`;
+    return `Applied patch ${action.patchId} to ${String(inspection.changedPaths.length)} scoped path(s).`;
   } finally {
     await rm(temp, { recursive: true, force: true });
   }
