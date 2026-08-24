@@ -1,0 +1,48 @@
+name: Format KS Leslie Once
+
+on:
+  push:
+    branches:
+      - feature/ks-torn-ai-v0.1-bootstrap
+    paths:
+      - .github/workflows/format-ks-leslie-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Leslie branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/ks-torn-ai-v0.1-bootstrap
+          fetch-depth: 0
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        working-directory: ks-torn-ai
+        run: npm install --ignore-scripts
+
+      - name: Apply Prettier formatting
+        working-directory: ks-torn-ai
+        run: npx prettier --write .
+
+      - name: Commit formatting only
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add ks-torn-ai
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m 'style: format KS Leslie bootstrap'
+          git push origin HEAD:feature/ks-torn-ai-v0.1-bootstrap
