@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KS Torn War Dibs
 // @namespace    kingshade.torn
-// @version      1.5.138
+// @version      1.5.143
 // @downloadURL  https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs.user.js
 // @updateURL    https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs.user.js
 // @description  Shared Ranked War DIBS with live Hospital countdown, FF 2.00-5.00 gating, Est/FF display and synchronized claims.
@@ -16,10 +16,11 @@
 // ==/UserScript==
 
 /*
- * KS Torn War Dibs v1.5.138 RW CLAIM GUARD REMOVED TEST
+ * KS Torn War Dibs v1.5.143 ATTRIBUTE-ONLY ROW IDENTITY TEST
  * FF / Est separator, Hospital countdown, FF 2.00-5.00 gate and shared DIBS retained.
  * Hospital countdown uses v1.5.135 FFScouter-aligned second-boundary semantics.
- * TEST ONLY: RW start lock removed. Hospital <=2:00 and FF 2.00-5.00 gates retained.
+ * TEST ONLY: identity-bearing row attribute changes immediately refresh DIBS and FF/Est ownership.
+ * RW start lock remains removed. Hospital <=2:00 and FF 2.00-5.00 gates are retained.
  * Country eligibility remains internal; country labels are not shown in DIBS buttons.
  */
 
@@ -28,7 +29,7 @@
 
   const SCRIPT = Object.freeze({
     name: "KS Torn War Dibs",
-    version: "1.5.138",
+    version: "1.5.143",
     instanceKey: "__ksTornWarDibsV1517",
     rowHostPrefix: "ks-twd-v1517-row-",
     panelId: "ks-twd-v1517-panel",
@@ -2230,7 +2231,7 @@
         @media (max-width:520px) { .status-grid { grid-template-columns:1fr; } .panel { padding-left:8px; padding-right:8px; } }
       </style>
       <div class="panel">
-        <div class="top"><span class="brand">KS Torn War Dibs</span><span class="version">v${SCRIPT.version} RELEASE</span></div>
+        <div class="top"><span class="brand">KS Torn War Dibs</span><span class="version">v${SCRIPT.version} TEST</span></div>
         <div class="status-grid">
           <div class="status-item" data-role="shared-item"><span class="dot"></span><span class="status" data-role="status">Shared: loading…</span></div>
           <div class="status-item" data-role="torn-item"><span class="dot"></span><span class="status" data-role="torn-status">Torn: loading…</span></div>
@@ -2424,6 +2425,7 @@
 
   function mutationTouchesWarRows(records) {
     for (const record of records) {
+      if (record.type === "attributes" && record.target instanceof Element && record.target.closest?.("#faction_war_list_id li.enemy")) return true;
       if (record.type === "characterData" && record.target?.parentElement?.closest?.("#faction_war_list_id")) return true;
       if (record.type !== "childList") continue;
       if (record.target instanceof Element && record.target.closest?.("#faction_war_list_id")) return true;
@@ -2455,7 +2457,13 @@
   function startBodyObserver() {
     if (bodyObserver || !document.body) return;
     bodyObserver = new MutationObserver(records => { if (runtimeActive && isRuntimeEligible() && mutationTouchesWarRows(records)) queueObserverScan(); });
-    bodyObserver.observe(document.body, { childList: true, characterData: true, subtree: true });
+    bodyObserver.observe(document.body, {
+      attributes: true,
+      attributeFilter: ["href", "data-profile", "data-user-id", "data-player-id"],
+      childList: true,
+      characterData: true,
+      subtree: true
+    });
   }
 
   function stopBodyObserver() {

@@ -1,8 +1,14 @@
 import { expect, test } from '@playwright/test';
-import { startWarDibsHarness, warDibsSelectors } from '../../test-support/war-dibs-playwright.js';
+import {
+  requestsFor,
+  startWarDibsHarness,
+  warDibsControl,
+  warDibsSelectors,
+} from '../../test-support/war-dibs-playwright.js';
 import {
   buildDesktopRows,
   captureWarDibsUi,
+  expectedVisualSignature,
   expectWarDibsUiIntegrity,
   readDesktopUiFixture,
   recycleWarRowsInPlace,
@@ -188,34 +194,60 @@ test.describe('KS Torn War Dibs desktop UI stress', () => {
     const harness = await startWarDibsHarness(page, rows);
     await settleWarDibsUi(page, rows);
 
-    await swapRowIdentityAttributes(page, first.id, second.id);
-    const immediate = await captureWarDibsUi(page);
+    const immediate = await swapRowIdentityAttributes(page, first.id, second.id);
+    expect(
+      immediate.rows.map((row) => row.identity),
+      'attribute-recycled DOM identity order',
+    ).toEqual([second.id, first.id]);
+    expect([...immediate.hostIds].sort(), 'global DIBS host identities').toEqual(
+      [first.id, second.id].map((id) => `${warDibsSelectors.rowHostPrefix}${id}`).sort(),
+    );
+    const expectedById = new Map(rows.map((row) => [row.id, row]));
     const immediateLeaks = immediate.rows
-      .filter(
-        (row) =>
+      .filter((row) => {
+        const expected = expectedById.get(row.identity);
+        if (!expected) return true;
+        const signature = expectedVisualSignature(expected);
+        return (
+          row.buttonReady !== 'true' ||
+          row.buttonState !== 'ready' ||
           row.ffPlayerId !== row.identity ||
+          row.ffGauge !== 'true' ||
+          row.ffValue !== signature.ffValue ||
+          row.ffLeftVariable !== signature.ffLeft ||
+          row.ffColorVariable !== signature.ffColor ||
+          row.levelEstimate !== signature.estimate ||
+          row.levelTitle !== signature.levelTitle ||
+          row.directHostCount !== 1 ||
           row.hostDatasetId !== row.identity ||
-          row.hostId !== `${warDibsSelectors.rowHostPrefix}${row.identity}`,
-      )
+          row.hostId !== `${warDibsSelectors.rowHostPrefix}${row.identity}`
+        );
+      })
       .map((row) => ({
+        buttonReady: row.buttonReady,
+        buttonState: row.buttonState,
         dibsDatasetId: row.hostDatasetId,
         dibsHostId: row.hostId,
+        directHostCount: row.directHostCount,
+        ffColor: row.ffColorVariable,
+        ffGauge: row.ffGauge,
+        ffLeft: row.ffLeftVariable,
         ffPlayerId: row.ffPlayerId,
+        ffValue: row.ffValue,
+        levelEstimate: row.levelEstimate,
+        levelTitle: row.levelTitle,
         rowIdentity: row.identity,
       }));
-    expect.soft(immediateLeaks, 'cross-player leaks before the periodic repair scan').toEqual([]);
+    expect(immediateLeaks, 'immediate cross-player DIBS and FF/Est ownership leaks').toEqual([]);
 
-    await expect
-      .poll(
-        async () => {
-          const snapshot = await captureWarDibsUi(page);
-          return snapshot.rows.every(
-            (row) => row.ffPlayerId === row.identity && row.hostDatasetId === row.identity,
-          );
-        },
-        { timeout: 2_000 },
-      )
-      .toBe(true);
+    await harness.controller('clearRequests');
+    const recycledControl = warDibsControl(page, second.id);
+    await expect(recycledControl.button).toHaveAttribute('data-state', 'ready');
+    await recycledControl.button.click();
+    const claimRequests = await requestsFor(page, 'ff:claim');
+    expect(claimRequests).toHaveLength(1);
+    expect(claimRequests[0]?.body).toEqual({ target_player_id: Number(second.id) });
+
     await expectWarDibsUiIntegrity(page, [second, first]);
     await expectHarnessSafety(harness);
   });
