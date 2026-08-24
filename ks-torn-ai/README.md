@@ -1,10 +1,27 @@
 # KS Leslie
 
-KS Leslie is a dedicated Torn City engineering and research agent. It is intentionally separate from individual userscripts and is designed to become the control plane for research, implementation analysis, review, project memory, and eventually sandboxed repository work.
+KS Leslie is a dedicated Torn City engineering and research agent. Its first objective is not to become a complete Torn platform; its first objective is to reduce the time required to diagnose, modify, test, and review Kingshade scripts.
+
+## Current priority: Debug MVP
+
+All non-essential product work is deferred until the Debug MVP is usable.
+
+The Debug MVP must let the owner give Leslie a bug or engineering goal in natural language and have Leslie:
+
+1. Inspect the correct repository, current implementation, Git history, and known-good baseline.
+2. Search relevant source, tests, DOM evidence, logs, and prior regression information.
+3. Form a root-cause hypothesis and distinguish verified evidence from inference.
+4. Create a bounded change in an isolated workspace or branch without modifying the known-good baseline.
+5. Run the relevant TypeScript, ESLint, Vitest, Playwright, and project-specific checks that are available.
+6. Iterate on failures without claiming success until evidence supports it.
+7. Perform an independent review for regressions, Torn compliance, secret leakage, and PDA/browser compatibility.
+8. Produce a concise TEST result containing the change, evidence, test status, remaining uncertainty, and rollback baseline.
+
+The Debug MVP is considered useful only when it can complete that loop on a real Kingshade script with materially less manual work from the owner.
 
 ## v0.1 bootstrap
 
-The first bootstrap contains:
+The bootstrap contains:
 
 - GPT-5.6 Sol coordinator.
 - GPT-5.6 Terra research, engineering, and independent-review specialists.
@@ -14,43 +31,54 @@ The first bootstrap contains:
 - Strict TypeScript configuration.
 - Vitest, ESLint, and Prettier verification.
 - A permanent Torn-specific evidence hierarchy and engineering policy.
+- Core/Worker direction, RBAC, and isolated knowledge zones documented for later product stages.
 
-It does not yet edit repositories or execute shell commands. Those capabilities are deliberately deferred until the workspace boundary, approvals, rollback rules, and regression test contract are implemented.
+It does not yet edit repositories or execute shell commands. Those are now the highest-priority capabilities to add safely.
 
-## Local start
+## Critical path
 
-Requires Node.js 22 or newer.
+### Stage A — Repository intelligence
 
-1. Copy `.env.example` to `.env`.
-2. Add an OpenAI API key to `.env`.
-3. Install dependencies.
-4. Run the verification suite.
-5. Start the CLI.
+Read selected repositories, search source, compare versions and commits, inspect Git history, identify current and known-good baselines, and reason over existing test output.
 
-Never commit `.env` or API keys.
+### Stage B — Controlled Worker
 
-## Planned stages
+Add an isolated Windows/Docker-backed engineering workspace that can modify files, create patches, preserve snapshots, and resume work without unrestricted writes to production repositories.
 
-### v0.2 — Knowledge ingestion
+### Stage C — Automated verification loop
 
-Create and maintain a vector store containing curated Torn documentation, Kingshade architecture decisions, verified DOM probes, test evidence, and release notes. Every source receives provenance metadata.
+Run the existing Kingshade validation stack, capture structured results, map failures back to the attempted change, and permit bounded repair iterations.
 
-### v0.3 — Read-only repository intelligence
+### Stage D — Regression and release gate
 
-Allow the agent to inspect selected repositories, search source, compare versions, inspect Git history, and reason over test output without modifying files.
+Add independent review, regression gates, known-good rollback protection, PDA/mobile-browser/PC compatibility profiles, and clear TEST-build reporting.
 
-### v0.4 — Controlled engineering workspace
+### Debug MVP acceptance test
 
-Add a Docker-backed sandbox on Windows for file editing, shell commands, tests, patches, snapshots, and resumable workspace state. Repository writes require explicit workspace boundaries and human approval.
+A real request such as a reproducible PDA userscript regression must be traceable from report to root-cause evidence, isolated change, relevant automated tests, independent review, and a prepared TEST branch while preserving the verified rollback baseline.
 
-### v0.5 — Torn API tools
+## Deferred until after Debug MVP
 
-Add read-only Torn API v2 tools with allowlisted endpoints, minimum-permission custom keys, rate-limit handling, secret redaction, caching awareness, and audit logs.
+These remain planned but must not delay the debugging core:
 
-### v0.6 — Release gate
+- Mobile/PWA client and remote job queue.
+- Faction accounts and user-facing RBAC administration.
+- Faction knowledge features.
+- Advanced Torn Intelligence Graph.
+- Change-radar and background monitoring features.
+- Cosmetic Leslie identity features and dashboards.
 
-Add independent review, regression gates, known-good rollback baselines, PDA/browser compatibility profiles, and release-candidate reporting.
+Security architecture for those features is still designed now where necessary to avoid rework, but their product implementation is deferred.
 
-### v1.0 — KS Leslie
+## Later platform stages
 
-A persistent Torn-only engineering system that can research current Torn behavior, understand Kingshade projects, inspect and modify code in an isolated workspace, run tests, review itself, and prepare controlled Git changes without performing gameplay actions.
+After Debug MVP, continue with curated Torn/Kingshade knowledge ingestion, read-only Torn API v2 tools, Core/Worker remote access, multi-user RBAC, faction-facing Torn Advisor access, and the broader KS Leslie platform.
+
+## Safety invariants
+
+- Never commit API keys, cookies, passwords, tokens, or other secrets.
+- Torn API access is read-only and minimum-permission.
+- Do not automate gameplay actions.
+- Do not claim a change was tested unless test output exists.
+- Do not patch-stack on an unverified regression; preserve and use the known-good rollback baseline.
+- Treat Torn PDA/mobile behavior as a first-class compatibility target.
