@@ -19,6 +19,33 @@ The Debug MVP must let the owner give Leslie a bug or engineering goal in natura
 
 The Debug MVP is considered useful only when it can complete that loop on a real Kingshade script with materially less manual work from the owner.
 
+## Current pre-PC implementation status
+
+Implemented and locally strict-TypeScript/smoke-verified where dependency-free:
+
+- deterministic project resolution for War Dibs, FFScouter Call Guard, War Tools, and Scout;
+- strict userscript-header and version inspection;
+- evidence-weighted known-good baseline selection that requires explicit owner verification;
+- Git release history and CI/test evidence adapters that cannot promote a baseline by themselves;
+- read-only GitHub repository client for file reads, commit history, and ref comparison;
+- composed Repository Intelligence Service with capped source-chunk retrieval;
+- Worker job contract with read-only versus controlled-write modes;
+- Worker path sandboxing, explicit write approval, isolated-branch requirement, and stale-baseline guard;
+- allowlisted test-profile model rather than model-generated arbitrary shell commands;
+- hard implementation and TEST-delivery gates;
+- evidence-derived TEST readiness reporting that cannot mark failing verification as ready;
+- Node 22 GitHub Actions validation workflow for the Leslie project;
+- external-agent/Jarvis quarantine and component-reuse process.
+
+Not implemented yet:
+
+- a running local Worker connected to the Windows repository;
+- actual filesystem editing or patch application;
+- local Git branch creation/commit execution from Leslie;
+- execution of the existing Kingshade Vitest/Playwright stack through Worker;
+- agent-facing wrappers around Repository Intelligence;
+- the first real end-to-end regression acceptance test.
+
 ## v0.1 bootstrap
 
 The bootstrap contains:
@@ -39,7 +66,7 @@ It does not yet edit repositories or execute shell commands. Those are now the h
 
 ### Stage A — Repository intelligence
 
-Read selected repositories, search source, compare versions and commits, inspect Git history, identify current and known-good baselines, and reason over existing test output.
+Core foundation implemented. Remaining work is agent-facing tool wiring, richer project discovery, and importing durable owner-verified baseline evidence.
 
 ### Stage B — Controlled Worker
 
@@ -51,7 +78,7 @@ Run the existing Kingshade validation stack, capture structured results, map fai
 
 ### Stage D — Regression and release gate
 
-Add independent review, regression gates, known-good rollback protection, PDA/mobile-browser/PC compatibility profiles, and clear TEST-build reporting.
+Use the implemented gates and report model with real Worker evidence, independent review, known-good rollback protection, PDA/mobile-browser/PC compatibility profiles, and clear TEST-build reporting.
 
 ### Debug MVP acceptance test
 
