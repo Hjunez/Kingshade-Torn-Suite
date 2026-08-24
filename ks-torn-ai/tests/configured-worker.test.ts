@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { createConfiguredKsLeslieApplication } from '../src/application.js';
 import type { KsLeslieConfig } from '../src/config.js';
+import { REPOSITORY_TOOL_NAMES } from '../src/repository/tools.js';
 import { runProcess } from '../src/worker/process-runner.js';
 import { WORKER_AGENT_TOOL_NAMES } from '../src/worker/agent-tools.js';
 
@@ -18,18 +19,15 @@ async function git(root: string, args: readonly string[]): Promise<void> {
   }
 }
 
-async function createRepository(): Promise<string> {
+async function createRepository(
+  origin = 'https://github.com/Hjunez/Kingshade-Torn-Suite.git',
+): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'ks-leslie-configured-worker-test-'));
   cleanupPaths.push(root);
   await git(root, ['init']);
   await git(root, ['config', 'user.email', 'configured-worker@example.invalid']);
   await git(root, ['config', 'user.name', 'Configured Worker Test']);
-  await git(root, [
-    'remote',
-    'add',
-    'origin',
-    'https://github.com/Hjunez/Kingshade-Torn-Suite.git',
-  ]);
+  await git(root, ['remote', 'add', 'origin', origin]);
   await writeFile(join(root, 'fixture.txt'), 'fixture\n', 'utf8');
   await git(root, ['add', 'fixture.txt']);
   await git(root, ['commit', '-m', 'configured Worker fixture']);
@@ -56,24 +54,55 @@ function config(localRepositoryRoot?: string): KsLeslieConfig {
 }
 
 describe('configured KS Leslie application', () => {
-  it('keeps Worker tools absent without an explicit local repository root', async () => {
+  it('creates the Core without a local Worker while preserving read-only evidence boundaries', async () => {
     const application = await createConfiguredKsLeslieApplication(config());
 
     expect(application.workerDoctor).toBeNull();
     expect(application.workerAgentService).toBeNull();
-    expect(application.agent.tools.map((tool) => tool.name)).not.toEqual(
+    expect(application.agent).toBe(application.agents.coordinator);
+    expect(application.agents.coordinator.tools.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining([...REPOSITORY_TOOL_NAMES]),
+    );
+    expect(application.agents.coordinator.tools.map((tool) => tool.name)).not.toEqual(
+      expect.arrayContaining([...WORKER_AGENT_TOOL_NAMES]),
+    );
+    expect(application.agents.engineering.tools.map((tool) => tool.name)).toEqual([
+      ...REPOSITORY_TOOL_NAMES,
+    ]);
+    expect(application.agents.review.tools.map((tool) => tool.name)).toEqual([
+      ...REPOSITORY_TOOL_NAMES,
+    ]);
+    expect(application.agents.research.tools.map((tool) => tool.name)).not.toEqual(
       expect.arrayContaining([...WORKER_AGENT_TOOL_NAMES]),
     );
   });
 
-  it('attaches the trusted Worker tools only after the configured root passes Doctor', async () => {
+  it('attaches Doctor-verified Worker tools to Engineering only', async () => {
     const root = await createRepository();
     const application = await createConfiguredKsLeslieApplication(config(root));
 
     expect(application.workerDoctor?.readyForLocalWorker).toBe(true);
     expect(application.workerAgentService).not.toBeNull();
-    expect(application.agent.tools.map((tool) => tool.name)).toEqual(
+    expect(application.agent).toBe(application.agents.coordinator);
+    expect(application.agents.engineering.tools.map((tool) => tool.name)).toEqual(
       expect.arrayContaining([...WORKER_AGENT_TOOL_NAMES]),
+    );
+    expect(application.agents.coordinator.tools.map((tool) => tool.name)).not.toEqual(
+      expect.arrayContaining([...WORKER_AGENT_TOOL_NAMES]),
+    );
+    expect(application.agents.research.tools.map((tool) => tool.name)).not.toEqual(
+      expect.arrayContaining([...WORKER_AGENT_TOOL_NAMES]),
+    );
+    expect(application.agents.review.tools.map((tool) => tool.name)).toEqual([
+      ...REPOSITORY_TOOL_NAMES,
+    ]);
+  }, 30_000);
+
+  it('fails closed before Core creation when the configured root fails Worker Doctor', async () => {
+    const root = await createRepository('https://github.com/example/not-kingshade.git');
+
+    await expect(createConfiguredKsLeslieApplication(config(root))).rejects.toThrow(
+      'Local Worker Doctor failed: Kingshade repository identity',
     );
   }, 30_000);
 });
