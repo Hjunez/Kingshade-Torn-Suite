@@ -44,12 +44,14 @@ export interface WorkerActionResult {
   finishedAt: string;
   summary: string;
   exitCode?: number;
+  output?: string;
   artifactRefs?: readonly string[];
 }
 
 export interface WorkerJobResult {
   jobId: string;
   baselineRef: string;
+  workspaceBranch?: string;
   headShaBefore: string;
   headShaAfter: string;
   changedPaths: readonly string[];
@@ -84,6 +86,10 @@ export function validateWorkerJob(job: WorkerJob): readonly string[] {
 
   if (containsWrite && job.mode === 'controlled_write' && job.scope.branch === undefined) {
     errors.push('controlled_write jobs require an isolated branch');
+  }
+
+  if (containsWrite && !/^[0-9a-f]{40}$/i.test(job.scope.baselineRef)) {
+    errors.push('controlled writes require a full 40-character baseline commit SHA');
   }
 
   if (job.scope.allowedPaths.length === 0) {
