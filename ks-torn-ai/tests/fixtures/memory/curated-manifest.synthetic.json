@@ -1,0 +1,36 @@
+{
+  "format": "ks-leslie-curated-memory",
+  "schemaVersion": 1,
+  "manifestId": "synthetic-phase-c2-manifest",
+  "contentScope": "TORN_PROJECT",
+  "entries": [
+    {
+      "id": "synthetic-public-torn-note",
+      "projectId": "war-dibs",
+      "kind": "CURATED_TORN_NOTE",
+      "zone": "PUBLIC_TORN",
+      "contentType": "text/plain",
+      "contentScope": "TORN_PROJECT",
+      "subject": "Synthetic Torn timing note",
+      "content": "Synthetic fixture content for deterministic curated-ingestion tests.",
+      "evidenceClassification": "OFFICIAL_CURRENT",
+      "sourceReference": "https://example.invalid/torn/official-timing",
+      "sourceDescription": "Synthetic official-style fixture; not real Torn evidence.",
+      "verificationState": "OFFICIAL_CURRENT"
+    },
+    {
+      "id": "synthetic-private-test-result",
+      "projectId": "war-dibs",
+      "kind": "TEST_RESULT",
+      "zone": "PRIVATE_KINGSHADE_DEV",
+      "contentType": "text/plain",
+      "contentScope": "TORN_PROJECT",
+      "subject": "Synthetic regression profile",
+      "content": "The synthetic profile passed without contacting a model or network service.",
+      "evidenceClassification": "AUTOMATED_TEST",
+      "sourceReference": "synthetic:test-profile",
+      "sourceDescription": "Synthetic automated evidence for tests only.",
+      "verificationState": "SUPPORTING"
+    }
+  ]
+}

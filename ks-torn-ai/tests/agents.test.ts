@@ -8,6 +8,11 @@ import {
   reviewSpecialistOutputSchema,
 } from '../src/agents.js';
 import type { KsLeslieConfig } from '../src/config.js';
+import {
+  MEMORY_PROPOSAL_TOOL_NAME,
+  MEMORY_RETRIEVAL_TOOL_NAME,
+} from '../src/memory/agent-tools.js';
+import { createLocalOwnerMemoryRuntime } from '../src/memory/runtime.js';
 import type { RepositoryReader } from '../src/repository/reader.js';
 import { REPOSITORY_TOOL_NAMES } from '../src/repository/tools.js';
 import { WORKER_AGENT_TOOL_NAMES, WorkerAgentService } from '../src/worker/agent-tools.js';
@@ -48,6 +53,11 @@ const DELEGATION_TOOL_NAMES = [
   'review_torn_change',
 ] as const;
 const COORDINATOR_TOOL_NAMES = [...DELEGATION_TOOL_NAMES, ...REPOSITORY_TOOL_NAMES];
+const COORDINATOR_MEMORY_TOOL_NAMES = [
+  MEMORY_RETRIEVAL_TOOL_NAME,
+  MEMORY_PROPOSAL_TOOL_NAME,
+] as const;
+const READ_ONLY_MEMORY_TOOL_NAMES = [MEMORY_RETRIEVAL_TOOL_NAME] as const;
 const GENERIC_EXECUTION_TOOL_TYPES = ['shell', 'computer', 'apply_patch'] as const;
 const GENERIC_EXECUTION_TOOL_NAMES = [
   'shell',
@@ -153,6 +163,47 @@ describe('KS Leslie Core agent topology', () => {
       ...WORKER_AGENT_TOOL_NAMES,
     ]);
     expect(toolNames(bundle.review)).toEqual(REPOSITORY_TOOL_NAMES);
+    for (const agent of [bundle.coordinator, bundle.research, bundle.review]) {
+      expect(toolNames(agent)).not.toEqual(expect.arrayContaining([...WORKER_AGENT_TOOL_NAMES]));
+    }
+    expectNoGenericExecutionPrimitives([
+      bundle.coordinator,
+      bundle.research,
+      bundle.engineering,
+      bundle.review,
+    ]);
+  });
+
+  it('adds the exact memory topology without widening Worker or execution authority', () => {
+    const memory = createLocalOwnerMemoryRuntime('.unused-memory-topology-state');
+    const bundle = createKsLeslieAgentBundle(config, {
+      repositoryReader: reader,
+      memoryAgentServices: memory.agentServices,
+      workerAgentService: createWorkerAgentService(),
+    });
+
+    expect(toolNames(bundle.coordinator)).toEqual([
+      ...COORDINATOR_TOOL_NAMES,
+      ...COORDINATOR_MEMORY_TOOL_NAMES,
+    ]);
+    expect(toolNames(bundle.research)).toEqual(['web_search', ...READ_ONLY_MEMORY_TOOL_NAMES]);
+    expect(toolNames(bundle.engineering)).toEqual([
+      ...REPOSITORY_TOOL_NAMES,
+      ...READ_ONLY_MEMORY_TOOL_NAMES,
+      ...WORKER_AGENT_TOOL_NAMES,
+    ]);
+    expect(toolNames(bundle.review)).toEqual([
+      ...REPOSITORY_TOOL_NAMES,
+      ...READ_ONLY_MEMORY_TOOL_NAMES,
+    ]);
+
+    for (const agent of [bundle.coordinator, bundle.research, bundle.engineering, bundle.review]) {
+      expect(toolNames(agent)).toContain(MEMORY_RETRIEVAL_TOOL_NAME);
+    }
+    expect(toolNames(bundle.coordinator)).toContain(MEMORY_PROPOSAL_TOOL_NAME);
+    for (const agent of [bundle.research, bundle.engineering, bundle.review]) {
+      expect(toolNames(agent)).not.toContain(MEMORY_PROPOSAL_TOOL_NAME);
+    }
     for (const agent of [bundle.coordinator, bundle.research, bundle.review]) {
       expect(toolNames(agent)).not.toEqual(expect.arrayContaining([...WORKER_AGENT_TOOL_NAMES]));
     }
