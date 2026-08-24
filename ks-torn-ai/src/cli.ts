@@ -18,7 +18,7 @@ async function main(): Promise<void> {
   output.write('KS Leslie v0.1.0\nType /exit to quit.\n\n');
 
   try {
-    while (true) {
+    for (;;) {
       const message = (await terminal.question('You> ')).trim();
 
       if (message.length === 0) {
@@ -30,7 +30,7 @@ async function main(): Promise<void> {
       }
 
       const result = await run(agent, message, { session });
-      output.write(`\nKS Leslie> ${String(result.finalOutput ?? '')}\n\n`);
+      output.write(`\nKS Leslie> ${result.finalOutput}\n\n`);
     }
   } finally {
     terminal.close();
