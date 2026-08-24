@@ -616,14 +616,15 @@ async function finalizeCandidate(
   priorResults: readonly WorkerActionResult[],
   approvedTreeSha: string | undefined,
 ): Promise<string> {
-  const patchPassed = priorResults.some(
+  const patchResultIndex = priorResults.findIndex(
     (result) => result.kind === 'apply_patch' && result.status === 'passed',
   );
-  const testPassed = priorResults.some(
-    (result) => result.kind === 'run_test_profile' && result.status === 'passed',
+  const postPatchTestPassed = priorResults.some(
+    (result, index) =>
+      index > patchResultIndex && result.kind === 'run_test_profile' && result.status === 'passed',
   );
-  if (!patchPassed || !testPassed) {
-    throw new Error('candidate finalization requires a passed patch and test profile');
+  if (patchResultIndex < 0 || !postPatchTestPassed) {
+    throw new Error('candidate finalization requires a passed patch and post-patch test profile');
   }
   const changedPaths = await requireApprovedCandidateTree(root, job, approvedTreeSha);
   const patchId = job.actions.find((action) => action.kind === 'apply_patch')?.patchId;

@@ -64,6 +64,7 @@ describe('Worker safety policy', () => {
       'read_only jobs cannot contain write actions',
       'write actions require an application-issued approval token',
       'controlled_write jobs require an isolated branch',
+      'controlled_write jobs require at least one post-patch test profile',
     ]);
   });
 
@@ -91,8 +92,33 @@ describe('Worker safety policy', () => {
       }),
     );
     expect(errors).toEqual([
+      'controlled_write jobs require at least one post-patch test profile',
       'candidate finalization must be the final Worker action',
       'patch expected base does not match worker baseline',
+    ]);
+  });
+
+  it('requires every controlled-write test profile to run after the patch', () => {
+    const controlledWrite = job({
+      mode: 'controlled_write',
+      scope: {
+        projectId: 'synthetic',
+        repositoryRoot: 'C:\\repo',
+        allowedPaths: ['src'],
+        baselineRef: baseline,
+        branch: 'ks-leslie/test',
+      },
+      approvalToken: 'f'.repeat(64),
+      actions: [
+        { kind: 'run_test_profile', profileId: 'synthetic-pass' },
+        { kind: 'apply_patch', patchId: 'patch', expectedBaseSha: baseline },
+        { kind: 'finalize_candidate' },
+      ],
+    });
+
+    expect(validateWorkerJob(controlledWrite)).toEqual([
+      'controlled_write jobs require at least one post-patch test profile',
+      'controlled_write test profiles must run after the approved patch',
     ]);
   });
 

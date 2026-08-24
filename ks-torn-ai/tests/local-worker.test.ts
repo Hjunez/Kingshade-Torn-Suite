@@ -303,6 +303,7 @@ describe('executeLocalWorkerJob', () => {
               patchId: 'stale-change',
               expectedBaseSha: repository.head,
             },
+            { kind: 'run_test_profile', profileId: 'synthetic-pass' },
           ],
         },
         {

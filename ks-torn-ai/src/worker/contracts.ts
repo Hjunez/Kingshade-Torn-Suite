@@ -146,6 +146,10 @@ export function validateWorkerJob(job: WorkerJob): readonly string[] {
   const containsWrite = workerJobContainsWrite(job);
   const patchActions = job.actions.filter((action) => action.kind === 'apply_patch');
   const finalizeActions = job.actions.filter((action) => action.kind === 'finalize_candidate');
+  const patchIndex = job.actions.findIndex((action) => action.kind === 'apply_patch');
+  const testIndexes = job.actions.flatMap((action, index) =>
+    action.kind === 'run_test_profile' ? [index] : [],
+  );
 
   if (job.mode === 'read_only' && containsWrite) {
     errors.push('read_only jobs cannot contain write actions');
@@ -161,6 +165,20 @@ export function validateWorkerJob(job: WorkerJob): readonly string[] {
   }
   if (containsWrite && patchActions.length !== 1) {
     errors.push('controlled_write jobs require exactly one approved patch');
+  }
+  if (
+    containsWrite &&
+    patchActions.length === 1 &&
+    !testIndexes.some((index) => index > patchIndex)
+  ) {
+    errors.push('controlled_write jobs require at least one post-patch test profile');
+  }
+  if (
+    containsWrite &&
+    patchActions.length === 1 &&
+    testIndexes.some((index) => index < patchIndex)
+  ) {
+    errors.push('controlled_write test profiles must run after the approved patch');
   }
   if (finalizeActions.length > 1) {
     errors.push('controlled_write jobs can finalize at most once');
