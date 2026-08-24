@@ -17,6 +17,17 @@ The AI model is not the source of truth. Evidence, repository state, test output
 9. Local Worker — authenticated outbound-connected Windows worker for isolated repository and test execution.
 10. External tools — Torn API, Git/GitHub, documentation sources, and test runners, each with explicit permissions.
 
+## Phase C1 core orchestration
+
+Phase C1 makes the Core capability topology explicit and enforces it through agent/tool wiring:
+
+- KS Leslie coordinates the conversation, may inspect read-only Repository Intelligence, and delegates specialist work. It has no direct Worker capability and cannot mutate code.
+- Torn Research handles current web research and optional configured vector/file search. It classifies evidence and uncertainty and receives no Worker or repository-mutation capability.
+- Torn Engineering receives read-only Repository Intelligence and, only when trusted application configuration supplies it, the existing Worker tool layer. Worker operations that can create a candidate are reachable only through Engineering and still require the existing private application-issued grant, SDK approval, exact baseline, isolated worktree, scoped paths, and verification gates. Engineering cannot self-approve a candidate.
+- Torn Review independently inspects repository evidence, assumptions, regression risk, Torn compliance, secret leakage, state-machine behavior, PDA/mobile/browser impact, and missing coverage. Review is read-only, receives no Worker tools, and does not grant implementation approval.
+
+No Core agent receives a generic shell or process-execution primitive. Persistent project memory and knowledge ingestion, plus the full Debug MVP orchestration state machine, remain pending after Phase C1.
+
 ## Access model
 
 KS Leslie uses default-deny RBAC plus capability and project grants. Authorization is enforced before retrieval and before every tool invocation; prompts are not a security boundary. Knowledge is divided into PUBLIC_TORN, FACTION_SHARED, PRIVATE_KINGSHADE_DEV, and per-user USER_PRIVATE zones.
