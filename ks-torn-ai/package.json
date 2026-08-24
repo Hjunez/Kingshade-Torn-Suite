@@ -8,6 +8,8 @@
   },
   "scripts": {
     "dev": "tsx src/cli.ts",
+    "worker:doctor": "tsx src/worker/doctor.ts",
+    "worker:test": "vitest run tests/local-worker.test.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "lint": "eslint .",
