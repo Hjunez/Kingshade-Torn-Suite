@@ -2,53 +2,69 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { GitHubRepositoryReader } from '../src/repository/github-reader.js';
 
+function inputUrl(input: RequestInfo | URL): string {
+  if (typeof input === 'string') {
+    return input;
+  }
+  if (input instanceof URL) {
+    return input.toString();
+  }
+  return input.url;
+}
+
 describe('GitHubRepositoryReader', () => {
   it('reads files, commit history and comparisons through read-only endpoints', async () => {
-    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
-      const url = String(input);
+    const fetchImpl = vi.fn<typeof fetch>((input) => {
+      const url = inputUrl(input);
       if (url.includes('/contents/')) {
-        return new Response(
-          JSON.stringify({
-            type: 'file',
-            path: 'KS_Torn_War_Dibs.user.js',
-            sha: 'blob',
-            encoding: 'base64',
-            content: btoa('hello'),
-          }),
-          { status: 200 },
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              type: 'file',
+              path: 'KS_Torn_War_Dibs.user.js',
+              sha: 'blob',
+              encoding: 'base64',
+              content: btoa('hello'),
+            }),
+            { status: 200 },
+          ),
         );
       }
       if (url.includes('/commits?')) {
-        return new Response(
-          JSON.stringify([
-            {
-              sha: 'c1',
-              commit: {
-                message: 'Release v1.2.3',
-                committer: { date: '2026-08-24T00:00:00Z' },
+        return Promise.resolve(
+          new Response(
+            JSON.stringify([
+              {
+                sha: 'c1',
+                commit: {
+                  message: 'Release v1.2.3',
+                  committer: { date: '2026-08-24T00:00:00Z' },
+                },
               },
-            },
-          ]),
-          { status: 200 },
+            ]),
+            { status: 200 },
+          ),
         );
       }
-      return new Response(
-        JSON.stringify({
-          status: 'ahead',
-          ahead_by: 1,
-          behind_by: 0,
-          total_commits: 1,
-          files: [
-            {
-              filename: 'KS_Torn_War_Dibs.user.js',
-              status: 'modified',
-              additions: 2,
-              deletions: 1,
-              changes: 3,
-            },
-          ],
-        }),
-        { status: 200 },
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            status: 'ahead',
+            ahead_by: 1,
+            behind_by: 0,
+            total_commits: 1,
+            files: [
+              {
+                filename: 'KS_Torn_War_Dibs.user.js',
+                status: 'modified',
+                additions: 2,
+                deletions: 1,
+                changes: 3,
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
       );
     });
 
