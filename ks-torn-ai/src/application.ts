@@ -1,4 +1,4 @@
-import { createKsLeslieAgent } from './agents.js';
+import { createKsLeslieAgentBundle } from './agents.js';
 import type { KsLeslieConfig } from './config.js';
 import {
   createConfiguredWorkerService,
@@ -13,10 +13,12 @@ export async function createConfiguredKsLeslieApplication(config: KsLeslieConfig
           repositoryRoot: config.localRepositoryRoot,
           expectedGitHubRepository: config.githubRepository,
         });
+  const agents = createKsLeslieAgentBundle(config, {
+    ...(worker === null ? {} : { workerAgentService: worker.service }),
+  });
   return {
-    agent: createKsLeslieAgent(config, {
-      ...(worker === null ? {} : { workerAgentService: worker.service }),
-    }),
+    agent: agents.coordinator,
+    agents,
     workerAgentService: worker?.service ?? null,
     workerDoctor: worker?.doctor ?? null,
   };
