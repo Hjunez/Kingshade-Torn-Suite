@@ -12,6 +12,6 @@ export default tseslint.config(
         tsconfigRootDir: import.meta.dirname,
       },
     },
-    ignores: ['dist/**', 'node_modules/**', '.state/**'],
+    ignores: ['dist/**', 'node_modules/**', '.state/**', 'eslint.config.js'],
   },
 );
