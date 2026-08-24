@@ -16,10 +16,25 @@ export interface BaselineEvidence {
   note?: string;
 }
 
+export type BaselineRejectionReason =
+  | 'no_owner_verification'
+  | 'invalidated_after_verification';
+
+export interface BaselineCandidateAssessment {
+  commitSha: string;
+  version?: string;
+  ownerVerification?: BaselineEvidence;
+  supportingEvidence: readonly BaselineEvidence[];
+  invalidatingEvidence: readonly BaselineEvidence[];
+  eligible: boolean;
+  rejectionReason?: BaselineRejectionReason;
+}
+
 export interface BaselineDecision {
   baseline: BaselineEvidence | null;
   reason: 'verified_good_found' | 'no_verified_good_evidence';
   consideredCommits: number;
+  assessments: readonly BaselineCandidateAssessment[];
 }
 
 function parseObservedAt(value: string): number {
@@ -38,6 +53,56 @@ function compareEvidenceNewestFirst(a: BaselineEvidence, b: BaselineEvidence): n
   return a.commitSha.localeCompare(b.commitSha);
 }
 
+function isAfter(record: BaselineEvidence, reference: BaselineEvidence): boolean {
+  return parseObservedAt(record.observedAt) > parseObservedAt(reference.observedAt);
+}
+
+function assessCommit(records: readonly BaselineEvidence[]): BaselineCandidateAssessment {
+  const sorted = [...records].sort(compareEvidenceNewestFirst);
+  const newest = sorted[0];
+  if (newest === undefined) {
+    throw new Error('Cannot assess an empty evidence set');
+  }
+
+  const ownerVerification = sorted.find(
+    (record) => record.source === 'owner_verification' && record.state === 'verified_good',
+  );
+
+  if (ownerVerification === undefined) {
+    return {
+      commitSha: newest.commitSha,
+      ...(newest.version === undefined ? {} : { version: newest.version }),
+      supportingEvidence: sorted,
+      invalidatingEvidence: [],
+      eligible: false,
+      rejectionReason: 'no_owner_verification',
+    };
+  }
+
+  const invalidatingEvidence = sorted.filter(
+    (record) =>
+      isAfter(record, ownerVerification) &&
+      (record.state === 'failed' ||
+        (record.source === 'owner_verification' && record.state !== 'verified_good')),
+  );
+
+  const supportingEvidence = sorted.filter(
+    (record) => record !== ownerVerification && !invalidatingEvidence.includes(record),
+  );
+
+  return {
+    commitSha: ownerVerification.commitSha,
+    ...(ownerVerification.version === undefined ? {} : { version: ownerVerification.version }),
+    ownerVerification,
+    supportingEvidence,
+    invalidatingEvidence,
+    eligible: invalidatingEvidence.length === 0,
+    ...(invalidatingEvidence.length === 0
+      ? {}
+      : { rejectionReason: 'invalidated_after_verification' as const }),
+  };
+}
+
 export function selectKnownGoodBaseline(
   evidence: readonly BaselineEvidence[],
   project: string,
@@ -46,25 +111,25 @@ export function selectKnownGoodBaseline(
   const byCommit = new Map<string, BaselineEvidence[]>();
 
   for (const record of projectEvidence) {
+    parseObservedAt(record.observedAt);
     const list = byCommit.get(record.commitSha) ?? [];
     list.push(record);
     byCommit.set(record.commitSha, list);
   }
 
-  const currentCommitStates = [...byCommit.values()].map((records) =>
-    [...records].sort(compareEvidenceNewestFirst)[0],
-  );
-
-  const verified = currentCommitStates
+  const assessments = [...byCommit.values()].map(assessCommit);
+  const eligible = assessments
     .filter(
-      (record): record is BaselineEvidence =>
-        record !== undefined && record.state === 'verified_good',
+      (assessment): assessment is BaselineCandidateAssessment & {
+        ownerVerification: BaselineEvidence;
+      } => assessment.eligible && assessment.ownerVerification !== undefined,
     )
-    .sort(compareEvidenceNewestFirst);
+    .sort((a, b) => compareEvidenceNewestFirst(a.ownerVerification, b.ownerVerification));
 
   return {
-    baseline: verified[0] ?? null,
-    reason: verified.length > 0 ? 'verified_good_found' : 'no_verified_good_evidence',
+    baseline: eligible[0]?.ownerVerification ?? null,
+    reason: eligible.length > 0 ? 'verified_good_found' : 'no_verified_good_evidence',
     consideredCommits: byCommit.size,
+    assessments,
   };
 }
