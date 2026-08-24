@@ -2,31 +2,96 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 
+import type { ConsumedWriteApproval, WriteApprovalStore } from './approval.js';
 import type { WorkerAction, WorkerActionResult, WorkerJob, WorkerJobResult } from './contracts.js';
-import { validateWorkerJob, workerJobContainsWrite } from './contracts.js';
+import {
+  parseWorkerJob,
+  validateWorkerJob,
+  workerJobContainsWrite,
+  workerJobRunsTests,
+} from './contracts.js';
 import { inspectPatch } from './patch-policy.js';
 import { isPathAllowed, normalizeRelativeWorkerPath } from './path-policy.js';
 import { runProcess, type ProcessRunResult } from './process-runner.js';
-import { KS_LESLIE_TEST_PROFILES, resolveTestProfile, type TestProfile } from './test-profiles.js';
+import {
+  KS_LESLIE_TEST_PROFILES,
+  requireAvailableTestProfile,
+  type TestProfile,
+} from './test-profiles.js';
 
 const MAX_FILE_BYTES = 1_000_000;
 const MAX_ACTION_OUTPUT = 1_000_000;
+const SAFE_ENVIRONMENT_KEYS = new Set([
+  'APPDATA',
+  'COMSPEC',
+  'HOME',
+  'LOCALAPPDATA',
+  'PATH',
+  'PATHEXT',
+  'PROGRAMFILES',
+  'PROGRAMFILES(X86)',
+  'PROGRAMW6432',
+  'SYSTEMDRIVE',
+  'SYSTEMROOT',
+  'TEMP',
+  'TMP',
+  'TMPDIR',
+  'USERPROFILE',
+  'WINDIR',
+]);
 
 export interface LocalWorkerRuntime {
-  patches?: ReadonlyMap<string, string>;
+  approvalStore?: WriteApprovalStore;
   testProfiles?: readonly TestProfile[];
   workspaceBaseDir?: string;
   now?: () => Date;
+}
+
+interface PreparedWorkspace {
+  root: string;
+  holder: string;
+  branch?: string;
+}
+
+interface ActionExecution {
+  summary: string;
+  output?: string;
+  exitCode?: number;
 }
 
 export class WorkerJobRejectedError extends Error {
   readonly reasons: readonly string[];
 
   constructor(reasons: readonly string[]) {
-    super(`Worker job rejected: ${reasons.join('; ')}`);
+    super('Worker job rejected: ' + reasons.join('; '));
     this.name = 'WorkerJobRejectedError';
     this.reasons = reasons;
   }
+}
+
+class WorkerScopeViolationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'WorkerScopeViolationError';
+  }
+}
+
+export function createSanitizedWorkerEnvironment(
+  source: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (value !== undefined && SAFE_ENVIRONMENT_KEYS.has(key.toUpperCase())) {
+      environment[key] = value;
+    }
+  }
+  environment.CI = '1';
+  environment.NO_UPDATE_NOTIFIER = '1';
+  environment.TZ = 'UTC';
+  environment.npm_config_audit = 'false';
+  environment.npm_config_fund = 'false';
+  environment.npm_config_update_notifier = 'false';
+  return environment;
 }
 
 function normalizedFilesystemPath(value: string): string {
@@ -41,14 +106,14 @@ function isWithinRoot(root: string, candidate: string): boolean {
 async function safeExistingPath(root: string, workerPath: string): Promise<string> {
   const normalized = normalizeRelativeWorkerPath(workerPath);
   if (normalized === null) {
-    throw new Error(`Invalid worker path: ${workerPath}`);
+    throw new Error('Invalid worker path: ' + workerPath);
   }
   const canonicalRoot = await realpath(root);
   const target = await realpath(resolve(canonicalRoot, normalized));
   const normalizedRoot = normalizedFilesystemPath(canonicalRoot);
   const normalizedTarget = normalizedFilesystemPath(target);
   if (!isWithinRoot(normalizedRoot, normalizedTarget)) {
-    throw new Error(`Resolved path escapes repository root: ${workerPath}`);
+    throw new Error('Resolved path escapes repository root: ' + workerPath);
   }
   return target;
 }
@@ -64,17 +129,18 @@ async function git(
     cwd: root,
     timeoutMs,
     maxOutputBytes: MAX_ACTION_OUTPUT,
+    env: createSanitizedWorkerEnvironment(),
   });
 }
 
 function requireSuccess(result: ProcessRunResult, operation: string): string {
   if (result.timedOut) {
-    throw new Error(`${operation} timed out`);
+    throw new Error(operation + ' timed out');
   }
   if (result.exitCode !== 0) {
     const detail =
-      result.stderr.trim() || result.stdout.trim() || `exit ${String(result.exitCode)}`;
-    throw new Error(`${operation} failed: ${detail}`);
+      result.stderr.trim() || result.stdout.trim() || 'exit ' + String(result.exitCode);
+    throw new Error(operation + ' failed: ' + detail);
   }
   return result.stdout.trim();
 }
@@ -87,7 +153,7 @@ async function repositoryRoot(root: string): Promise<string> {
   );
   const actual = await realpath(top);
   if (normalizedFilesystemPath(actual) !== normalizedFilesystemPath(requested)) {
-    throw new Error(`Worker repositoryRoot must be the Git top-level directory: ${actual}`);
+    throw new Error('Worker repositoryRoot must be the Git top-level directory: ' + actual);
   }
   return actual;
 }
@@ -96,47 +162,91 @@ async function currentHead(root: string): Promise<string> {
   return requireSuccess(await git(root, ['rev-parse', 'HEAD']), 'read Git HEAD');
 }
 
+export async function readLocalRepositoryHead(root: string): Promise<string> {
+  return await currentHead(await repositoryRoot(root));
+}
+
 async function currentBranch(root: string): Promise<string> {
   return requireSuccess(await git(root, ['branch', '--show-current']), 'read Git branch');
 }
 
+function containsControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
+
 async function resolveCommit(root: string, ref: string): Promise<string> {
-  if (ref.length === 0 || ref.includes('\0') || ref.startsWith('-')) {
+  if (ref.length === 0 || ref.startsWith('-') || containsControlCharacter(ref)) {
     throw new Error('Git ref is empty or invalid');
   }
   return requireSuccess(
-    await git(root, ['rev-parse', '--verify', `${ref}^{commit}`]),
-    `resolve Git ref ${ref}`,
+    await git(root, ['rev-parse', '--verify', ref + '^{commit}']),
+    'resolve Git ref ' + ref,
   );
 }
 
 async function porcelainStatus(root: string): Promise<string> {
-  const result = await git(root, ['status', '--porcelain=v1', '--untracked-files=all']);
+  const result = await git(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all']);
   if (result.timedOut) {
     throw new Error('read Git status timed out');
   }
   if (result.exitCode !== 0) {
     requireSuccess(result, 'read Git status');
   }
-  return result.stdout.trimEnd();
+  return result.stdout;
+}
+
+function addStatusPath(paths: Set<string>, raw: string): void {
+  const normalized = normalizeRelativeWorkerPath(raw);
+  if (normalized === null) {
+    throw new Error('Git status returned an unsafe path');
+  }
+  paths.add(normalized);
 }
 
 function changedPathsFromPorcelain(status: string): readonly string[] {
   if (status.length === 0) {
     return [];
   }
+  const entries = status.split('\0').filter((entry) => entry.length > 0);
   const paths = new Set<string>();
-  for (const line of status.split(/\r?\n/)) {
-    if (line.length < 4) {
-      continue;
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    if (entry === undefined || entry.length < 4) {
+      throw new Error('Git status returned malformed porcelain output');
     }
-    const raw = line.slice(3).trim();
-    const arrowIndex = raw.indexOf(' -> ');
-    const path = arrowIndex >= 0 ? raw.slice(arrowIndex + 4) : raw;
-    const normalized = normalizeRelativeWorkerPath(path.replace(/^"|"$/g, ''));
-    if (normalized !== null) {
-      paths.add(normalized);
+    const code = entry.slice(0, 2);
+    addStatusPath(paths, entry.slice(3));
+    if (/[RC]/.test(code)) {
+      const original = entries[index + 1];
+      if (original === undefined) {
+        throw new Error('Git status returned an incomplete rename record');
+      }
+      addStatusPath(paths, original);
+      index += 1;
     }
+  }
+  return [...paths].sort();
+}
+
+async function committedChangedPaths(
+  root: string,
+  baselineRef: string,
+  headRef: string,
+): Promise<readonly string[]> {
+  if (baselineRef.toLowerCase() === headRef.toLowerCase()) {
+    return [];
+  }
+  const output = requireSuccess(
+    await git(root, ['diff', '--name-only', '-z', baselineRef, headRef, '--']),
+    'read committed candidate paths',
+  );
+  const paths = new Set<string>();
+  for (const raw of output.split('\0').filter((path) => path.length > 0)) {
+    addStatusPath(paths, raw);
   }
   return [...paths].sort();
 }
@@ -149,39 +259,55 @@ function safeJobLabel(jobId: string): string {
   return compact.length === 0 ? 'job' : compact;
 }
 
+function requireExternalWorkspaceBase(repository: string, workspaceBaseDir?: string): string {
+  const baseDir = resolve(workspaceBaseDir ?? join(tmpdir(), 'ks-leslie-worktrees'));
+  if (isWithinRoot(normalizedFilesystemPath(repository), normalizedFilesystemPath(baseDir))) {
+    throw new Error('Worker workspace base must be outside the source repository');
+  }
+  return baseDir;
+}
+
+async function createWorkspaceHolder(
+  repository: string,
+  jobId: string,
+  workspaceBaseDir?: string,
+): Promise<{ holder: string; workspace: string }> {
+  const baseDir = requireExternalWorkspaceBase(repository, workspaceBaseDir);
+  await mkdir(baseDir, { recursive: true });
+  const holder = await mkdtemp(join(baseDir, safeJobLabel(jobId) + '-'));
+  return { holder, workspace: join(holder, 'repo') };
+}
+
 async function prepareControlledWorktree(
   repository: string,
   job: WorkerJob,
   workspaceBaseDir?: string,
-): Promise<string> {
+): Promise<PreparedWorkspace> {
   const branch = job.scope.branch;
   if (branch === undefined) {
     throw new Error('controlled_write job has no branch');
   }
-
   const baseline = await resolveCommit(repository, job.scope.baselineRef);
   if (baseline.toLowerCase() !== job.scope.baselineRef.toLowerCase()) {
-    throw new Error(`baseline ref did not resolve exactly to requested SHA: ${baseline}`);
+    throw new Error('baseline ref did not resolve exactly to requested SHA: ' + baseline);
   }
-
   requireSuccess(
     await git(repository, ['check-ref-format', '--branch', branch]),
     'validate Worker branch',
   );
-
-  const exists = await git(repository, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`]);
+  const exists = await git(repository, ['show-ref', '--verify', '--quiet', 'refs/heads/' + branch]);
   if (exists.exitCode === 0) {
-    throw new Error(`Worker branch already exists: ${branch}`);
+    throw new Error('Worker branch already exists: ' + branch);
   }
   if (exists.exitCode !== 1) {
     requireSuccess(exists, 'check Worker branch existence');
   }
 
-  const baseDir = resolve(workspaceBaseDir ?? join(tmpdir(), 'ks-leslie-worktrees'));
-  await mkdir(baseDir, { recursive: true });
-  const holder = await mkdtemp(join(baseDir, `${safeJobLabel(job.jobId)}-`));
-  const workspace = join(holder, 'repo');
-
+  const { holder, workspace } = await createWorkspaceHolder(
+    repository,
+    job.jobId,
+    workspaceBaseDir,
+  );
   try {
     requireSuccess(
       await git(
@@ -194,9 +320,9 @@ async function prepareControlledWorktree(
     const actual = await repositoryRoot(workspace);
     const head = await currentHead(actual);
     if (head.toLowerCase() !== job.scope.baselineRef.toLowerCase()) {
-      throw new Error(`isolated worktree started at unexpected HEAD: ${head}`);
+      throw new Error('isolated worktree started at unexpected HEAD: ' + head);
     }
-    return actual;
+    return { root: actual, holder, branch };
   } catch (error: unknown) {
     await git(repository, ['worktree', 'remove', '--force', workspace]);
     await git(repository, ['branch', '-D', branch]);
@@ -205,13 +331,72 @@ async function prepareControlledWorktree(
   }
 }
 
+async function prepareTestWorktree(
+  repository: string,
+  job: WorkerJob,
+  baselineSha: string,
+  workspaceBaseDir?: string,
+): Promise<PreparedWorkspace> {
+  const { holder, workspace } = await createWorkspaceHolder(
+    repository,
+    job.jobId,
+    workspaceBaseDir,
+  );
+  try {
+    requireSuccess(
+      await git(repository, ['worktree', 'add', '--detach', workspace, baselineSha], 120_000),
+      'create isolated test worktree',
+    );
+    return { root: await repositoryRoot(workspace), holder };
+  } catch (error: unknown) {
+    await git(repository, ['worktree', 'remove', '--force', workspace]);
+    await rm(holder, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+async function cleanupWorkspace(
+  repository: string,
+  workspace: PreparedWorkspace,
+): Promise<readonly string[]> {
+  const errors: string[] = [];
+  const removeResult = await git(
+    repository,
+    ['worktree', 'remove', '--force', workspace.root],
+    120_000,
+  );
+  if (removeResult.exitCode !== 0) {
+    errors.push(
+      removeResult.stderr.trim() ||
+        removeResult.stdout.trim() ||
+        'failed to remove isolated worktree',
+    );
+  }
+  if (workspace.branch !== undefined) {
+    const branchResult = await git(repository, ['branch', '-D', workspace.branch]);
+    if (branchResult.exitCode !== 0) {
+      errors.push(
+        branchResult.stderr.trim() ||
+          branchResult.stdout.trim() ||
+          'failed to remove isolated branch',
+      );
+    }
+  }
+  try {
+    await rm(workspace.holder, { recursive: true, force: true });
+  } catch (error: unknown) {
+    errors.push(error instanceof Error ? error.message : String(error));
+  }
+  return errors;
+}
+
 function outputForResult(result: ProcessRunResult): string {
   const pieces: string[] = [];
   if (result.stdout.length > 0) {
     pieces.push(result.stdout.trimEnd());
   }
   if (result.stderr.length > 0) {
-    pieces.push(`[stderr]\n${result.stderr.trimEnd()}`);
+    pieces.push('[stderr]\n' + result.stderr.trimEnd());
   }
   if (result.outputTruncated) {
     pieces.push('[output truncated by Worker]');
@@ -226,7 +411,7 @@ async function inspectFile(
   const path = await safeExistingPath(root, action.path);
   const content = await readFile(path);
   if (content.byteLength > MAX_FILE_BYTES) {
-    throw new Error(`file exceeds Worker read limit: ${action.path}`);
+    throw new Error('file exceeds Worker read limit: ' + action.path);
   }
   return content.toString('utf8');
 }
@@ -250,14 +435,11 @@ async function gitHistory(
   root: string,
   action: Extract<WorkerAction, { kind: 'git_history' }>,
 ): Promise<string> {
-  if (!Number.isSafeInteger(action.limit) || action.limit < 1 || action.limit > 200) {
-    throw new Error('git_history limit must be between 1 and 200');
-  }
   const paths = action.paths ?? ['.'];
   return requireSuccess(
     await git(root, [
       'log',
-      `--max-count=${String(action.limit)}`,
+      '--max-count=' + String(action.limit),
       '--date=iso-strict',
       '--format=%H%x09%aI%x09%s',
       '--',
@@ -269,12 +451,23 @@ async function gitHistory(
 
 async function compareRefs(
   root: string,
+  job: WorkerJob,
   action: Extract<WorkerAction, { kind: 'compare_refs' }>,
 ): Promise<string> {
   const base = await resolveCommit(root, action.baseRef);
   const head = await resolveCommit(root, action.headRef);
   return requireSuccess(
-    await git(root, ['diff', '--stat', '--find-renames', base, head, '--']),
+    await git(root, [
+      'diff',
+      '--no-ext-diff',
+      '--no-textconv',
+      '--stat',
+      '--find-renames',
+      base,
+      head,
+      '--',
+      ...job.scope.allowedPaths,
+    ]),
     'compare Git refs',
   );
 }
@@ -284,16 +477,12 @@ async function runTestProfile(
   action: Extract<WorkerAction, { kind: 'run_test_profile' }>,
   profiles: readonly TestProfile[],
 ): Promise<{ output: string; exitCode: number }> {
-  const profile = resolveTestProfile(profiles, action.profileId);
-  if (profile === null) {
-    throw new Error(`unknown test profile: ${action.profileId}`);
-  }
-
+  const profile = requireAvailableTestProfile(profiles, action.profileId);
   const outputs: string[] = [];
   for (const [index, step] of profile.steps.entries()) {
     const normalizedWorkingDirectory = normalizeRelativeWorkerPath(step.workingDirectory);
     if (normalizedWorkingDirectory === null) {
-      throw new Error(`test profile contains invalid working directory: ${step.workingDirectory}`);
+      throw new Error('test profile contains invalid working directory: ' + step.workingDirectory);
     }
     const cwd = await safeExistingPath(root, normalizedWorkingDirectory);
     const result = await runProcess({
@@ -302,8 +491,9 @@ async function runTestProfile(
       cwd,
       timeoutMs: step.timeoutMs,
       maxOutputBytes: MAX_ACTION_OUTPUT,
+      env: createSanitizedWorkerEnvironment(),
     });
-    outputs.push(`step ${String(index + 1)}: ${step.executable} ${step.args.join(' ')}`);
+    outputs.push('step ' + String(index + 1) + ': ' + step.executable + ' ' + step.args.join(' '));
     const stepOutput = outputForResult(result);
     if (stepOutput.length > 0) {
       outputs.push(stepOutput);
@@ -312,42 +502,45 @@ async function runTestProfile(
       return { output: outputs.join('\n'), exitCode: result.exitCode ?? 124 };
     }
   }
-
   return { output: outputs.join('\n'), exitCode: 0 };
 }
 
 async function rollbackWorkerWorktree(root: string, baselineRef: string): Promise<void> {
-  await git(root, ['reset', '--hard', baselineRef]);
-  await git(root, ['clean', '-fd']);
+  requireSuccess(await git(root, ['reset', '--hard', baselineRef]), 'reset rejected Worker change');
+  requireSuccess(await git(root, ['clean', '-fd']), 'clean rejected Worker change');
+}
+
+async function requireScopedWorkspace(root: string, job: WorkerJob): Promise<readonly string[]> {
+  const changedPaths = changedPathsFromPorcelain(await porcelainStatus(root));
+  const unexpected = changedPaths.filter((path) => !isPathAllowed(path, job.scope.allowedPaths));
+  if (unexpected.length > 0) {
+    await rollbackWorkerWorktree(root, job.scope.baselineRef);
+    throw new WorkerScopeViolationError('post-operation scope violation: ' + unexpected.join(', '));
+  }
+  return changedPaths;
 }
 
 async function applyPatch(
   root: string,
   job: WorkerJob,
   action: Extract<WorkerAction, { kind: 'apply_patch' }>,
-  patches: ReadonlyMap<string, string>,
+  approval: ConsumedWriteApproval,
 ): Promise<string> {
-  const patch = patches.get(action.patchId);
-  if (patch === undefined) {
-    throw new Error(`Worker patch is unavailable: ${action.patchId}`);
-  }
-
+  const patch = approval.patch;
   const inspection = inspectPatch(patch, job.scope.allowedPaths);
   if (inspection.errors.length > 0) {
-    throw new Error(`patch rejected: ${inspection.errors.join('; ')}`);
+    throw new Error('patch rejected: ' + inspection.errors.join('; '));
   }
-
   const head = await currentHead(root);
   if (
     head.toLowerCase() !== action.expectedBaseSha.toLowerCase() ||
     head.toLowerCase() !== job.scope.baselineRef.toLowerCase()
   ) {
-    throw new Error(`stale patch baseline: HEAD is ${head}`);
+    throw new Error('stale patch baseline: HEAD is ' + head);
   }
-
   const branch = await currentBranch(root);
   if (branch !== job.scope.branch) {
-    throw new Error(`patch attempted on unexpected branch: ${branch}`);
+    throw new Error('patch attempted on unexpected branch: ' + branch);
   }
 
   const temp = await mkdtemp(join(tmpdir(), 'ks-leslie-patch-'));
@@ -362,18 +555,61 @@ async function applyPatch(
       await git(root, ['apply', '--whitespace=error-all', patchFile]),
       'apply Git patch',
     );
-
-    const changedPaths = changedPathsFromPorcelain(await porcelainStatus(root));
-    const unexpected = changedPaths.filter((path) => !isPathAllowed(path, job.scope.allowedPaths));
-    if (unexpected.length > 0) {
-      await rollbackWorkerWorktree(root, job.scope.baselineRef);
-      throw new Error(`post-apply scope violation: ${unexpected.join(', ')}`);
-    }
-
-    return `Applied patch ${action.patchId} to ${String(inspection.changedPaths.length)} scoped path(s).`;
+    await requireScopedWorkspace(root, job);
+    return (
+      'Applied approved patch ' +
+      action.patchId +
+      ' to ' +
+      String(inspection.changedPaths.length) +
+      ' scoped path(s).'
+    );
   } finally {
     await rm(temp, { recursive: true, force: true });
   }
+}
+
+async function finalizeCandidate(
+  root: string,
+  job: WorkerJob,
+  priorResults: readonly WorkerActionResult[],
+): Promise<string> {
+  const patchPassed = priorResults.some(
+    (result) => result.kind === 'apply_patch' && result.status === 'passed',
+  );
+  const testPassed = priorResults.some(
+    (result) => result.kind === 'run_test_profile' && result.status === 'passed',
+  );
+  if (!patchPassed || !testPassed) {
+    throw new Error('candidate finalization requires a passed patch and test profile');
+  }
+  const changedPaths = await requireScopedWorkspace(root, job);
+  if (changedPaths.length === 0) {
+    throw new Error('candidate finalization found no scoped changes');
+  }
+  requireSuccess(await git(root, ['add', '--', ...changedPaths]), 'stage candidate changes');
+  const patchId = job.actions.find((action) => action.kind === 'apply_patch')?.patchId;
+  const message = 'KS Leslie candidate ' + (patchId ?? job.jobId);
+  requireSuccess(
+    await git(root, [
+      '-c',
+      'user.name=KS Leslie Worker',
+      '-c',
+      'user.email=ks-leslie-worker@example.invalid',
+      'commit',
+      '--no-gpg-sign',
+      '--no-verify',
+      '-m',
+      message,
+      '--',
+      ...changedPaths,
+    ]),
+    'commit candidate changes',
+  );
+  const remaining = changedPathsFromPorcelain(await porcelainStatus(root));
+  if (remaining.length > 0) {
+    throw new Error('candidate finalization left uncommitted paths: ' + remaining.join(', '));
+  }
+  return 'Finalized candidate commit ' + (await currentHead(root)) + '.';
 }
 
 async function executeAction(
@@ -381,12 +617,12 @@ async function executeAction(
   job: WorkerJob,
   action: WorkerAction,
   runtime: LocalWorkerRuntime,
-): Promise<{ summary: string; output?: string; exitCode?: number }> {
+  approval: ConsumedWriteApproval | undefined,
+  priorResults: readonly WorkerActionResult[],
+): Promise<ActionExecution> {
   switch (action.kind) {
-    case 'inspect_file': {
-      const output = await inspectFile(root, action);
-      return { summary: `Read ${action.path}.`, output };
-    }
+    case 'inspect_file':
+      return { summary: 'Read ' + action.path + '.', output: await inspectFile(root, action) };
     case 'search_text': {
       const result = await searchText(root, action);
       return {
@@ -396,14 +632,13 @@ async function executeAction(
         output: result.output,
       };
     }
-    case 'git_history': {
-      const output = await gitHistory(root, action);
-      return { summary: 'Git history inspected.', output };
-    }
-    case 'compare_refs': {
-      const output = await compareRefs(root, action);
-      return { summary: `Compared ${action.baseRef} to ${action.headRef}.`, output };
-    }
+    case 'git_history':
+      return { summary: 'Git history inspected.', output: await gitHistory(root, action) };
+    case 'compare_refs':
+      return {
+        summary: 'Compared ' + action.baseRef + ' to ' + action.headRef + '.',
+        output: await compareRefs(root, job, action),
+      };
     case 'run_test_profile': {
       const result = await runTestProfile(
         root,
@@ -413,42 +648,86 @@ async function executeAction(
       return {
         summary:
           result.exitCode === 0
-            ? `Test profile ${action.profileId} passed.`
-            : `Test profile ${action.profileId} failed.`,
+            ? 'Test profile ' + action.profileId + ' passed.'
+            : 'Test profile ' + action.profileId + ' failed.',
         output: result.output,
         exitCode: result.exitCode,
       };
     }
     case 'apply_patch': {
-      const summary = await applyPatch(root, job, action, runtime.patches ?? new Map());
-      return { summary };
+      if (approval === undefined) {
+        throw new Error('approved patch payload is unavailable');
+      }
+      return { summary: await applyPatch(root, job, action, approval) };
     }
+    case 'finalize_candidate':
+      return { summary: await finalizeCandidate(root, job, priorResults) };
   }
 }
 
+function actionMetadata(action: WorkerAction): Pick<WorkerActionResult, 'profileId' | 'patchId'> {
+  if (action.kind === 'run_test_profile') {
+    return { profileId: action.profileId };
+  }
+  if (action.kind === 'apply_patch') {
+    return { patchId: action.patchId };
+  }
+  return {};
+}
+
 export async function executeLocalWorkerJob(
-  job: WorkerJob,
+  input: unknown,
   runtime: LocalWorkerRuntime = {},
 ): Promise<WorkerJobResult> {
+  const job = parseWorkerJob(input);
   const validationErrors = validateWorkerJob(job);
   if (validationErrors.length > 0) {
     throw new WorkerJobRejectedError(validationErrors);
   }
 
   const sourceRoot = await repositoryRoot(job.scope.repositoryRoot);
-  const headShaBefore = await currentHead(sourceRoot);
+  const sourceHeadSha = await currentHead(sourceRoot);
   const hasWrite = workerJobContainsWrite(job);
-  const workspaceRoot = hasWrite
-    ? await prepareControlledWorktree(sourceRoot, job, runtime.workspaceBaseDir)
-    : sourceRoot;
+  const runsTests = workerJobRunsTests(job);
+  let approval: ConsumedWriteApproval | undefined;
+  if (hasWrite) {
+    if (runtime.approvalStore === undefined || job.approvalToken === undefined) {
+      throw new WorkerJobRejectedError(['write approval verifier is unavailable']);
+    }
+    approval = runtime.approvalStore.consumeForJob(job.approvalToken, job);
+    if (sourceHeadSha.toLowerCase() !== job.scope.baselineRef.toLowerCase()) {
+      throw new WorkerJobRejectedError([
+        'stale baseline: approved ' + job.scope.baselineRef + ', current ' + sourceHeadSha,
+      ]);
+    }
+  }
 
+  let workspace: PreparedWorkspace | undefined;
+  if (hasWrite) {
+    workspace = await prepareControlledWorktree(sourceRoot, job, runtime.workspaceBaseDir);
+  } else if (runsTests) {
+    const baseline = await resolveCommit(sourceRoot, job.scope.baselineRef);
+    if (baseline.toLowerCase() !== sourceHeadSha.toLowerCase()) {
+      throw new WorkerJobRejectedError([
+        'test profile baseline is stale: resolved ' + baseline + ', current ' + sourceHeadSha,
+      ]);
+    }
+    workspace = await prepareTestWorktree(sourceRoot, job, baseline, runtime.workspaceBaseDir);
+  }
+
+  const workspaceRoot = workspace?.root ?? sourceRoot;
+  const headShaBefore = await currentHead(workspaceRoot);
   const now = runtime.now ?? (() => new Date());
   const actions: WorkerActionResult[] = [];
+  let cleanupControlledWorkspace = false;
 
   for (const [actionIndex, action] of job.actions.entries()) {
     const startedAt = now().toISOString();
     try {
-      const result = await executeAction(workspaceRoot, job, action, runtime);
+      const result = await executeAction(workspaceRoot, job, action, runtime, approval, actions);
+      if (hasWrite && action.kind === 'run_test_profile') {
+        await requireScopedWorkspace(workspaceRoot, job);
+      }
       const failed = result.exitCode !== undefined && result.exitCode !== 0;
       actions.push({
         actionIndex,
@@ -457,6 +736,7 @@ export async function executeLocalWorkerJob(
         startedAt,
         finishedAt: now().toISOString(),
         summary: result.summary,
+        ...actionMetadata(action),
         ...(result.exitCode === undefined ? {} : { exitCode: result.exitCode }),
         ...(result.output === undefined ? {} : { output: result.output }),
       });
@@ -471,19 +751,46 @@ export async function executeLocalWorkerJob(
         startedAt,
         finishedAt: now().toISOString(),
         summary: error instanceof Error ? error.message : String(error),
+        ...actionMetadata(action),
       });
+      if (action.kind === 'apply_patch' || error instanceof WorkerScopeViolationError) {
+        cleanupControlledWorkspace = hasWrite;
+      }
       break;
     }
   }
 
   const headShaAfter = await currentHead(workspaceRoot);
-  const changedPaths = changedPathsFromPorcelain(await porcelainStatus(workspaceRoot));
+  const workingPaths = changedPathsFromPorcelain(await porcelainStatus(workspaceRoot));
+  const committedPaths = await committedChangedPaths(
+    workspaceRoot,
+    job.scope.baselineRef,
+    headShaAfter,
+  );
+  const changedPaths = hasWrite ? [...new Set([...workingPaths, ...committedPaths])].sort() : [];
+
+  let workspaceRetained = hasWrite && workspace !== undefined;
+  if (workspace !== undefined && (!hasWrite || cleanupControlledWorkspace)) {
+    const cleanupErrors = await cleanupWorkspace(sourceRoot, workspace);
+    workspaceRetained = cleanupErrors.length > 0;
+    if (cleanupErrors.length > 0) {
+      const last = actions.at(-1);
+      if (last !== undefined) {
+        last.status = 'error';
+        last.summary += '; workspace cleanup failed: ' + cleanupErrors.join('; ');
+      }
+    }
+  }
 
   return {
     jobId: job.jobId,
+    projectId: job.scope.projectId,
     baselineRef: job.scope.baselineRef,
     ...(job.scope.branch === undefined ? {} : { workspaceBranch: job.scope.branch }),
-    ...(hasWrite ? { workspacePath: workspaceRoot } : {}),
+    ...(workspaceRetained && workspace !== undefined ? { workspacePath: workspace.root } : {}),
+    workspaceRetained,
+    isolatedExecution: workspace !== undefined,
+    sourceHeadSha,
     headShaBefore,
     headShaAfter,
     changedPaths,

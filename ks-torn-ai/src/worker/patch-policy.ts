@@ -5,7 +5,9 @@ export interface PatchInspection {
   errors: readonly string[];
 }
 
-const PATCH_PATH_PATTERN = /^(?:---|\+\+\+|rename from|rename to)\s+(?:(?:a|b)\/)?(.+)$/;
+const MAX_PATCH_BYTES = 1_000_000;
+const PATCH_PATH_PATTERN =
+  /^(?:---|\+\+\+|rename from|rename to|copy from|copy to)\s+(?:(?:a|b)\/)?(.+)$/;
 
 function extractPatchPath(line: string): string | null {
   const match = PATCH_PATH_PATTERN.exec(line);
@@ -24,23 +26,38 @@ export function inspectPatch(patch: string, allowedPaths: readonly string[]): Pa
   const errors: string[] = [];
   const changedPaths = new Set<string>();
 
+  if (Buffer.byteLength(patch, 'utf8') > MAX_PATCH_BYTES) {
+    errors.push('patch exceeds the 1000000-byte Worker limit');
+  }
   if (patch.includes('\0')) {
     errors.push('patch contains a NUL byte');
   }
 
-  for (const line of patch.split(/\r?\n/)) {
-    const rawPath = extractPatchPath(line);
-    if (rawPath === null) {
-      continue;
+  const sections = patch.split(/^diff --git /m).slice(1);
+  if (sections.length === 0) {
+    errors.push('patch does not contain a Git diff section');
+  }
+
+  for (const [sectionIndex, section] of sections.entries()) {
+    let sectionPaths = 0;
+    for (const line of section.split(/\r?\n/).slice(1)) {
+      const rawPath = extractPatchPath(line);
+      if (rawPath === null) {
+        continue;
+      }
+      sectionPaths += 1;
+      const normalized = normalizeRelativeWorkerPath(rawPath);
+      if (normalized === null) {
+        errors.push(`patch path is invalid: ${rawPath}`);
+        continue;
+      }
+      changedPaths.add(normalized);
+      if (!isPathAllowed(normalized, allowedPaths)) {
+        errors.push(`patch path is outside worker scope: ${normalized}`);
+      }
     }
-    const normalized = normalizeRelativeWorkerPath(rawPath);
-    if (normalized === null) {
-      errors.push(`patch path is invalid: ${rawPath}`);
-      continue;
-    }
-    changedPaths.add(normalized);
-    if (!isPathAllowed(normalized, allowedPaths)) {
-      errors.push(`patch path is outside worker scope: ${normalized}`);
+    if (sectionPaths === 0) {
+      errors.push(`patch section ${String(sectionIndex + 1)} has no supported file path headers`);
     }
   }
 
@@ -48,5 +65,5 @@ export function inspectPatch(patch: string, allowedPaths: readonly string[]): Pa
     errors.push('patch does not contain any writable file paths');
   }
 
-  return { changedPaths: [...changedPaths].sort(), errors };
+  return { changedPaths: [...changedPaths].sort(), errors: [...new Set(errors)] };
 }
