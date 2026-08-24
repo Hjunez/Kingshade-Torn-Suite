@@ -30,7 +30,11 @@ async function main(): Promise<void> {
       }
 
       const result = await run(agent, message, { session });
-      output.write(`\nKS Leslie> ${result.finalOutput}\n\n`);
+      output.write('\nKS Leslie> ');
+      if (result.finalOutput !== undefined) {
+        output.write(result.finalOutput);
+      }
+      output.write('\n\n');
     }
   } finally {
     terminal.close();
