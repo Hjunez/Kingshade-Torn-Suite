@@ -520,6 +520,51 @@ async function requireScopedWorkspace(root: string, job: WorkerJob): Promise<rea
   return changedPaths;
 }
 
+interface CandidateTreeSnapshot {
+  changedPaths: readonly string[];
+  treeSha: string;
+}
+
+async function stageCandidateTree(root: string, job: WorkerJob): Promise<CandidateTreeSnapshot> {
+  const changedPaths = await requireScopedWorkspace(root, job);
+  if (changedPaths.length === 0) {
+    throw new Error('approved patch produced no scoped changes');
+  }
+  requireSuccess(
+    await git(root, ['add', '--all', '--', ...job.scope.allowedPaths]),
+    'stage approved candidate tree',
+  );
+  const treeSha = requireSuccess(
+    await git(root, ['write-tree']),
+    'snapshot approved candidate tree',
+  );
+  if (!/^[0-9a-f]{40}$/i.test(treeSha)) {
+    throw new Error('approved candidate tree did not produce an exact Git tree SHA');
+  }
+  return { changedPaths, treeSha: treeSha.toLowerCase() };
+}
+
+async function requireApprovedCandidateTree(
+  root: string,
+  job: WorkerJob,
+  approvedTreeSha: string | undefined,
+): Promise<readonly string[]> {
+  if (approvedTreeSha === undefined) {
+    throw new Error('approved candidate tree snapshot is unavailable');
+  }
+  const [head, branch] = await Promise.all([currentHead(root), currentBranch(root)]);
+  if (head.toLowerCase() !== job.scope.baselineRef.toLowerCase() || branch !== job.scope.branch) {
+    await rollbackWorkerWorktree(root, job.scope.baselineRef);
+    throw new WorkerScopeViolationError('test profile changed the approved candidate Git state');
+  }
+  const snapshot = await stageCandidateTree(root, job);
+  if (snapshot.treeSha !== approvedTreeSha) {
+    await rollbackWorkerWorktree(root, job.scope.baselineRef);
+    throw new WorkerScopeViolationError('test profile changed approved candidate content');
+  }
+  return snapshot.changedPaths;
+}
+
 async function applyPatch(
   root: string,
   job: WorkerJob,
@@ -572,6 +617,7 @@ async function finalizeCandidate(
   root: string,
   job: WorkerJob,
   priorResults: readonly WorkerActionResult[],
+  approvedTreeSha: string | undefined,
 ): Promise<string> {
   const patchPassed = priorResults.some(
     (result) => result.kind === 'apply_patch' && result.status === 'passed',
@@ -582,11 +628,7 @@ async function finalizeCandidate(
   if (!patchPassed || !testPassed) {
     throw new Error('candidate finalization requires a passed patch and test profile');
   }
-  const changedPaths = await requireScopedWorkspace(root, job);
-  if (changedPaths.length === 0) {
-    throw new Error('candidate finalization found no scoped changes');
-  }
-  requireSuccess(await git(root, ['add', '--', ...changedPaths]), 'stage candidate changes');
+  const changedPaths = await requireApprovedCandidateTree(root, job, approvedTreeSha);
   const patchId = job.actions.find((action) => action.kind === 'apply_patch')?.patchId;
   const message = 'KS Leslie candidate ' + (patchId ?? job.jobId);
   requireSuccess(
@@ -619,6 +661,7 @@ async function executeAction(
   runtime: LocalWorkerRuntime,
   approval: ConsumedWriteApproval | undefined,
   priorResults: readonly WorkerActionResult[],
+  approvedTreeSha: string | undefined,
 ): Promise<ActionExecution> {
   switch (action.kind) {
     case 'inspect_file':
@@ -661,7 +704,7 @@ async function executeAction(
       return { summary: await applyPatch(root, job, action, approval) };
     }
     case 'finalize_candidate':
-      return { summary: await finalizeCandidate(root, job, priorResults) };
+      return { summary: await finalizeCandidate(root, job, priorResults, approvedTreeSha) };
   }
 }
 
@@ -720,13 +763,25 @@ export async function executeLocalWorkerJob(
   const now = runtime.now ?? (() => new Date());
   const actions: WorkerActionResult[] = [];
   let cleanupControlledWorkspace = false;
+  let approvedTreeSha: string | undefined;
 
   for (const [actionIndex, action] of job.actions.entries()) {
     const startedAt = now().toISOString();
     try {
-      const result = await executeAction(workspaceRoot, job, action, runtime, approval, actions);
+      const result = await executeAction(
+        workspaceRoot,
+        job,
+        action,
+        runtime,
+        approval,
+        actions,
+        approvedTreeSha,
+      );
+      if (hasWrite && action.kind === 'apply_patch') {
+        approvedTreeSha = (await stageCandidateTree(workspaceRoot, job)).treeSha;
+      }
       if (hasWrite && action.kind === 'run_test_profile') {
-        await requireScopedWorkspace(workspaceRoot, job);
+        await requireApprovedCandidateTree(workspaceRoot, job, approvedTreeSha);
       }
       const failed = result.exitCode !== undefined && result.exitCode !== 0;
       actions.push({
