@@ -70,42 +70,42 @@ jobs:
           if '@downloadURL' not in s:
               s = s.replace(v, v + remote, 1)
           gate = '''    if (rwPhase?.phase !== RW_PHASE.LIVE) {
-      return {
-        state: TARGET_STATE.LOCKED,
-        seconds: isHospital ? seconds : null,
-        fairFight: ff,
-        reason: rwPhase?.phase === RW_PHASE.PREWAR ? "rw-not-started" : "rw-phase-unverifiable",
-        mode: "live",
-        rwPhase,
-        prewarHospital: !!isHospital
-      };
-    }
-'''
+                return {
+                  state: TARGET_STATE.LOCKED,
+                  seconds: isHospital ? seconds : null,
+                  fairFight: ff,
+                  reason: rwPhase?.phase === RW_PHASE.PREWAR ? "rw-not-started" : "rw-phase-unverifiable",
+                  mode: "live",
+                  rwPhase,
+                  prewarHospital: !!isHospital
+                };
+              }
+          '''
           if s.count(gate) < 1: raise SystemExit('RW decision gate not found')
           s = s.replace(gate, '')
           panel_old = '''      if (rwState.phase === RW_PHASE.LIVE) {
-        $("rw-status").textContent = "DIBS: LIVE";
-        $("rw-status").title = "Ranked War is live";
-      } else if (rwState.phase === RW_PHASE.PREWAR) {
-        $("rw-status").textContent = Number.isFinite(rwState.runwaySeconds)
-          ? `DIBS: LOCKED · RW ${formatRwRunway(rwState.runwaySeconds)}`
-          : "DIBS: LOCKED · PRE-WAR";
-        $("rw-status").title = "DIBS remains disabled until Ranked War starts";
-      } else {
-        $("rw-status").textContent = "DIBS: LOCKED · RW ?";
-        $("rw-status").title = "Ranked War start state cannot be verified; DIBS remains disabled";
-      }
-'''
+                  $("rw-status").textContent = "DIBS: LIVE";
+                  $("rw-status").title = "Ranked War is live";
+                } else if (rwState.phase === RW_PHASE.PREWAR) {
+                  $("rw-status").textContent = Number.isFinite(rwState.runwaySeconds)
+                    ? `DIBS: LOCKED · RW ${formatRwRunway(rwState.runwaySeconds)}`
+                    : "DIBS: LOCKED · PRE-WAR";
+                  $("rw-status").title = "DIBS remains disabled until Ranked War starts";
+                } else {
+                  $("rw-status").textContent = "DIBS: LOCKED · RW ?";
+                  $("rw-status").title = "Ranked War start state cannot be verified; DIBS remains disabled";
+                }
+          '''
           panel_new = '''      $("rw-status").textContent = "DIBS: ACTIVE";
-      $("rw-status").title = "RW start lock removed; Hospital and FF gates remain active";
-'''
+                $("rw-status").title = "RW start lock removed; Hospital and FF gates remain active";
+          '''
           if s.count(panel_old) < 1: raise SystemExit('RW panel block not found')
           s = s.replace(panel_old, panel_new)
           hidden = '''    const rwPhase = currentRwPhase();
-    if (rwPhase.phase !== RW_PHASE.LIVE) { scanWarRows(); return; }
+              if (rwPhase.phase !== RW_PHASE.LIVE) { scanWarRows(); return; }
 
-    const eligibility = currentDecisionForTarget(targetId);
-'''
+              const eligibility = currentDecisionForTarget(targetId);
+          '''
           if s.count(hidden) != 1: raise SystemExit(f'hidden claim guard mismatch: {s.count(hidden)}')
           s = s.replace(hidden, '    const eligibility = currentDecisionForTarget(targetId);\n', 1)
           marker = ' * TEST ONLY: Hospital countdown/gating uses FFScouter-aligned second-boundary semantics (ceil + 1s).\n'

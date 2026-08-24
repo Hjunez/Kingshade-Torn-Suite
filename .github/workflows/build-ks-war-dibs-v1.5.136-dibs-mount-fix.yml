@@ -40,58 +40,58 @@ jobs:
           start = s.index('  function currentRwPhase() {')
           end = s.index('\n  // Pure target decision engine', start)
           new = '''  function currentRwPhase() {
-    if (!isWarPanelPresent()) {
-      rwLiveConfirmSince = 0;
-      rwClockLastSeconds = null;
-      rwClockLastSeenAt = 0;
-      rwClockDirection = 0;
-      return { phase: RW_PHASE.UNKNOWN, runwaySeconds: null };
-    }
-    const active = activeRankedWarTab();
-    if (!active) {
-      rwLiveConfirmSince = 0;
-      return { phase: RW_PHASE.UNKNOWN, runwaySeconds: null };
-    }
-    const observedSeconds = readRankedWarCountdownSeconds(active);
-    const now = Math.floor(getTornNowMs() / 1000);
-    const sampledAt = nowMs();
-    if (Number.isFinite(observedSeconds) && observedSeconds > 0) {
-      if (Number.isFinite(rwClockLastSeconds) && rwClockLastSeenAt > 0) {
-        const age = sampledAt - rwClockLastSeenAt;
-        if (age >= 500 && age <= 5000 && observedSeconds !== rwClockLastSeconds) {
-          rwClockDirection = observedSeconds > rwClockLastSeconds ? 1 : -1;
-        }
-      }
-      rwClockLastSeconds = observedSeconds;
-      rwClockLastSeenAt = sampledAt;
-      if (rwClockDirection > 0) {
-        lastObservedRwStartAtSeconds = 0;
-        rwLiveConfirmSince = sampledAt;
-        return { phase: RW_PHASE.LIVE, runwaySeconds: 0 };
-      }
-      if (rwClockDirection < 0) {
-        lastObservedRwStartAtSeconds = now + observedSeconds;
-        rwLiveConfirmSince = 0;
-        return { phase: RW_PHASE.PREWAR, runwaySeconds: observedSeconds };
-      }
-      return { phase: RW_PHASE.UNKNOWN, runwaySeconds: null };
-    }
-    rwClockLastSeconds = null;
-    rwClockLastSeenAt = 0;
-    rwClockDirection = 0;
-    if (lastObservedRwStartAtSeconds > now) {
-      rwLiveConfirmSince = 0;
-      return { phase: RW_PHASE.PREWAR, runwaySeconds: Math.max(0, lastObservedRwStartAtSeconds - now) };
-    }
-    if (!lastObservedRwStartAtSeconds) {
-      rwLiveConfirmSince = 0;
-      return { phase: RW_PHASE.UNKNOWN, runwaySeconds: null };
-    }
-    if (!rwLiveConfirmSince) rwLiveConfirmSince = sampledAt;
-    if (sampledAt - rwLiveConfirmSince < 3000) return { phase: RW_PHASE.UNKNOWN, runwaySeconds: 0 };
-    return { phase: RW_PHASE.LIVE, runwaySeconds: 0 };
-  }
-'''
+              if (!isWarPanelPresent()) {
+                rwLiveConfirmSince = 0;
+                rwClockLastSeconds = null;
+                rwClockLastSeenAt = 0;
+                rwClockDirection = 0;
+                return { phase: RW_PHASE.UNKNOWN, runwaySeconds: null };
+              }
+              const active = activeRankedWarTab();
+              if (!active) {
+                rwLiveConfirmSince = 0;
+                return { phase: RW_PHASE.UNKNOWN, runwaySeconds: null };
+              }
+              const observedSeconds = readRankedWarCountdownSeconds(active);
+              const now = Math.floor(getTornNowMs() / 1000);
+              const sampledAt = nowMs();
+              if (Number.isFinite(observedSeconds) && observedSeconds > 0) {
+                if (Number.isFinite(rwClockLastSeconds) && rwClockLastSeenAt > 0) {
+                  const age = sampledAt - rwClockLastSeenAt;
+                  if (age >= 500 && age <= 5000 && observedSeconds !== rwClockLastSeconds) {
+                    rwClockDirection = observedSeconds > rwClockLastSeconds ? 1 : -1;
+                  }
+                }
+                rwClockLastSeconds = observedSeconds;
+                rwClockLastSeenAt = sampledAt;
+                if (rwClockDirection > 0) {
+                  lastObservedRwStartAtSeconds = 0;
+                  rwLiveConfirmSince = sampledAt;
+                  return { phase: RW_PHASE.LIVE, runwaySeconds: 0 };
+                }
+                if (rwClockDirection < 0) {
+                  lastObservedRwStartAtSeconds = now + observedSeconds;
+                  rwLiveConfirmSince = 0;
+                  return { phase: RW_PHASE.PREWAR, runwaySeconds: observedSeconds };
+                }
+                return { phase: RW_PHASE.UNKNOWN, runwaySeconds: null };
+              }
+              rwClockLastSeconds = null;
+              rwClockLastSeenAt = 0;
+              rwClockDirection = 0;
+              if (lastObservedRwStartAtSeconds > now) {
+                rwLiveConfirmSince = 0;
+                return { phase: RW_PHASE.PREWAR, runwaySeconds: Math.max(0, lastObservedRwStartAtSeconds - now) };
+              }
+              if (!lastObservedRwStartAtSeconds) {
+                rwLiveConfirmSince = 0;
+                return { phase: RW_PHASE.UNKNOWN, runwaySeconds: null };
+              }
+              if (!rwLiveConfirmSince) rwLiveConfirmSince = sampledAt;
+              if (sampledAt - rwLiveConfirmSince < 3000) return { phase: RW_PHASE.UNKNOWN, runwaySeconds: 0 };
+              return { phase: RW_PHASE.LIVE, runwaySeconds: 0 };
+            }
+          '''
           s = s[:start] + new + s[end:]
           marker = ' * TEST ONLY: Hospital countdown/gating uses FFScouter-aligned second-boundary semantics (ceil + 1s).\n'
           if marker not in s: raise SystemExit('marker missing')
