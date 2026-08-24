@@ -13,16 +13,17 @@ describe('Worker safety policy', () => {
   });
 
   it('blocks writes in read-only mode and without explicit approval', () => {
+    const baseline = 'a'.repeat(40);
     const errors = validateWorkerJob({
       jobId: 'job',
       mode: 'read_only',
       scope: {
         repositoryRoot: '/repo',
         allowedPaths: ['.'],
-        baselineRef: 'base',
+        baselineRef: baseline,
       },
       approvedWrite: false,
-      actions: [{ kind: 'apply_patch', patchId: 'patch', expectedBaseSha: 'base' }],
+      actions: [{ kind: 'apply_patch', patchId: 'patch', expectedBaseSha: baseline }],
     });
 
     expect(errors).toEqual([
@@ -38,10 +39,10 @@ describe('Worker safety policy', () => {
       scope: {
         repositoryRoot: '/repo',
         allowedPaths: ['src'],
-        baselineRef: 'base',
+        baselineRef: 'a'.repeat(40),
       },
       approvedWrite: true,
-      actions: [{ kind: 'apply_patch', patchId: 'patch', expectedBaseSha: 'stale' }],
+      actions: [{ kind: 'apply_patch', patchId: 'patch', expectedBaseSha: 'b'.repeat(40) }],
     });
 
     expect(errors).toEqual([
