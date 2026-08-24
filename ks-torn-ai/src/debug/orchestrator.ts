@@ -1,13 +1,20 @@
+import { createHash } from 'node:crypto';
+
 import { z } from 'zod';
 
 import { selectKnownGoodBaseline, type BaselineEvidence } from '../repository/baseline.js';
+import { redactRepositorySecrets } from '../repository/validation.js';
 import { canStartImplementation, isFullCommitSha, type GateDecision } from './gates.js';
 import {
   parseModelSyntheticDebugRecord,
-  type SyntheticDebugEvidenceReference,
+  parseTrustedSyntheticDebugApprovalDecision,
   parseTrustedSyntheticDebugBaselineRecord,
+  type SyntheticDebugEvidenceReference,
+  type SyntheticDebugImplementationPlanRecord,
   type SyntheticDebugIntakeRecord,
   type SyntheticDebugRootCauseRecord,
+  type SyntheticDebugWriteProposal,
+  type TrustedSyntheticDebugApprovalDecision,
   type TrustedSyntheticDebugBaselineRecord,
 } from './records.js';
 import {
@@ -23,6 +30,7 @@ import {
 
 const MAX_DISCOVERY_EVIDENCE = 200;
 const CANONICAL_UTC_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const POSSIBLE_OPAQUE_APPROVAL_SECRET = /\b[0-9a-f]{64}\b/i;
 const REPRODUCIBLE_EVIDENCE_KINDS = new Set<SyntheticDebugEvidenceReference['kind']>([
   'REPRODUCIBLE',
   'AUTOMATED_TEST',
@@ -131,8 +139,25 @@ export interface SyntheticDebugTaskDCapability {
   readonly readTrustedBaseline: (request: SyntheticDebugTaskDRequest) => unknown;
 }
 
+export type SyntheticDebugTaskFOperation = 'READ_TRUSTED_WRITE_APPROVAL_DECISION';
+
+export interface SyntheticDebugTaskFRequest {
+  readonly schemaVersion: '1.0';
+  readonly workflowKind: 'synthetic';
+  readonly accessMode: 'TRUSTED_APPLICATION_DECISION_ONLY';
+  readonly operation: SyntheticDebugTaskFOperation;
+  readonly caseId: string;
+  readonly projectId: string;
+  readonly proposal: DeepReadonly<SyntheticDebugWriteProposal>;
+}
+
+export interface SyntheticDebugTaskFCapability {
+  readonly readTrustedWriteApprovalDecision: (request: SyntheticDebugTaskFRequest) => unknown;
+}
+
 export interface SyntheticDebugOrchestratorDependencies {
   readonly taskD?: SyntheticDebugTaskDCapability;
+  readonly taskF?: SyntheticDebugTaskFCapability;
 }
 
 export interface SyntheticDebugCurrentCandidate {
@@ -169,6 +194,8 @@ export interface SyntheticDebugOrchestrationSnapshot {
   readonly reproducibleDefectEvidence: readonly DeepReadonly<SyntheticDebugEvidenceReference>[];
   readonly rootCause: DeepReadonly<SyntheticDebugRootCauseRecord> | null;
   readonly implementationGate: DeepReadonly<GateDecision> | null;
+  readonly writeProposal: DeepReadonly<SyntheticDebugWriteProposal> | null;
+  readonly writeApprovalDecision: DeepReadonly<TrustedSyntheticDebugApprovalDecision> | null;
 }
 
 export type SyntheticDebugOrchestrationOperation =
@@ -177,13 +204,24 @@ export type SyntheticDebugOrchestrationOperation =
   | 'COMPLETE_DISCOVERY'
   | 'RESOLVE_TRUSTED_BASELINE'
   | 'RECORD_EVIDENCE_AND_ROOT_CAUSE'
-  | 'EVALUATE_IMPLEMENTATION_GATE';
+  | 'EVALUATE_IMPLEMENTATION_GATE'
+  | 'REQUEST_WRITE_APPROVAL'
+  | 'RESOLVE_WRITE_APPROVAL';
 
 export type SyntheticDebugOrchestrationErrorCode =
   | 'MALFORMED_MODEL_RECORD'
   | 'UNSUPPORTED_RECORD_KIND'
   | 'EVIDENCE_SCOPE_MISMATCH'
   | 'ROOT_CAUSE_SCOPE_MISMATCH'
+  | 'IMPLEMENTATION_PLAN_SCOPE_MISMATCH'
+  | 'IMPLEMENTATION_PLAN_BASELINE_MISMATCH'
+  | 'IMPLEMENTATION_GATE_INVARIANT'
+  | 'SENSITIVE_WRITE_PROPOSAL'
+  | 'WRITE_PROPOSAL_ALREADY_EXISTS'
+  | 'WRITE_PROPOSAL_INTEGRITY_MISMATCH'
+  | 'MALFORMED_TRUSTED_APPROVAL'
+  | 'TRUSTED_APPROVAL_SCOPE_MISMATCH'
+  | 'TRUSTED_APPROVAL_REPLAY_MISMATCH'
   | 'OUT_OF_ORDER'
   | 'TERMINAL_STATE'
   | 'TRANSITION_REJECTED';
@@ -210,7 +248,7 @@ export type SyntheticDebugOrchestrationCreateResult =
 export type SyntheticDebugOrchestrationResult =
   | {
       readonly ok: true;
-      readonly status: 'ADVANCED' | 'BLOCKED' | 'FAILED';
+      readonly status: 'ADVANCED' | 'BLOCKED' | 'FAILED' | 'CANCELLED';
       readonly snapshot: SyntheticDebugOrchestrationSnapshot;
       readonly transition: SyntheticDebugTransitionRecord;
     }
@@ -237,6 +275,13 @@ export interface SyntheticDebugDiscoveryController {
   evaluateImplementationGate(
     snapshot: SyntheticDebugOrchestrationSnapshot,
   ): SyntheticDebugOrchestrationResult;
+  requestWriteApproval(
+    snapshot: SyntheticDebugOrchestrationSnapshot,
+    implementationPlanInput: unknown,
+  ): SyntheticDebugOrchestrationResult;
+  resolveWriteApproval(
+    snapshot: SyntheticDebugOrchestrationSnapshot,
+  ): Promise<SyntheticDebugOrchestrationResult>;
 }
 
 function deepFreeze<T>(value: T): DeepReadonly<T> {
@@ -294,22 +339,26 @@ function requireState(
   return null;
 }
 
+type SyntheticDebugSnapshotPatch = Partial<
+  Pick<
+    SyntheticDebugOrchestrationSnapshot,
+    | 'discovery'
+    | 'knownGoodBaseline'
+    | 'reproducibleDefectEvidence'
+    | 'rootCause'
+    | 'implementationGate'
+    | 'writeProposal'
+    | 'writeApprovalDecision'
+  >
+>;
+
 function apply(
   snapshot: SyntheticDebugOrchestrationSnapshot,
   operation: SyntheticDebugOrchestrationOperation,
   event: SyntheticDebugEvent,
   reasons: readonly [SyntheticDebugTransitionReason, ...SyntheticDebugTransitionReason[]],
-  status: 'ADVANCED' | 'BLOCKED' | 'FAILED',
-  patch: Partial<
-    Pick<
-      SyntheticDebugOrchestrationSnapshot,
-      | 'discovery'
-      | 'knownGoodBaseline'
-      | 'reproducibleDefectEvidence'
-      | 'rootCause'
-      | 'implementationGate'
-    >
-  > = {},
+  status: 'ADVANCED' | 'BLOCKED' | 'FAILED' | 'CANCELLED',
+  patch: SyntheticDebugSnapshotPatch = {},
 ): SyntheticDebugOrchestrationResult {
   const transitioned = transitionSyntheticDebugMachine(snapshot.machine, { event, reasons });
   if (!transitioned.ok) {
@@ -328,14 +377,18 @@ function block(
   snapshot: SyntheticDebugOrchestrationSnapshot,
   operation: SyntheticDebugOrchestrationOperation,
   reasons: readonly [SyntheticDebugTransitionReason, ...SyntheticDebugTransitionReason[]],
-  patch: Partial<
-    Pick<
-      SyntheticDebugOrchestrationSnapshot,
-      'reproducibleDefectEvidence' | 'rootCause' | 'implementationGate'
-    >
-  > = {},
+  patch: SyntheticDebugSnapshotPatch = {},
 ): SyntheticDebugOrchestrationResult {
   return apply(snapshot, operation, 'BLOCK', reasons, 'BLOCKED', patch);
+}
+
+function cancel(
+  snapshot: SyntheticDebugOrchestrationSnapshot,
+  operation: SyntheticDebugOrchestrationOperation,
+  reasons: readonly [SyntheticDebugTransitionReason, ...SyntheticDebugTransitionReason[]],
+  patch: SyntheticDebugSnapshotPatch = {},
+): SyntheticDebugOrchestrationResult {
+  return apply(snapshot, operation, 'CANCEL', reasons, 'CANCELLED', patch);
 }
 
 function fail(
@@ -359,6 +412,106 @@ function request(
     caseId: snapshot.caseId,
     projectId: snapshot.projectId,
   });
+}
+
+type SyntheticDebugWriteProposalContent = Omit<SyntheticDebugWriteProposal, 'proposalId'>;
+
+function writeProposalContent(
+  plan: SyntheticDebugImplementationPlanRecord,
+  baselineSha: string,
+): SyntheticDebugWriteProposalContent {
+  return {
+    schemaVersion: '1.0',
+    workflowKind: 'synthetic',
+    recordKind: 'WRITE_PROPOSAL',
+    caseId: plan.caseId,
+    projectId: plan.projectId,
+    planId: plan.planId,
+    baselineSha: baselineSha.toLowerCase(),
+    boundedChangeSummary: plan.boundedChangeSummary,
+    approvedPaths: [...plan.allowedPaths].sort(),
+    requiredTestProfileIds: [...plan.requiredTestProfileIds].sort(),
+    rollbackSha: plan.rollbackSha.toLowerCase(),
+    rollbackRef: plan.rollbackRef,
+    proposedIsolatedBranch: plan.proposedIsolatedBranch,
+    proposedWorkspaceId: plan.proposedWorkspaceId,
+  };
+}
+
+function writeProposalIdentifier(
+  snapshot: SyntheticDebugOrchestrationSnapshot,
+  proposal: DeepReadonly<SyntheticDebugWriteProposalContent>,
+): string {
+  const binding = JSON.stringify({
+    caseId: snapshot.caseId,
+    projectId: snapshot.projectId,
+    intake: snapshot.intake,
+    discovery: snapshot.discovery,
+    knownGoodBaseline: snapshot.knownGoodBaseline,
+    reproducibleDefectEvidence: snapshot.reproducibleDefectEvidence,
+    rootCause: snapshot.rootCause,
+    implementationGate: snapshot.implementationGate,
+    proposal,
+  });
+  return `write-proposal-${createHash('sha256').update(binding, 'utf8').digest('hex')}`;
+}
+
+function buildWriteProposal(
+  snapshot: SyntheticDebugOrchestrationSnapshot,
+  plan: SyntheticDebugImplementationPlanRecord,
+): DeepReadonly<SyntheticDebugWriteProposal> {
+  const baselineSha = snapshot.knownGoodBaseline?.commitSha ?? '';
+  const content = writeProposalContent(plan, baselineSha);
+  return deepFreeze({
+    ...content,
+    proposalId: writeProposalIdentifier(snapshot, content),
+  });
+}
+
+function writeProposalMatchesSnapshot(
+  snapshot: SyntheticDebugOrchestrationSnapshot,
+  proposal: DeepReadonly<SyntheticDebugWriteProposal>,
+): boolean {
+  const { proposalId, ...content } = proposal;
+  return (
+    snapshot.knownGoodBaseline !== null &&
+    snapshot.implementationGate?.allowed === true &&
+    snapshot.writeApprovalDecision === null &&
+    proposal.caseId === snapshot.caseId &&
+    proposal.projectId === snapshot.projectId &&
+    proposal.baselineSha === snapshot.knownGoodBaseline.commitSha.toLowerCase() &&
+    proposal.rollbackSha === proposal.baselineSha &&
+    proposalId === writeProposalIdentifier(snapshot, content)
+  );
+}
+
+function containsSensitiveWriteProposalContent(
+  plan: SyntheticDebugImplementationPlanRecord,
+): boolean {
+  const serialized = JSON.stringify(plan);
+  return (
+    POSSIBLE_OPAQUE_APPROVAL_SECRET.test(serialized) ||
+    redactRepositorySecrets(serialized).redactionCount > 0
+  );
+}
+
+function taskFRequest(
+  snapshot: SyntheticDebugOrchestrationSnapshot,
+  proposal: DeepReadonly<SyntheticDebugWriteProposal>,
+): SyntheticDebugTaskFRequest {
+  return deepFreeze({
+    schemaVersion: '1.0',
+    workflowKind: 'synthetic',
+    accessMode: 'TRUSTED_APPLICATION_DECISION_ONLY',
+    operation: 'READ_TRUSTED_WRITE_APPROVAL_DECISION',
+    caseId: snapshot.caseId,
+    projectId: snapshot.projectId,
+    proposal,
+  });
+}
+
+function caseBindingKey(snapshot: SyntheticDebugOrchestrationSnapshot): string {
+  return JSON.stringify([snapshot.projectId, snapshot.caseId]);
 }
 
 async function authorize(
@@ -591,6 +744,118 @@ export function createSyntheticDebugDiscoveryController(
   dependencies: SyntheticDebugOrchestratorDependencies = {},
 ): SyntheticDebugDiscoveryController {
   const capability = dependencies.taskD;
+  const taskFCapability = dependencies.taskF;
+  const writeProposalResults = new Map<string, SyntheticDebugOrchestrationResult>();
+  const writeApprovalResults = new Map<string, Promise<SyntheticDebugOrchestrationResult>>();
+  const approvalDecisionBindings = new Map<string, string>();
+
+  async function resolvePendingWriteApproval(
+    snapshot: SyntheticDebugOrchestrationSnapshot,
+    proposal: DeepReadonly<SyntheticDebugWriteProposal>,
+    bindingKey: string,
+  ): Promise<SyntheticDebugOrchestrationResult> {
+    const operation = 'RESOLVE_WRITE_APPROVAL';
+    if (taskFCapability === undefined) {
+      return block(snapshot, operation, [
+        {
+          code: 'TRUSTED_APPROVAL_CAPABILITY_MISSING',
+          summary: 'The trusted application approval capability was not injected.',
+        },
+      ]);
+    }
+
+    let decisionInput: unknown;
+    try {
+      decisionInput = await taskFCapability.readTrustedWriteApprovalDecision(
+        taskFRequest(snapshot, proposal),
+      );
+    } catch {
+      return fail(
+        snapshot,
+        operation,
+        'TRUSTED_APPROVAL_DEPENDENCY_ERROR',
+        'The injected trusted approval capability failed.',
+      );
+    }
+
+    let decision: TrustedSyntheticDebugApprovalDecision;
+    try {
+      decision = parseTrustedSyntheticDebugApprovalDecision(decisionInput);
+    } catch {
+      return reject(
+        snapshot,
+        operation,
+        'MALFORMED_TRUSTED_APPROVAL',
+        'The injected trusted approval capability returned an invalid record.',
+      );
+    }
+    if (
+      decision.caseId !== snapshot.caseId ||
+      decision.projectId !== snapshot.projectId ||
+      decision.proposalId !== proposal.proposalId
+    ) {
+      return reject(
+        snapshot,
+        operation,
+        'TRUSTED_APPROVAL_SCOPE_MISMATCH',
+        'The trusted approval decision did not match the active case, project, and proposal.',
+      );
+    }
+
+    const existingBinding = approvalDecisionBindings.get(decision.decisionReferenceId);
+    if (existingBinding !== undefined && existingBinding !== bindingKey) {
+      return reject(
+        snapshot,
+        operation,
+        'TRUSTED_APPROVAL_REPLAY_MISMATCH',
+        'The trusted approval decision reference is already bound to another proposal.',
+      );
+    }
+    approvalDecisionBindings.set(decision.decisionReferenceId, bindingKey);
+
+    const trustedDecision = deepFreeze(decision);
+    const patch = { writeApprovalDecision: trustedDecision } as const;
+    if (trustedDecision.decision === 'APPROVED') {
+      return apply(
+        snapshot,
+        operation,
+        'GRANT_WRITE_APPROVAL',
+        [
+          {
+            code: 'TRUSTED_WRITE_APPROVAL_ACCEPTED',
+            summary: 'The application-owned decision approved the bounded write proposal.',
+          },
+        ],
+        'ADVANCED',
+        patch,
+      );
+    }
+    if (trustedDecision.decision === 'DENIED') {
+      return block(
+        snapshot,
+        operation,
+        [
+          {
+            code: 'TRUSTED_WRITE_APPROVAL_DENIED',
+            summary: 'The application-owned decision denied the bounded write proposal.',
+          },
+        ],
+        patch,
+      );
+    }
+    return cancel(
+      snapshot,
+      operation,
+      [
+        {
+          code: 'TRUSTED_WRITE_APPROVAL_CANCELLED',
+          summary: 'The application-owned decision cancelled the bounded write proposal.',
+        },
+      ],
+      patch,
+    );
+  }
+
   return Object.freeze({
     createCase(input: unknown): SyntheticDebugOrchestrationCreateResult {
       let parsed;
@@ -636,6 +901,8 @@ export function createSyntheticDebugDiscoveryController(
           reproducibleDefectEvidence: [],
           rootCause: null,
           implementationGate: null,
+          writeProposal: null,
+          writeApprovalDecision: null,
         }),
       });
     },
@@ -960,6 +1227,138 @@ export function createSyntheticDebugDiscoveryController(
         'ADVANCED',
         { implementationGate: decision },
       );
+    },
+
+    requestWriteApproval(
+      snapshot: SyntheticDebugOrchestrationSnapshot,
+      implementationPlanInput: unknown,
+    ) {
+      const operation = 'REQUEST_WRITE_APPROVAL';
+      const invalid = requireState(snapshot, operation, 'IMPLEMENTATION_READY');
+      if (invalid !== null) return invalid;
+      if (snapshot.writeProposal !== null || snapshot.writeApprovalDecision !== null) {
+        return reject(
+          snapshot,
+          operation,
+          'WRITE_PROPOSAL_ALREADY_EXISTS',
+          'The active case already contains a write proposal or approval decision.',
+        );
+      }
+
+      let parsed;
+      try {
+        parsed = parseModelSyntheticDebugRecord(implementationPlanInput);
+      } catch {
+        return reject(
+          snapshot,
+          operation,
+          'MALFORMED_MODEL_RECORD',
+          'Expected a strict model-safe synthetic implementation plan',
+        );
+      }
+      if (parsed.recordKind !== 'IMPLEMENTATION_PLAN') {
+        return reject(
+          snapshot,
+          operation,
+          'UNSUPPORTED_RECORD_KIND',
+          `Record kind ${parsed.recordKind} is not accepted for Task F`,
+        );
+      }
+      if (parsed.caseId !== snapshot.caseId || parsed.projectId !== snapshot.projectId) {
+        return reject(
+          snapshot,
+          operation,
+          'IMPLEMENTATION_PLAN_SCOPE_MISMATCH',
+          'The implementation plan does not match the active case and project.',
+        );
+      }
+      const currentGate = implementationDecision(
+        snapshot,
+        snapshot.reproducibleDefectEvidence,
+        snapshot.rootCause,
+      );
+      if (
+        snapshot.knownGoodBaseline === null ||
+        snapshot.implementationGate?.allowed !== true ||
+        !currentGate.allowed
+      ) {
+        return reject(
+          snapshot,
+          operation,
+          'IMPLEMENTATION_GATE_INVARIANT',
+          'A current passing implementation gate and trusted baseline are required.',
+        );
+      }
+      if (parsed.rollbackSha.toLowerCase() !== snapshot.knownGoodBaseline.commitSha.toLowerCase()) {
+        return reject(
+          snapshot,
+          operation,
+          'IMPLEMENTATION_PLAN_BASELINE_MISMATCH',
+          'The implementation plan rollback SHA does not match the verified baseline.',
+        );
+      }
+      if (containsSensitiveWriteProposalContent(parsed)) {
+        return reject(
+          snapshot,
+          operation,
+          'SENSITIVE_WRITE_PROPOSAL',
+          'The implementation plan contains data that is not safe for a public write proposal.',
+        );
+      }
+
+      const proposal = buildWriteProposal(snapshot, parsed);
+      const proposalKey = caseBindingKey(snapshot);
+      const existing = writeProposalResults.get(proposalKey);
+      if (existing !== undefined) {
+        if (existing.ok && existing.snapshot.writeProposal?.proposalId === proposal.proposalId) {
+          return existing;
+        }
+        return reject(
+          snapshot,
+          operation,
+          'WRITE_PROPOSAL_ALREADY_EXISTS',
+          'The active case already produced a different bounded write proposal.',
+        );
+      }
+
+      const result = apply(
+        snapshot,
+        operation,
+        'REQUEST_WRITE_APPROVAL',
+        [
+          {
+            code: 'BOUNDED_WRITE_PROPOSAL_CREATED',
+            summary: 'A deterministic bounded proposal now awaits an application-owned decision.',
+          },
+        ],
+        'ADVANCED',
+        { writeProposal: proposal, writeApprovalDecision: null },
+      );
+      if (result.ok) writeProposalResults.set(proposalKey, result);
+      return result;
+    },
+
+    async resolveWriteApproval(snapshot: SyntheticDebugOrchestrationSnapshot) {
+      const operation = 'RESOLVE_WRITE_APPROVAL';
+      const invalid = requireState(snapshot, operation, 'AWAITING_WRITE_APPROVAL');
+      if (invalid !== null) return invalid;
+      const proposal = snapshot.writeProposal;
+      if (proposal === null || !writeProposalMatchesSnapshot(snapshot, proposal)) {
+        return reject(
+          snapshot,
+          operation,
+          'WRITE_PROPOSAL_INTEGRITY_MISMATCH',
+          'The pending write proposal is missing or no longer matches its sealed case snapshot.',
+        );
+      }
+
+      const bindingKey = JSON.stringify([snapshot.projectId, snapshot.caseId, proposal.proposalId]);
+      const existing = writeApprovalResults.get(bindingKey);
+      if (existing !== undefined) return await existing;
+
+      const resolution = resolvePendingWriteApproval(snapshot, proposal, bindingKey);
+      writeApprovalResults.set(bindingKey, resolution);
+      return await resolution;
     },
   });
 }

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { isValidRepositoryRef } from '../repository/validation.js';
+import { isValidRepositoryRef, redactRepositorySecrets } from '../repository/validation.js';
 import { normalizeRelativeWorkerPath } from '../worker/path-policy.js';
 import { isFullCommitSha } from './gates.js';
 
@@ -43,6 +43,14 @@ const workerPathSchema = z
   );
 
 const testProfileIdSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/);
+const approvalDecisionReferenceSchema = recordIdentifierSchema.refine(
+  (value) =>
+    value.startsWith('approval-decision-') &&
+    value.length > 'approval-decision-'.length &&
+    !/[0-9a-f]{64}/i.test(value) &&
+    redactRepositorySecrets(value).redactionCount === 0,
+  'Expected a non-secret approval decision reference',
+);
 
 function hasUniqueStrings(values: readonly string[]): boolean {
   return new Set(values).size === values.length;
@@ -151,6 +159,23 @@ export const syntheticDebugImplementationPlanRecordSchema = z
   })
   .strict();
 
+export const syntheticDebugWriteProposalSchema = z
+  .object({
+    ...workflowRecordFields,
+    recordKind: z.literal('WRITE_PROPOSAL'),
+    proposalId: recordIdentifierSchema,
+    planId: recordIdentifierSchema,
+    baselineSha: exactCommitShaSchema,
+    boundedChangeSummary: statementSchema,
+    approvedPaths: allowedPathListSchema,
+    requiredTestProfileIds: requiredProfileListSchema,
+    rollbackSha: exactCommitShaSchema,
+    rollbackRef: repositoryRefSchema,
+    proposedIsolatedBranch: proposedSyntheticBranchSchema,
+    proposedWorkspaceId: recordIdentifierSchema,
+  })
+  .strict();
+
 export const trustedOwnerVerificationSchema = z.discriminatedUnion('status', [
   z
     .object({
@@ -202,6 +227,17 @@ export const trustedSyntheticDebugBaselineRecordSchema = z
     }
   });
 
+export const trustedSyntheticDebugApprovalDecisionSchema = z
+  .object({
+    ...workflowRecordFields,
+    recordKind: z.literal('WRITE_APPROVAL_DECISION'),
+    sourceBoundary: z.literal('TRUSTED_APPLICATION'),
+    proposalId: recordIdentifierSchema,
+    decisionReferenceId: approvalDecisionReferenceSchema,
+    decision: z.enum(['APPROVED', 'DENIED', 'CANCELLED']),
+  })
+  .strict();
+
 export const trustedSyntheticDebugReviewRecordSchema = z
   .object({
     ...workflowRecordFields,
@@ -240,7 +276,9 @@ export const modelSyntheticDebugRecordSchema = z.discriminatedUnion('recordKind'
 
 export const syntheticDebugWorkflowRecordSchema = z.union([
   modelSyntheticDebugRecordSchema,
+  syntheticDebugWriteProposalSchema,
   trustedSyntheticDebugBaselineRecordSchema,
+  trustedSyntheticDebugApprovalDecisionSchema,
   trustedSyntheticDebugReviewRecordSchema,
 ]);
 
@@ -250,9 +288,13 @@ export type SyntheticDebugRootCauseRecord = z.infer<typeof syntheticDebugRootCau
 export type SyntheticDebugImplementationPlanRecord = z.infer<
   typeof syntheticDebugImplementationPlanRecordSchema
 >;
+export type SyntheticDebugWriteProposal = z.infer<typeof syntheticDebugWriteProposalSchema>;
 export type TrustedOwnerVerification = z.infer<typeof trustedOwnerVerificationSchema>;
 export type TrustedSyntheticDebugBaselineRecord = z.infer<
   typeof trustedSyntheticDebugBaselineRecordSchema
+>;
+export type TrustedSyntheticDebugApprovalDecision = z.infer<
+  typeof trustedSyntheticDebugApprovalDecisionSchema
 >;
 export type TrustedSyntheticDebugReviewRecord = z.infer<
   typeof trustedSyntheticDebugReviewRecordSchema
@@ -268,6 +310,12 @@ export function parseTrustedSyntheticDebugBaselineRecord(
   input: unknown,
 ): TrustedSyntheticDebugBaselineRecord {
   return trustedSyntheticDebugBaselineRecordSchema.parse(input);
+}
+
+export function parseTrustedSyntheticDebugApprovalDecision(
+  input: unknown,
+): TrustedSyntheticDebugApprovalDecision {
+  return trustedSyntheticDebugApprovalDecisionSchema.parse(input);
 }
 
 export function parseTrustedSyntheticDebugReviewRecord(

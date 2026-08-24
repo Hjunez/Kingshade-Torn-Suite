@@ -511,18 +511,19 @@ describe('C3.4 evidence and root-cause implementation gates', () => {
     }
   });
 
-  it('exposes no Task F, Worker, approval, write, patch, or review operation', () => {
+  it('adds no Worker, execution, patch, verification, or review operation', () => {
     const controller = controllerFor();
     expect(Object.keys(controller).sort()).toEqual([
       'completeDiscovery',
       'createCase',
       'evaluateImplementationGate',
       'recordEvidenceAndRootCause',
+      'requestWriteApproval',
       'resolveTrustedBaseline',
+      'resolveWriteApproval',
       'startDiscovery',
     ]);
     for (const forbidden of [
-      'requestWriteApproval',
       'grantWriteApproval',
       'createPatchRequest',
       'createWriteProposal',
