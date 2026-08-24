@@ -105,7 +105,7 @@ async function currentBranch(root: string): Promise<string> {
 }
 
 async function resolveCommit(root: string, ref: string): Promise<string> {
-  if (ref.length === 0 || ref.includes('\0')) {
+  if (ref.length === 0 || ref.includes('\0') || ref.startsWith('-')) {
     throw new Error('Git ref is empty or invalid');
   }
   return requireSuccess(
@@ -115,14 +115,18 @@ async function resolveCommit(root: string, ref: string): Promise<string> {
 }
 
 async function porcelainStatus(root: string): Promise<string> {
-  return requireSuccess(
-    await git(root, ['status', '--porcelain=v1', '--untracked-files=all']),
-    'read Git status',
-  );
+  const result = await git(root, ['status', '--porcelain=v1', '--untracked-files=all']);
+  if (result.timedOut) {
+    throw new Error('read Git status timed out');
+  }
+  if (result.exitCode !== 0) {
+    requireSuccess(result, 'read Git status');
+  }
+  return result.stdout.trimEnd();
 }
 
 function changedPathsFromPorcelain(status: string): readonly string[] {
-  if (status.trim().length === 0) {
+  if (status.length === 0) {
     return [];
   }
   const paths = new Set<string>();
@@ -191,6 +195,8 @@ async function prepareControlledWorktree(
     }
     return actual;
   } catch (error: unknown) {
+    await git(repository, ['worktree', 'remove', '--force', workspace]);
+    await git(repository, ['branch', '-D', branch]);
     await rm(holder, { recursive: true, force: true });
     throw error;
   }
@@ -225,7 +231,7 @@ async function inspectFile(
 async function searchText(
   root: string,
   action: Extract<WorkerAction, { kind: 'search_text' }>,
-): Promise<{ output: string; exitCode: number }> {
+): Promise<{ output: string; matched: boolean }> {
   const paths = action.paths ?? ['.'];
   const result = await git(root, ['grep', '-n', '-F', '-e', action.query, '--', ...paths]);
   if (result.timedOut) {
@@ -234,7 +240,7 @@ async function searchText(
   if (result.exitCode !== 0 && result.exitCode !== 1) {
     requireSuccess(result, 'Git text search');
   }
-  return { output: outputForResult(result), exitCode: result.exitCode ?? 1 };
+  return { output: outputForResult(result), matched: result.exitCode === 0 };
 }
 
 async function gitHistory(
@@ -381,10 +387,8 @@ async function executeAction(
     case 'search_text': {
       const result = await searchText(root, action);
       return {
-        summary:
-          result.exitCode === 0 ? 'Search completed with matches.' : 'Search completed with no matches.',
+        summary: result.matched ? 'Search completed with matches.' : 'Search completed with no matches.',
         output: result.output,
-        exitCode: result.exitCode,
       };
     }
     case 'git_history': {
