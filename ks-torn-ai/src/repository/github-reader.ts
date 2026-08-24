@@ -51,13 +51,13 @@ interface GitHubCompareResponse {
   ahead_by: number;
   behind_by: number;
   total_commits: number;
-  files?: Array<{
+  files?: {
     filename: string;
     status: string;
     additions: number;
     deletions: number;
     changes: number;
-  }>;
+  }[];
 }
 
 function validateRepository(value: string): void {
@@ -106,7 +106,7 @@ export class GitHubRepositoryReader {
 
     const response = await this.#fetch(`${this.#apiBaseUrl}${path}`, { headers });
     if (!response.ok) {
-      throw new Error(`GitHub read failed with HTTP ${response.status}`);
+      throw new Error(`GitHub read failed with HTTP ${String(response.status)}`);
     }
     return (await response.json()) as T;
   }
