@@ -52,6 +52,7 @@ export interface WorkerJobResult {
   jobId: string;
   baselineRef: string;
   workspaceBranch?: string;
+  workspacePath?: string;
   headShaBefore: string;
   headShaAfter: string;
   changedPaths: readonly string[];
@@ -59,6 +60,10 @@ export interface WorkerJobResult {
 }
 
 const WRITE_ACTIONS = new Set<WorkerAction['kind']>(['apply_patch']);
+
+export function workerJobContainsWrite(job: WorkerJob): boolean {
+  return job.actions.some((action) => WRITE_ACTIONS.has(action.kind));
+}
 
 function actionPaths(action: WorkerAction): readonly string[] {
   switch (action.kind) {
@@ -74,7 +79,7 @@ function actionPaths(action: WorkerAction): readonly string[] {
 
 export function validateWorkerJob(job: WorkerJob): readonly string[] {
   const errors: string[] = [];
-  const containsWrite = job.actions.some((action) => WRITE_ACTIONS.has(action.kind));
+  const containsWrite = workerJobContainsWrite(job);
 
   if (job.mode === 'read_only' && containsWrite) {
     errors.push('read_only jobs cannot contain write actions');
