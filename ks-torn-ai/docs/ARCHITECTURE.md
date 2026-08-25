@@ -26,7 +26,7 @@ Phase C1 makes the Core capability topology explicit and enforces it through age
 - Torn Engineering receives read-only Repository Intelligence and, only when trusted application configuration supplies it, the existing Worker tool layer. Worker operations that can create a candidate are reachable only through Engineering and still require the existing private application-issued grant, SDK approval, exact baseline, isolated worktree, scoped paths, and verification gates. Engineering cannot self-approve a candidate.
 - Torn Review independently inspects repository evidence, assumptions, regression risk, Torn compliance, secret leakage, state-machine behavior, PDA/mobile/browser impact, and missing coverage. Review is read-only, receives no Worker tools, and does not grant implementation approval.
 
-No Core agent receives a generic shell or process-execution primitive. Persistent project memory and knowledge ingestion, plus the full Debug MVP orchestration state machine, remain pending after Phase C1. Phase C2 adds the bounded memory and curated-ingestion foundation; the Debug MVP orchestration state machine remains pending.
+No Core agent receives a generic shell or process-execution primitive. Phase C2 added bounded memory and curated ingestion, and Phase C3 now adds the synthetic Debug MVP orchestration described below.
 
 ## Phase C2 persistent project memory
 
@@ -44,6 +44,18 @@ The local CLI uses an explicit `OWNER_DEVELOPER` context as the minimum safe Pha
 Curated knowledge enters through a bounded, schema-validated manifest passed to the ingestion service. The parser does not recursively scan directories or fetch source URLs. The same access, validation, provenance, and persistence path applies to curated entries and direct memory writes. Content checks reject oversized, NUL/binary-like, likely-secret, and identifiable unrelated personal-data payloads on a best-effort basis without echoing rejected values.
 
 See `docs/PERSISTENT_MEMORY.md` for the complete C2 boundary.
+
+## Phase C3 synthetic Debug MVP
+
+Phase C3 composes the existing Repository Intelligence, Worker, and C2 memory services behind one trusted application facade. The deterministic state path is `INTAKE` -> `DISCOVERY` -> `EVIDENCE_READY` -> `BASELINE_READY` -> `ROOT_CAUSE_READY` -> `IMPLEMENTATION_READY` -> `AWAITING_WRITE_APPROVAL` -> `IMPLEMENTING` -> `VERIFYING` -> `REVIEWING` -> `TEST_READY`; policy, execution, or user decisions can instead end in protected terminal `BLOCKED`, `FAILED`, or `CANCELLED` states.
+
+The model-facing boundary accepts only bounded schema-validated analysis and exposes bounded next actions plus safe snapshots and errors. Trusted application code owns identities, authorization, owner verification, write approval, reviewer binding, transitions, and final disposition. There is no arbitrary target-state API. Approval grants and secrets never enter model inputs, safe snapshots, reports, or durable memory.
+
+Baseline selection requires explicit owner verification; current/newest commits, releases, and automated test or CI results are supporting evidence only. Conflicts block, failed candidates are not promoted, and executions are never patch-stacked. Engineering reaches a controlled Worker only through the application facade, bound to an exact baseline, isolated worktree, approved paths, allowlisted profiles, and cleanup/rollback rules. Verification reuses the cached trusted Worker result and validates required profiles, scope, candidate/rollback integrity, and finalization without re-executing it.
+
+Independent Review is read-only, has no Worker or approval authority, and returns bounded evidence through an application adapter that validates its candidate binding. The existing `canDeliverTestCandidate` gate is authoritative: only a fully passing bound review and all other gates permit `TEST_READY`; missing, failed, or conflicting evidence produces `BLOCKED`.
+
+Final outcomes use the Phase C2 memory service with authorization before retrieval, preserved history and conflicts, no latest-wins promotion, and fail-safe persistence. Synthetic automated outcomes remain non-owner-verified. C3.11 exercised the complete path using the real Stage B Worker in a temporary repository, including negative cases, exactly-once execution, source-worktree preservation, secret non-exposure, memory retrieval, and deterministic reporting. It did not change or validate a production Torn userscript.
 
 ## Access model
 
