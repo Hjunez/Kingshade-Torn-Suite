@@ -274,13 +274,36 @@ export class SyntheticDebugE2EHarness {
   async persist(snapshot: SyntheticDebugOrchestrationSnapshot) {
     this.memoryCalls += 1;
     const report = snapshot.finalDelivery;
+    const ownerVerified = snapshot.knownGoodBaseline?.ownerVerification.status === 'OWNER_VERIFIED';
     return await this.sink.persist({
       schemaVersion: '1.0',
       workflowKind: 'synthetic',
       caseId: snapshot.caseId,
       projectId: snapshot.projectId,
       finalDisposition: report?.status ?? 'BLOCKED',
+      baselineMode: snapshot.baselineMode,
       baselineSha: report?.baselineSha ?? snapshot.knownGoodBaseline?.commitSha ?? null,
+      referenceVersion: null,
+      referenceWasOwnerVerifiedKnownGood: ownerVerified,
+      ownerAcknowledgement: ownerVerified
+        ? {
+            status: 'OWNER_VERIFIED_KNOWN_GOOD',
+            evidenceReference: snapshot.knownGoodBaseline.ownerVerification.evidenceReference,
+          }
+        : null,
+      historicalSearchBoundary: null,
+      defectEvidenceProvenance: [],
+      knownPreExistingDefects: [],
+      knownUnrelatedFailures: [],
+      referenceSelectionReason: null,
+      rollbackReferenceSemantics: null,
+      writeApprovalProvenance:
+        snapshot.writeApprovalDecision === null
+          ? null
+          : {
+              decisionReferenceId: snapshot.writeApprovalDecision.decisionReferenceId,
+              decision: snapshot.writeApprovalDecision.decision,
+            },
       candidateSha: report?.candidateSha ?? snapshot.workerExecution?.candidateSha ?? null,
       verificationDecisionId:
         snapshot.verificationDecision === null ? null : `verification-${snapshot.caseId}`,

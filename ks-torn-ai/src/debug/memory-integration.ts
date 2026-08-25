@@ -19,6 +19,34 @@ const profileSchema = z.object({
   status: z.enum(['passed', 'failed', 'error', 'skipped']),
 });
 
+const defectEvidenceProvenanceSchema = z
+  .object({
+    evidenceId: safeId,
+    kind: z.enum([
+      'USER_PROVIDED',
+      'REPRODUCIBLE',
+      'REPOSITORY',
+      'AUTOMATED_TEST',
+      'SYNTHETIC_FIXTURE',
+    ]),
+    reference: z.string().trim().min(1).max(1_000),
+  })
+  .strict();
+
+const ownerAcknowledgementSchema = z
+  .object({
+    status: z.enum(['OWNER_VERIFIED_KNOWN_GOOD', 'OWNER_ACKNOWLEDGED_DEFECT_REFERENCE']),
+    evidenceReference: z.string().trim().min(1).max(1_000),
+  })
+  .strict();
+
+const writeApprovalProvenanceSchema = z
+  .object({
+    decisionReferenceId: safeId,
+    decision: z.enum(['APPROVED', 'DENIED', 'CANCELLED']),
+  })
+  .strict();
+
 export const syntheticDebugDurableOutcomeSchema = z
   .object({
     schemaVersion: z.literal('1.0'),
@@ -26,7 +54,18 @@ export const syntheticDebugDurableOutcomeSchema = z
     caseId: safeId,
     projectId: safeId,
     finalDisposition: z.enum(['TEST_READY', 'BLOCKED']),
+    baselineMode: z.enum(['KNOWN_GOOD', 'DEFECT_REFERENCE']),
     baselineSha: exactSha.nullable(),
+    referenceVersion: z.string().trim().min(1).max(500).nullable(),
+    referenceWasOwnerVerifiedKnownGood: z.boolean(),
+    ownerAcknowledgement: ownerAcknowledgementSchema.nullable(),
+    historicalSearchBoundary: z.string().trim().min(1).max(2_000).nullable(),
+    defectEvidenceProvenance: z.array(defectEvidenceProvenanceSchema).max(30),
+    knownPreExistingDefects: z.array(z.string().trim().min(1).max(500)).max(30),
+    knownUnrelatedFailures: z.array(z.string().trim().min(1).max(500)).max(30),
+    referenceSelectionReason: z.string().trim().min(1).max(2_000).nullable(),
+    rollbackReferenceSemantics: z.string().trim().min(1).max(2_000).nullable(),
+    writeApprovalProvenance: writeApprovalProvenanceSchema.nullable(),
     candidateSha: exactSha.nullable(),
     verificationDecisionId: safeId.nullable(),
     verificationStatus: z.enum(['PASSED', 'BLOCKED', 'FAILED']).nullable(),
@@ -35,7 +74,44 @@ export const syntheticDebugDurableOutcomeSchema = z
     reviewDisposition: z.enum(['pass', 'fail', 'blocked', 'not_run']),
     failureCodes: z.array(safeId).max(30),
   })
-  .strict();
+  .strict()
+  .superRefine((outcome, context) => {
+    if (outcome.baselineMode === 'KNOWN_GOOD') {
+      if (
+        (outcome.baselineSha === null
+          ? outcome.referenceWasOwnerVerifiedKnownGood || outcome.ownerAcknowledgement !== null
+          : !outcome.referenceWasOwnerVerifiedKnownGood ||
+            outcome.ownerAcknowledgement?.status !== 'OWNER_VERIFIED_KNOWN_GOOD') ||
+        outcome.historicalSearchBoundary !== null ||
+        outcome.defectEvidenceProvenance.length > 0 ||
+        outcome.knownPreExistingDefects.length > 0 ||
+        outcome.knownUnrelatedFailures.length > 0 ||
+        outcome.referenceSelectionReason !== null ||
+        outcome.rollbackReferenceSemantics !== null
+      ) {
+        context.addIssue({
+          code: 'custom',
+          message: 'KNOWN_GOOD memory cannot carry DEFECT_REFERENCE provenance',
+        });
+      }
+      return;
+    }
+    if (
+      outcome.baselineSha === null ||
+      outcome.referenceWasOwnerVerifiedKnownGood ||
+      outcome.ownerAcknowledgement?.status !== 'OWNER_ACKNOWLEDGED_DEFECT_REFERENCE' ||
+      outcome.historicalSearchBoundary === null ||
+      outcome.defectEvidenceProvenance.length === 0 ||
+      outcome.knownPreExistingDefects.length === 0 ||
+      outcome.referenceSelectionReason === null ||
+      outcome.rollbackReferenceSemantics === null
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'DEFECT_REFERENCE memory requires complete non-known-good provenance',
+      });
+    }
+  });
 
 export type SyntheticDebugDurableOutcome = z.infer<typeof syntheticDebugDurableOutcomeSchema>;
 
@@ -108,6 +184,32 @@ function draftsFor(
   boundProjectId: string,
 ): readonly TrustedMemoryDraft[] {
   const drafts: TrustedMemoryDraft[] = [];
+  if (outcome.baselineMode === 'DEFECT_REFERENCE') {
+    drafts.push(
+      draft(
+        'BASELINE_EVIDENCE',
+        outcome,
+        boundProjectId,
+        `Synthetic C4 DEFECT_REFERENCE ${outcome.caseId}`,
+        {
+          caseId: outcome.caseId,
+          baselineMode: outcome.baselineMode,
+          referenceSha: outcome.baselineSha,
+          referenceVersion: outcome.referenceVersion,
+          referenceWasOwnerVerifiedKnownGood: outcome.referenceWasOwnerVerifiedKnownGood,
+          ownerAcknowledgement: outcome.ownerAcknowledgement,
+          historicalSearchBoundary: outcome.historicalSearchBoundary,
+          defectEvidenceProvenance: outcome.defectEvidenceProvenance,
+          knownPreExistingDefects: outcome.knownPreExistingDefects,
+          knownUnrelatedFailures: outcome.knownUnrelatedFailures,
+          reasonSelected: outcome.referenceSelectionReason,
+          rollbackReferenceSemantics: outcome.rollbackReferenceSemantics,
+          separateWriteApprovalRequired: true,
+          writeApprovalProvenance: outcome.writeApprovalProvenance,
+        },
+      ),
+    );
+  }
   if (outcome.verificationStatus !== null) {
     drafts.push(
       draft('TEST_RESULT', outcome, boundProjectId, `Synthetic C3 verification ${outcome.caseId}`, {
@@ -160,8 +262,12 @@ function draftsFor(
     draft('PROJECT_DECISION', outcome, boundProjectId, `Synthetic C3 workflow ${outcome.caseId}`, {
       caseId: outcome.caseId,
       disposition: outcome.finalDisposition,
+      baselineMode: outcome.baselineMode,
       baselineSha: outcome.baselineSha,
       candidateSha: outcome.candidateSha,
+      writeApprovalProvenance: outcome.writeApprovalProvenance,
+      verificationStatus: outcome.verificationStatus,
+      reviewDisposition: outcome.reviewDisposition,
     }),
   );
   return drafts;

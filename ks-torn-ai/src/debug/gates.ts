@@ -1,8 +1,16 @@
 import { isPathAllowed } from '../worker/path-policy.js';
+import {
+  resolvedSyntheticDebugBaselineMode,
+  type SyntheticDebugBaselineMode,
+} from './baseline-mode.js';
 
 export interface ImplementationGateInput {
+  baselineMode?: SyntheticDebugBaselineMode;
   knownGoodBaselineSha: string | null;
   baselineOwnerVerified: boolean;
+  defectReferenceSha?: string | null;
+  defectReferenceOwnerAcknowledged?: boolean;
+  defectReferenceEntryRequirementsSatisfied?: boolean;
   evidenceItems: number;
   rootCauseRecorded: boolean;
   unresolvedBaselineBlocker?: string | null;
@@ -15,8 +23,11 @@ export interface DeliveryVerification {
 }
 
 export interface TestCandidateVerificationInput {
+  baselineMode?: SyntheticDebugBaselineMode;
   baselineSha: string | null;
   baselineOwnerVerified: boolean;
+  defectReferenceOwnerAcknowledged?: boolean;
+  defectReferenceEntryRequirementsSatisfied?: boolean;
   candidateSha: string | null;
   isolatedBranch: string | null;
   rollbackRef: string | null;
@@ -47,11 +58,30 @@ export function isFullCommitSha(value: string | null): value is string {
 
 export function canStartImplementation(input: ImplementationGateInput): GateDecision {
   const blockers: string[] = [];
-  if (!isFullCommitSha(input.knownGoodBaselineSha)) {
-    blockers.push('no exact 40-character known-good baseline');
-  }
-  if (!input.baselineOwnerVerified) {
-    blockers.push('baseline lacks explicit owner verification');
+  const baselineMode = resolvedSyntheticDebugBaselineMode(input.baselineMode);
+  if (baselineMode === 'KNOWN_GOOD') {
+    if (!isFullCommitSha(input.knownGoodBaselineSha)) {
+      blockers.push('no exact 40-character known-good baseline');
+    }
+    if (!input.baselineOwnerVerified) {
+      blockers.push('baseline lacks explicit owner verification');
+    }
+    if (input.defectReferenceSha !== undefined && input.defectReferenceSha !== null) {
+      blockers.push('KNOWN_GOOD mode cannot use a DEFECT_REFERENCE SHA');
+    }
+  } else {
+    if (!isFullCommitSha(input.defectReferenceSha ?? null)) {
+      blockers.push('no exact 40-character DEFECT_REFERENCE SHA');
+    }
+    if (input.defectReferenceOwnerAcknowledged !== true) {
+      blockers.push('DEFECT_REFERENCE lacks explicit trusted owner acknowledgement');
+    }
+    if (input.defectReferenceEntryRequirementsSatisfied !== true) {
+      blockers.push('DEFECT_REFERENCE entry contract is incomplete');
+    }
+    if (input.knownGoodBaselineSha !== null || input.baselineOwnerVerified) {
+      blockers.push('DEFECT_REFERENCE must not be represented as owner-verified known-good');
+    }
   }
   if (!Number.isSafeInteger(input.evidenceItems) || input.evidenceItems < 1) {
     blockers.push('no reproducible defect evidence collected');
@@ -92,11 +122,24 @@ function requiredProfileBlockers(input: TestCandidateVerificationInput): readonl
 
 export function canVerifyTestCandidate(input: TestCandidateVerificationInput): GateDecision {
   const blockers: string[] = [];
+  const baselineMode = resolvedSyntheticDebugBaselineMode(input.baselineMode);
   if (!isFullCommitSha(input.baselineSha)) {
     blockers.push('delivery baseline is not an exact commit SHA');
   }
-  if (!input.baselineOwnerVerified) {
-    blockers.push('delivery baseline lacks explicit owner verification');
+  if (baselineMode === 'KNOWN_GOOD') {
+    if (!input.baselineOwnerVerified) {
+      blockers.push('delivery baseline lacks explicit owner verification');
+    }
+  } else {
+    if (input.baselineOwnerVerified) {
+      blockers.push('DEFECT_REFERENCE must not be marked owner-verified known-good');
+    }
+    if (input.defectReferenceOwnerAcknowledged !== true) {
+      blockers.push('delivery DEFECT_REFERENCE lacks trusted owner acknowledgement');
+    }
+    if (input.defectReferenceEntryRequirementsSatisfied !== true) {
+      blockers.push('delivery DEFECT_REFERENCE entry contract is incomplete');
+    }
   }
   if (!isFullCommitSha(input.candidateSha)) {
     blockers.push('candidate commit SHA is missing or invalid');
@@ -118,7 +161,11 @@ export function canVerifyTestCandidate(input: TestCandidateVerificationInput): G
     input.baselineSha !== null &&
     input.rollbackSha.toLowerCase() !== input.baselineSha.toLowerCase()
   ) {
-    blockers.push('rollback commit does not match the verified baseline');
+    blockers.push(
+      baselineMode === 'KNOWN_GOOD'
+        ? 'rollback commit does not match the verified baseline'
+        : 'rollback commit does not match the approved DEFECT_REFERENCE',
+    );
   }
   if (!Number.isSafeInteger(input.problemEvidenceItems) || input.problemEvidenceItems < 1) {
     blockers.push('no reproducible problem evidence recorded');

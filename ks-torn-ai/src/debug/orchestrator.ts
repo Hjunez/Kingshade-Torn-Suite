@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import { selectKnownGoodBaseline, type BaselineEvidence } from '../repository/baseline.js';
 import { redactRepositorySecrets } from '../repository/validation.js';
+import type { SyntheticDebugBaselineMode } from './baseline-mode.js';
 import { canStartImplementation, isFullCommitSha, type GateDecision } from './gates.js';
 import { independentReviewForDelivery } from './independent-review.js';
 import {
@@ -16,7 +17,9 @@ import {
   parseModelSyntheticDebugRecord,
   parseTrustedSyntheticDebugApprovalDecision,
   parseTrustedSyntheticDebugBaselineRecord,
+  parseTrustedSyntheticDebugDefectReferenceRecord,
   syntheticDebugWriteProposalSchema,
+  trustedSyntheticDebugDefectReferenceRecordSchema,
   trustedSyntheticDebugApprovalDecisionSchema,
   type SyntheticDebugEvidenceReference,
   type SyntheticDebugImplementationPlanRecord,
@@ -25,6 +28,8 @@ import {
   type SyntheticDebugWriteProposal,
   type TrustedSyntheticDebugApprovalDecision,
   type TrustedSyntheticDebugBaselineRecord,
+  type TrustedSyntheticDebugDefectReferenceRecord,
+  type TrustedSyntheticDebugReferenceRecord,
   type TrustedSyntheticDebugReviewRecord,
 } from './records.js';
 import {
@@ -140,7 +145,10 @@ type DiscoveryObservation = DeepReadonly<
   }
 >;
 
-export type SyntheticDebugTaskDOperation = 'READ_ONLY_DISCOVERY' | 'RESOLVE_TRUSTED_BASELINE';
+export type SyntheticDebugTaskDOperation =
+  | 'READ_ONLY_DISCOVERY'
+  | 'RESOLVE_TRUSTED_BASELINE'
+  | 'RESOLVE_TRUSTED_DEFECT_REFERENCE';
 
 export interface SyntheticDebugTaskDRequest {
   readonly schemaVersion: '1.0';
@@ -156,6 +164,7 @@ export interface SyntheticDebugTaskDCapability {
   readonly readRepositoryDiscovery: (request: SyntheticDebugTaskDRequest) => unknown;
   readonly readAuthorizedMemoryEvidence: (request: SyntheticDebugTaskDRequest) => unknown;
   readonly readTrustedBaseline: (request: SyntheticDebugTaskDRequest) => unknown;
+  readonly readTrustedDefectReference?: (request: SyntheticDebugTaskDRequest) => unknown;
 }
 
 export type SyntheticDebugTaskFOperation = 'READ_TRUSTED_WRITE_APPROVAL_DECISION';
@@ -183,6 +192,7 @@ export interface SyntheticDebugTaskGRequest {
   readonly operation: SyntheticDebugTaskGOperation;
   readonly caseId: string;
   readonly projectId: string;
+  readonly baselineMode: SyntheticDebugBaselineMode;
   readonly approvalDecisionReferenceId: string;
   readonly proposal: DeepReadonly<SyntheticDebugWriteProposal>;
 }
@@ -242,7 +252,9 @@ export interface SyntheticDebugOrchestrationSnapshot {
   readonly machine: SyntheticDebugMachineSnapshot;
   readonly intake: DeepReadonly<SyntheticDebugIntakeRecord>;
   readonly discovery: SyntheticDebugDiscoverySummary | null;
+  readonly baselineMode: SyntheticDebugBaselineMode;
   readonly knownGoodBaseline: DeepReadonly<TrustedSyntheticDebugBaselineRecord> | null;
+  readonly defectReference: DeepReadonly<TrustedSyntheticDebugDefectReferenceRecord> | null;
   readonly reproducibleDefectEvidence: readonly DeepReadonly<SyntheticDebugEvidenceReference>[];
   readonly rootCause: DeepReadonly<SyntheticDebugRootCauseRecord> | null;
   readonly implementationGate: DeepReadonly<GateDecision> | null;
@@ -260,6 +272,7 @@ export type SyntheticDebugOrchestrationOperation =
   | 'START_DISCOVERY'
   | 'COMPLETE_DISCOVERY'
   | 'RESOLVE_TRUSTED_BASELINE'
+  | 'AUTHORIZE_DEFECT_REFERENCE'
   | 'RECORD_EVIDENCE_AND_ROOT_CAUSE'
   | 'EVALUATE_IMPLEMENTATION_GATE'
   | 'REQUEST_WRITE_APPROVAL'
@@ -276,6 +289,9 @@ export type SyntheticDebugOrchestrationErrorCode =
   | 'ROOT_CAUSE_SCOPE_MISMATCH'
   | 'IMPLEMENTATION_PLAN_SCOPE_MISMATCH'
   | 'IMPLEMENTATION_PLAN_BASELINE_MISMATCH'
+  | 'MALFORMED_TRUSTED_DEFECT_REFERENCE'
+  | 'TRUSTED_DEFECT_REFERENCE_SCOPE_MISMATCH'
+  | 'DEFECT_REFERENCE_ENTRY_REQUIREMENTS_NOT_MET'
   | 'IMPLEMENTATION_GATE_INVARIANT'
   | 'SENSITIVE_WRITE_PROPOSAL'
   | 'WRITE_PROPOSAL_ALREADY_EXISTS'
@@ -330,6 +346,9 @@ export interface SyntheticDebugDiscoveryController {
     snapshot: SyntheticDebugOrchestrationSnapshot,
   ): Promise<SyntheticDebugOrchestrationResult>;
   resolveTrustedBaseline(
+    snapshot: SyntheticDebugOrchestrationSnapshot,
+  ): Promise<SyntheticDebugOrchestrationResult>;
+  authorizeDefectReference(
     snapshot: SyntheticDebugOrchestrationSnapshot,
   ): Promise<SyntheticDebugOrchestrationResult>;
   recordEvidenceAndRootCause(
@@ -419,7 +438,9 @@ type SyntheticDebugSnapshotPatch = Partial<
   Pick<
     SyntheticDebugOrchestrationSnapshot,
     | 'discovery'
+    | 'baselineMode'
     | 'knownGoodBaseline'
+    | 'defectReference'
     | 'reproducibleDefectEvidence'
     | 'rootCause'
     | 'implementationGate'
@@ -498,6 +519,53 @@ function request(
 
 type SyntheticDebugWriteProposalContent = Omit<SyntheticDebugWriteProposal, 'proposalId'>;
 
+function selectedReferenceRecord(
+  snapshot: SyntheticDebugOrchestrationSnapshot,
+): DeepReadonly<TrustedSyntheticDebugReferenceRecord> | null {
+  return snapshot.baselineMode === 'KNOWN_GOOD'
+    ? snapshot.knownGoodBaseline
+    : snapshot.defectReference;
+}
+
+function selectedReferenceSha(snapshot: SyntheticDebugOrchestrationSnapshot): string | null {
+  return selectedReferenceRecord(snapshot)?.commitSha.toLowerCase() ?? null;
+}
+
+function defectReferenceEntryRequirementsSatisfied(
+  snapshot: SyntheticDebugOrchestrationSnapshot,
+): boolean {
+  const reference = snapshot.defectReference;
+  if (
+    snapshot.baselineMode !== 'DEFECT_REFERENCE' ||
+    reference === null ||
+    !trustedSyntheticDebugDefectReferenceRecordSchema.safeParse(reference).success ||
+    snapshot.knownGoodBaseline !== null ||
+    snapshot.discovery?.knownGoodResolution.status !== 'MISSING' ||
+    reference.caseId !== snapshot.caseId ||
+    reference.projectId !== snapshot.projectId ||
+    reference.historicalSearchBoundary.trim().length === 0 ||
+    reference.reasonSelected.trim().length === 0 ||
+    reference.knownPreExistingDefects.length === 0 ||
+    reference.rollbackReferenceSemantics.trim().length === 0
+  ) {
+    return false;
+  }
+  const evidence = new Map(
+    snapshot.intake.evidenceReferences.map((item) => [item.evidenceId, item] as const),
+  );
+  const recordedEvidenceIds = new Set(
+    snapshot.reproducibleDefectEvidence.map(({ evidenceId }) => evidenceId),
+  );
+  return reference.defectEvidenceReferences.every((evidenceId) => {
+    const item = evidence.get(evidenceId);
+    return (
+      item !== undefined &&
+      REPRODUCIBLE_EVIDENCE_KINDS.has(item.kind) &&
+      recordedEvidenceIds.has(evidenceId)
+    );
+  });
+}
+
 function writeProposalContent(
   plan: SyntheticDebugImplementationPlanRecord,
   baselineSha: string,
@@ -529,7 +597,9 @@ function writeProposalIdentifier(
     projectId: snapshot.projectId,
     intake: snapshot.intake,
     discovery: snapshot.discovery,
+    baselineMode: snapshot.baselineMode,
     knownGoodBaseline: snapshot.knownGoodBaseline,
+    defectReference: snapshot.defectReference,
     reproducibleDefectEvidence: snapshot.reproducibleDefectEvidence,
     rootCause: snapshot.rootCause,
     implementationGate: snapshot.implementationGate,
@@ -542,7 +612,7 @@ function buildWriteProposal(
   snapshot: SyntheticDebugOrchestrationSnapshot,
   plan: SyntheticDebugImplementationPlanRecord,
 ): DeepReadonly<SyntheticDebugWriteProposal> {
-  const baselineSha = snapshot.knownGoodBaseline?.commitSha ?? '';
+  const baselineSha = selectedReferenceSha(snapshot) ?? '';
   const content = writeProposalContent(plan, baselineSha);
   return deepFreeze({
     ...content,
@@ -555,12 +625,13 @@ function sealedWriteProposalMatchesSnapshot(
   proposal: DeepReadonly<SyntheticDebugWriteProposal>,
 ): boolean {
   const { proposalId, ...content } = proposal;
+  const referenceSha = selectedReferenceSha(snapshot);
   return (
-    snapshot.knownGoodBaseline !== null &&
+    referenceSha !== null &&
     snapshot.implementationGate?.allowed === true &&
     proposal.caseId === snapshot.caseId &&
     proposal.projectId === snapshot.projectId &&
-    proposal.baselineSha === snapshot.knownGoodBaseline.commitSha.toLowerCase() &&
+    proposal.baselineSha === referenceSha &&
     proposal.rollbackSha === proposal.baselineSha &&
     proposalId === writeProposalIdentifier(snapshot, content)
   );
@@ -627,6 +698,7 @@ function taskGRequest(
     operation: 'EXECUTE_APPROVED_SYNTHETIC_IMPLEMENTATION',
     caseId: snapshot.caseId,
     projectId: snapshot.projectId,
+    baselineMode: snapshot.baselineMode,
     approvalDecisionReferenceId: decision.decisionReferenceId,
     proposal,
   });
@@ -837,6 +909,57 @@ function baselineBlockers(
   return blockers;
 }
 
+function defectReferenceBlockers(
+  snapshot: SyntheticDebugOrchestrationSnapshot,
+  reference: TrustedSyntheticDebugDefectReferenceRecord | null,
+): SyntheticDebugTransitionReason[] {
+  const blockers: SyntheticDebugTransitionReason[] = [];
+  const resolution = snapshot.discovery?.knownGoodResolution;
+  if (resolution === undefined) {
+    blockers.push({
+      code: 'DISCOVERY_INVARIANT_MISSING',
+      summary: 'A discovery summary is required before DEFECT_REFERENCE authorization.',
+    });
+  } else if (resolution.status === 'RESOLVED') {
+    blockers.push({
+      code: 'OWNER_VERIFIED_BASELINE_AVAILABLE',
+      summary: 'DEFECT_REFERENCE is prohibited while an owner-verified known-good exists.',
+    });
+  } else if (resolution.status === 'CONFLICT') {
+    blockers.push({
+      code: 'CONTRADICTORY_OWNER_VERIFIED_BASELINES',
+      summary: 'Conflicting owner-verified baseline evidence must be resolved normally.',
+    });
+  }
+  if (reference === null) {
+    blockers.push({
+      code: 'TRUSTED_DEFECT_REFERENCE_MISSING',
+      summary: 'The trusted application did not supply a DEFECT_REFERENCE record.',
+    });
+    return blockers;
+  }
+  if (reference.caseId !== snapshot.caseId || reference.projectId !== snapshot.projectId) {
+    blockers.push({
+      code: 'TRUSTED_DEFECT_REFERENCE_SCOPE_MISMATCH',
+      summary: 'The DEFECT_REFERENCE does not match the active case and project.',
+    });
+  }
+  const evidenceById = new Map(
+    snapshot.intake.evidenceReferences.map((item) => [item.evidenceId, item] as const),
+  );
+  const invalidEvidence = reference.defectEvidenceReferences.filter((evidenceId) => {
+    const evidence = evidenceById.get(evidenceId);
+    return evidence === undefined || !REPRODUCIBLE_EVIDENCE_KINDS.has(evidence.kind);
+  });
+  if (invalidEvidence.length > 0) {
+    blockers.push({
+      code: 'DEFECT_REFERENCE_REPRODUCIBLE_EVIDENCE_MISSING',
+      summary: `DEFECT_REFERENCE evidence is absent or not reproducible: ${invalidEvidence.join(', ')}.`,
+    });
+  }
+  return blockers;
+}
+
 function reproducibleEvidenceFor(
   intake: DeepReadonly<SyntheticDebugIntakeRecord>,
   evidenceIds: readonly string[],
@@ -871,10 +994,17 @@ function implementationDecision(
   rootCause: DeepReadonly<SyntheticDebugRootCauseRecord> | null,
 ): GateDecision {
   const baseline = snapshot.knownGoodBaseline;
-  const baselineBlocker = unresolvedBaselineBlocker(baseline);
+  const reference = snapshot.defectReference;
+  const baselineBlocker =
+    snapshot.baselineMode === 'KNOWN_GOOD' ? unresolvedBaselineBlocker(baseline) : null;
   return canStartImplementation({
+    baselineMode: snapshot.baselineMode,
     knownGoodBaselineSha: baseline?.commitSha ?? null,
     baselineOwnerVerified: baseline?.ownerVerification.status === 'OWNER_VERIFIED',
+    defectReferenceSha: reference?.commitSha ?? null,
+    defectReferenceOwnerAcknowledged:
+      reference?.ownerAcknowledgement.status === 'OWNER_ACKNOWLEDGED_DEFECT_REFERENCE',
+    defectReferenceEntryRequirementsSatisfied: defectReferenceEntryRequirementsSatisfied(snapshot),
     evidenceItems: evidence.length,
     rootCauseRecorded: rootCause !== null && rootCause.explanation.trim().length > 0,
     ...(baselineBlocker === null ? {} : { unresolvedBaselineBlocker: baselineBlocker }),
@@ -1054,8 +1184,14 @@ export function createSyntheticDebugDiscoveryController(
       verifySyntheticDebugWorkerExecution({
         caseId: snapshot.caseId,
         projectId: snapshot.projectId,
+        baselineMode: snapshot.baselineMode,
         baselineOwnerVerified:
           snapshot.knownGoodBaseline?.ownerVerification.status === 'OWNER_VERIFIED',
+        defectReferenceOwnerAcknowledged:
+          snapshot.defectReference?.ownerAcknowledgement.status ===
+          'OWNER_ACKNOWLEDGED_DEFECT_REFERENCE',
+        defectReferenceEntryRequirementsSatisfied:
+          defectReferenceEntryRequirementsSatisfied(snapshot),
         problemEvidenceItems: snapshot.reproducibleDefectEvidence.length,
         rootCauseRecorded:
           snapshot.rootCause !== null && snapshot.rootCause.explanation.trim().length > 0,
@@ -1147,8 +1283,9 @@ export function createSyntheticDebugDiscoveryController(
   function buildTrustedReviewPackage(
     snapshot: SyntheticDebugOrchestrationSnapshot,
   ): DeepReadonly<SyntheticDebugIndependentReviewPackage> | null {
+    const reference = selectedReferenceRecord(snapshot);
     if (
-      snapshot.knownGoodBaseline === null ||
+      reference === null ||
       snapshot.rootCause === null ||
       snapshot.writeProposal === null ||
       snapshot.verificationDecision === null
@@ -1160,7 +1297,8 @@ export function createSyntheticDebugDiscoveryController(
         caseId: snapshot.caseId,
         projectId: snapshot.projectId,
         intake: snapshot.intake,
-        knownGoodBaseline: snapshot.knownGoodBaseline,
+        baselineMode: snapshot.baselineMode,
+        reference,
         problemEvidence: snapshot.reproducibleDefectEvidence,
         rootCause: snapshot.rootCause,
         proposal: snapshot.writeProposal,
@@ -1332,11 +1470,12 @@ export function createSyntheticDebugDiscoveryController(
   function buildFinalDeliveryReport(
     snapshot: SyntheticDebugOrchestrationSnapshot,
   ): DeepReadonly<DebugDeliveryReport> | null {
-    const baseline = snapshot.knownGoodBaseline;
+    const reference = selectedReferenceRecord(snapshot);
+    const defectReference = snapshot.defectReference;
     const proposal = snapshot.writeProposal;
     const execution = snapshot.workerExecution;
     const verification = snapshot.verificationDecision;
-    if (baseline === null || proposal === null || execution === null || verification === null) {
+    if (reference === null || proposal === null || execution === null || verification === null) {
       return null;
     }
     const verificationRecords = verification.profileResults.map((profile) => {
@@ -1360,8 +1499,27 @@ export function createSyntheticDebugDiscoveryController(
       caseId: snapshot.caseId,
       workerJobId: verification.workerJobId ?? '',
       projectId: snapshot.projectId,
+      baselineMode: snapshot.baselineMode,
       baselineSha: verification.baselineSha,
-      baselineOwnerVerified: baseline.ownerVerification.status === 'OWNER_VERIFIED',
+      baselineOwnerVerified:
+        snapshot.knownGoodBaseline?.ownerVerification.status === 'OWNER_VERIFIED',
+      referenceWasOwnerVerifiedKnownGood: snapshot.baselineMode === 'KNOWN_GOOD',
+      defectReference:
+        defectReference === null
+          ? null
+          : {
+              referenceSha: defectReference.commitSha,
+              referenceVersion: defectReference.referenceVersion,
+              historicalSearchBoundary: defectReference.historicalSearchBoundary,
+              defectEvidenceReferences: defectReference.defectEvidenceReferences,
+              knownPreExistingDefects: defectReference.knownPreExistingDefects,
+              knownUnrelatedFailures: defectReference.knownUnrelatedFailures,
+              reasonSelected: defectReference.reasonSelected,
+              rollbackReferenceSemantics: defectReference.rollbackReferenceSemantics,
+              ownerAcknowledgementReference: defectReference.ownerAcknowledgement.evidenceReference,
+              notOwnerVerifiedKnownGood: true,
+              separateWriteApprovalRequired: true,
+            },
       candidateSha: verification.candidateSha,
       isolatedBranch: verification.isolatedBranch,
       workspacePath: execution.workspaceReference,
@@ -1535,7 +1693,9 @@ export function createSyntheticDebugDiscoveryController(
           machine: createSyntheticDebugMachine(),
           intake,
           discovery: null,
+          baselineMode: 'KNOWN_GOOD' as const,
           knownGoodBaseline: null,
+          defectReference: null,
           reproducibleDefectEvidence: [],
           rootCause: null,
           implementationGate: null,
@@ -1740,7 +1900,108 @@ export function createSyntheticDebugDiscoveryController(
           },
         ],
         'ADVANCED',
-        { knownGoodBaseline: deepFreeze(baseline) },
+        {
+          baselineMode: 'KNOWN_GOOD',
+          knownGoodBaseline: deepFreeze(baseline),
+          defectReference: null,
+        },
+      );
+    },
+
+    async authorizeDefectReference(snapshot: SyntheticDebugOrchestrationSnapshot) {
+      const operation = 'AUTHORIZE_DEFECT_REFERENCE';
+      const invalid = requireState(snapshot, operation, 'EVIDENCE_READY');
+      if (invalid !== null) return invalid;
+      if (capability?.readTrustedDefectReference === undefined) {
+        return reject(
+          snapshot,
+          operation,
+          'DEFECT_REFERENCE_ENTRY_REQUIREMENTS_NOT_MET',
+          'A trusted application DEFECT_REFERENCE capability is required.',
+        );
+      }
+
+      const operationRequest = request(snapshot, 'RESOLVE_TRUSTED_DEFECT_REFERENCE');
+      const authorization = await authorize(capability, operationRequest);
+      if (authorization === 'ERROR') {
+        return fail(
+          snapshot,
+          operation,
+          'DEFECT_REFERENCE_AUTHORIZATION_ERROR',
+          'The injected trusted capability returned an invalid authorization result.',
+        );
+      }
+      if (authorization === 'DENIED') {
+        return reject(
+          snapshot,
+          operation,
+          'DEFECT_REFERENCE_ENTRY_REQUIREMENTS_NOT_MET',
+          'Trusted DEFECT_REFERENCE authorization was denied.',
+        );
+      }
+
+      let referenceInput: unknown;
+      try {
+        referenceInput = await capability.readTrustedDefectReference(operationRequest);
+      } catch {
+        return fail(
+          snapshot,
+          operation,
+          'TRUSTED_DEFECT_REFERENCE_DEPENDENCY_ERROR',
+          'The injected trusted DEFECT_REFERENCE capability failed.',
+        );
+      }
+
+      let reference: TrustedSyntheticDebugDefectReferenceRecord;
+      try {
+        reference = parseTrustedSyntheticDebugDefectReferenceRecord(referenceInput);
+      } catch {
+        return reject(
+          snapshot,
+          operation,
+          'MALFORMED_TRUSTED_DEFECT_REFERENCE',
+          'The trusted application returned an incomplete DEFECT_REFERENCE entry contract.',
+        );
+      }
+      if (reference.caseId !== snapshot.caseId || reference.projectId !== snapshot.projectId) {
+        return reject(
+          snapshot,
+          operation,
+          'TRUSTED_DEFECT_REFERENCE_SCOPE_MISMATCH',
+          'The trusted DEFECT_REFERENCE did not match the active case and project.',
+        );
+      }
+      const blockers = defectReferenceBlockers(snapshot, reference);
+      if (blockers.length > 0) {
+        return reject(
+          snapshot,
+          operation,
+          'DEFECT_REFERENCE_ENTRY_REQUIREMENTS_NOT_MET',
+          'The trusted DEFECT_REFERENCE did not satisfy the exception entry contract.',
+        );
+      }
+
+      const rootCauseAlreadyRecorded = snapshot.rootCause !== null;
+      return apply(
+        snapshot,
+        operation,
+        rootCauseAlreadyRecorded
+          ? 'MARK_DEFECT_REFERENCE_AND_ROOT_CAUSE_READY'
+          : 'MARK_DEFECT_REFERENCE_READY',
+        [
+          {
+            code: 'TRUSTED_DEFECT_REFERENCE_AUTHORIZED',
+            summary:
+              'The application authorized an explicit DEFECT_REFERENCE that is not owner-verified known-good.',
+          },
+        ],
+        'ADVANCED',
+        {
+          baselineMode: 'DEFECT_REFERENCE',
+          knownGoodBaseline: null,
+          defectReference: deepFreeze(reference),
+          implementationGate: null,
+        },
       );
     },
 
@@ -1749,8 +2010,16 @@ export function createSyntheticDebugDiscoveryController(
       rootCauseInput: unknown,
     ) {
       const operation = 'RECORD_EVIDENCE_AND_ROOT_CAUSE';
-      const invalid = requireState(snapshot, operation, 'BASELINE_READY');
-      if (invalid !== null) return invalid;
+      const readOnlyBeforeReference =
+        snapshot.machine.state === 'EVIDENCE_READY' &&
+        snapshot.baselineMode === 'KNOWN_GOOD' &&
+        snapshot.knownGoodBaseline === null &&
+        snapshot.defectReference === null &&
+        snapshot.discovery?.knownGoodResolution.status === 'MISSING';
+      if (!readOnlyBeforeReference) {
+        const invalid = requireState(snapshot, operation, 'BASELINE_READY');
+        if (invalid !== null) return invalid;
+      }
 
       if (
         snapshot.intake.caseId !== snapshot.caseId ||
@@ -1765,6 +2034,14 @@ export function createSyntheticDebugDiscoveryController(
       }
 
       if (rootCauseInput === null || rootCauseInput === undefined) {
+        if (readOnlyBeforeReference) {
+          return reject(
+            snapshot,
+            operation,
+            'MALFORMED_MODEL_RECORD',
+            'Read-only root-cause analysis requires a strict evidence-linked record.',
+          );
+        }
         const evidence = reproducibleEvidenceFor(
           snapshot.intake,
           snapshot.intake.evidenceReferences.map(({ evidenceId }) => evidenceId),
@@ -1828,11 +2105,15 @@ export function createSyntheticDebugDiscoveryController(
       return apply(
         snapshot,
         operation,
-        'MARK_ROOT_CAUSE_READY',
+        readOnlyBeforeReference ? 'RECORD_READ_ONLY_ROOT_CAUSE' : 'MARK_ROOT_CAUSE_READY',
         [
           {
-            code: 'EVIDENCE_AND_ROOT_CAUSE_RECORDED',
-            summary: `Recorded the root cause with ${String(evidence.length)} reproducible defect-evidence item(s).`,
+            code: readOnlyBeforeReference
+              ? 'READ_ONLY_ROOT_CAUSE_RECORDED'
+              : 'EVIDENCE_AND_ROOT_CAUSE_RECORDED',
+            summary: readOnlyBeforeReference
+              ? `Recorded read-only root-cause evidence with ${String(evidence.length)} reproducible item(s); mutation remains blocked pending a trusted reference.`
+              : `Recorded the root cause with ${String(evidence.length)} reproducible defect-evidence item(s).`,
           },
         ],
         'ADVANCED',
@@ -1920,8 +2201,9 @@ export function createSyntheticDebugDiscoveryController(
         snapshot.reproducibleDefectEvidence,
         snapshot.rootCause,
       );
+      const referenceSha = selectedReferenceSha(snapshot);
       if (
-        snapshot.knownGoodBaseline === null ||
+        referenceSha === null ||
         snapshot.implementationGate?.allowed !== true ||
         !currentGate.allowed
       ) {
@@ -1929,15 +2211,17 @@ export function createSyntheticDebugDiscoveryController(
           snapshot,
           operation,
           'IMPLEMENTATION_GATE_INVARIANT',
-          'A current passing implementation gate and trusted baseline are required.',
+          'A current passing implementation gate and trusted baseline/reference are required.',
         );
       }
-      if (parsed.rollbackSha.toLowerCase() !== snapshot.knownGoodBaseline.commitSha.toLowerCase()) {
+      if (parsed.rollbackSha.toLowerCase() !== referenceSha) {
         return reject(
           snapshot,
           operation,
           'IMPLEMENTATION_PLAN_BASELINE_MISMATCH',
-          'The implementation plan rollback SHA does not match the verified baseline.',
+          snapshot.baselineMode === 'KNOWN_GOOD'
+            ? 'The implementation plan rollback SHA does not match the verified baseline.'
+            : 'The implementation plan rollback SHA does not match the approved DEFECT_REFERENCE.',
         );
       }
       if (containsSensitiveWriteProposalContent(parsed)) {

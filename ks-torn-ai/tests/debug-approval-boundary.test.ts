@@ -831,6 +831,7 @@ describe('C3.5 trusted write approval boundary', () => {
     expect(calls).not.toContain('task-f');
 
     expect(Object.keys(controller).sort()).toEqual([
+      'authorizeDefectReference',
       'completeDiscovery',
       'createCase',
       'evaluateImplementationGate',

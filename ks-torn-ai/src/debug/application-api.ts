@@ -22,6 +22,7 @@ export type SyntheticDebugApplicationNextAction =
   | 'COLLECT_EVIDENCE'
   | 'RESOLVE_BASELINE'
   | 'RECORD_ROOT_CAUSE'
+  | 'AWAIT_DEFECT_REFERENCE_AUTHORIZATION'
   | 'EVALUATE_IMPLEMENTATION_GATE'
   | 'REQUEST_WRITE_APPROVAL'
   | 'AWAIT_APPROVAL_DECISION'
@@ -45,7 +46,9 @@ export interface SyntheticDebugSafeSnapshot {
   readonly state: SyntheticDebugState;
   readonly history: SyntheticDebugOrchestrationSnapshot['machine']['history'];
   readonly blockers: readonly { readonly code: string; readonly summary: string }[];
+  readonly baselineMode: SyntheticDebugOrchestrationSnapshot['baselineMode'];
   readonly baselineSha: string | null;
+  readonly referenceWasOwnerVerifiedKnownGood: boolean;
   readonly candidateSha: string | null;
   readonly rollbackRef: string | null;
   readonly verificationStatus: string | null;
@@ -115,7 +118,12 @@ function nextAction(snapshot: SyntheticDebugOrchestrationSnapshot, persisted: bo
       action = 'COLLECT_EVIDENCE';
       break;
     case 'EVIDENCE_READY':
-      action = 'RESOLVE_BASELINE';
+      action =
+        snapshot.discovery?.knownGoodResolution.status === 'MISSING'
+          ? snapshot.rootCause === null
+            ? 'RECORD_ROOT_CAUSE'
+            : 'AWAIT_DEFECT_REFERENCE_AUTHORIZATION'
+          : 'RESOLVE_BASELINE';
       break;
     case 'BASELINE_READY':
       action = 'RECORD_ROOT_CAUSE';
@@ -165,7 +173,13 @@ function safeSnapshot(
     blockers: isSyntheticDebugTerminalState(snapshot.machine.state)
       ? (snapshot.machine.history.at(-1)?.reasons.map((reason) => ({ ...reason })) ?? [])
       : [],
-    baselineSha: snapshot.knownGoodBaseline?.commitSha ?? null,
+    baselineMode: snapshot.baselineMode,
+    baselineSha:
+      snapshot.baselineMode === 'KNOWN_GOOD'
+        ? (snapshot.knownGoodBaseline?.commitSha ?? null)
+        : (snapshot.defectReference?.commitSha ?? null),
+    referenceWasOwnerVerifiedKnownGood:
+      snapshot.knownGoodBaseline?.ownerVerification.status === 'OWNER_VERIFIED',
     candidateSha: snapshot.workerExecution?.candidateSha ?? null,
     rollbackRef: proposal?.rollbackRef ?? null,
     verificationStatus: snapshot.verificationDecision?.status ?? null,
@@ -207,13 +221,52 @@ function mappedError(error: SyntheticDebugOrchestrationError): SyntheticDebugApp
 
 function durableOutcome(snapshot: SyntheticDebugOrchestrationSnapshot) {
   const report = snapshot.finalDelivery;
+  const knownGood = snapshot.knownGoodBaseline;
+  const defectReference = snapshot.defectReference;
+  const baselineSha =
+    report?.baselineSha ??
+    (snapshot.baselineMode === 'KNOWN_GOOD' ? knownGood?.commitSha : defectReference?.commitSha) ??
+    null;
+  const defectEvidenceIds = new Set(defectReference?.defectEvidenceReferences ?? []);
   return {
     schemaVersion: '1.0',
     workflowKind: 'synthetic',
     caseId: snapshot.caseId,
     projectId: snapshot.projectId,
     finalDisposition: report?.status ?? 'BLOCKED',
-    baselineSha: report?.baselineSha ?? snapshot.knownGoodBaseline?.commitSha ?? null,
+    baselineMode: snapshot.baselineMode,
+    baselineSha,
+    referenceVersion: defectReference?.referenceVersion ?? null,
+    referenceWasOwnerVerifiedKnownGood: knownGood?.ownerVerification.status === 'OWNER_VERIFIED',
+    ownerAcknowledgement:
+      snapshot.baselineMode === 'KNOWN_GOOD'
+        ? knownGood?.ownerVerification.status === 'OWNER_VERIFIED'
+          ? {
+              status: 'OWNER_VERIFIED_KNOWN_GOOD' as const,
+              evidenceReference: knownGood.ownerVerification.evidenceReference,
+            }
+          : null
+        : defectReference === null
+          ? null
+          : {
+              status: 'OWNER_ACKNOWLEDGED_DEFECT_REFERENCE' as const,
+              evidenceReference: defectReference.ownerAcknowledgement.evidenceReference,
+            },
+    historicalSearchBoundary: defectReference?.historicalSearchBoundary ?? null,
+    defectEvidenceProvenance: snapshot.intake.evidenceReferences
+      .filter(({ evidenceId }) => defectEvidenceIds.has(evidenceId))
+      .map(({ evidenceId, kind, reference }) => ({ evidenceId, kind, reference })),
+    knownPreExistingDefects: defectReference?.knownPreExistingDefects ?? [],
+    knownUnrelatedFailures: defectReference?.knownUnrelatedFailures ?? [],
+    referenceSelectionReason: defectReference?.reasonSelected ?? null,
+    rollbackReferenceSemantics: defectReference?.rollbackReferenceSemantics ?? null,
+    writeApprovalProvenance:
+      snapshot.writeApprovalDecision === null
+        ? null
+        : {
+            decisionReferenceId: snapshot.writeApprovalDecision.decisionReferenceId,
+            decision: snapshot.writeApprovalDecision.decision,
+          },
     candidateSha: report?.candidateSha ?? snapshot.workerExecution?.candidateSha ?? null,
     verificationDecisionId:
       snapshot.verificationDecision === null ? null : `verification-${snapshot.caseId}`,
@@ -265,6 +318,11 @@ export class SyntheticDebugApplicationApi {
 
   resolveTrustedBaseline(handle: SyntheticDebugCaseHandle) {
     return this.#run(handle, (snapshot) => this.#orchestrator.resolveTrustedBaseline(snapshot));
+  }
+
+  /** Trusted application entry point. DEFECT_REFERENCE data is read from an injected capability. */
+  authorizeDefectReference(handle: SyntheticDebugCaseHandle) {
+    return this.#run(handle, (snapshot) => this.#orchestrator.authorizeDefectReference(snapshot));
   }
 
   recordEvidenceAndRootCause(handle: SyntheticDebugCaseHandle, modelSafeRootCause: unknown) {

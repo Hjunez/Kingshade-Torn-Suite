@@ -514,6 +514,7 @@ describe('C3.4 evidence and root-cause implementation gates', () => {
   it('keeps Worker internals, patch authority, model verification decisions, and review unavailable', () => {
     const controller = controllerFor();
     expect(Object.keys(controller).sort()).toEqual([
+      'authorizeDefectReference',
       'completeDiscovery',
       'createCase',
       'evaluateImplementationGate',

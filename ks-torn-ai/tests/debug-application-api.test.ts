@@ -144,6 +144,7 @@ describe('C3.12 trusted application debug API', () => {
   it('has no public arbitrary transition, command, repo-root, test, approval, review, or TEST_READY control', () => {
     const methods = Object.getOwnPropertyNames(SyntheticDebugApplicationApi.prototype).sort();
     expect(methods).toEqual([
+      'authorizeDefectReference',
       'completeDiscovery',
       'constructor',
       'createCase',

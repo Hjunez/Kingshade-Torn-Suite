@@ -1,16 +1,21 @@
 import type { WorkerJobResult } from '../worker/contracts.js';
 import {
   buildDebugDeliveryReport,
+  type DefectReferenceReportContext,
   type DebugDeliveryReport,
   type IndependentReviewRecord,
   type ProblemEvidenceRecord,
   type VerificationRecord,
 } from './report.js';
+import type { SyntheticDebugBaselineMode } from './baseline-mode.js';
 
 export interface DebugWorkflowReportInput {
   workflowKind: 'production' | 'synthetic';
   workerResult: WorkerJobResult;
+  baselineMode?: SyntheticDebugBaselineMode;
   baselineOwnerVerified: boolean;
+  referenceWasOwnerVerifiedKnownGood?: boolean;
+  defectReference?: DefectReferenceReportContext | null;
   problemEvidence: readonly ProblemEvidenceRecord[];
   rootCause: string;
   approvedPaths: readonly string[];
@@ -62,8 +67,13 @@ export function buildDebugWorkflowReport(input: DebugWorkflowReportInput): Debug
     workflowKind: input.workflowKind,
     workerJobId: input.workerResult.jobId,
     projectId: input.workerResult.projectId,
+    ...(input.baselineMode === undefined ? {} : { baselineMode: input.baselineMode }),
     baselineSha: input.workerResult.baselineRef,
     baselineOwnerVerified: input.baselineOwnerVerified,
+    ...(input.referenceWasOwnerVerifiedKnownGood === undefined
+      ? {}
+      : { referenceWasOwnerVerifiedKnownGood: input.referenceWasOwnerVerifiedKnownGood }),
+    ...(input.defectReference === undefined ? {} : { defectReference: input.defectReference }),
     candidateSha,
     isolatedBranch: input.workerResult.workspaceBranch ?? null,
     workspacePath: input.workerResult.workspacePath ?? null,

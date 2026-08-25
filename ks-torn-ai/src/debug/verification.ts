@@ -4,6 +4,10 @@ import { z } from 'zod';
 
 import { redactRepositorySecrets } from '../repository/validation.js';
 import type { WorkerAction, WorkerActionStatus } from '../worker/contracts.js';
+import {
+  resolvedSyntheticDebugBaselineMode,
+  type SyntheticDebugBaselineMode,
+} from './baseline-mode.js';
 import { canVerifyTestCandidate, isFullCommitSha, type DeliveryVerification } from './gates.js';
 import { syntheticDebugWriteProposalSchema, type SyntheticDebugWriteProposal } from './records.js';
 import type {
@@ -155,6 +159,7 @@ export interface SyntheticDebugVerificationDecision {
   readonly workflowKind: 'synthetic';
   readonly recordKind: 'VERIFICATION_DECISION';
   readonly sourceBoundary: 'TRUSTED_APPLICATION';
+  readonly baselineMode: SyntheticDebugBaselineMode;
   readonly verificationDecisionId: string;
   readonly status: SyntheticDebugVerificationStatus;
   readonly caseId: string;
@@ -187,7 +192,10 @@ export type SyntheticDebugVerificationProposal = Readonly<
 export interface SyntheticDebugVerificationInput {
   readonly caseId: string;
   readonly projectId: string;
+  readonly baselineMode?: SyntheticDebugBaselineMode;
   readonly baselineOwnerVerified: boolean;
+  readonly defectReferenceOwnerAcknowledged?: boolean;
+  readonly defectReferenceEntryRequirementsSatisfied?: boolean;
   readonly problemEvidenceItems: number;
   readonly rootCauseRecorded: boolean;
   readonly proposal: SyntheticDebugVerificationProposal;
@@ -269,6 +277,7 @@ function malformedDecision(
     workflowKind: 'synthetic',
     recordKind: 'VERIFICATION_DECISION',
     sourceBoundary: 'TRUSTED_APPLICATION',
+    baselineMode: resolvedSyntheticDebugBaselineMode(input.baselineMode),
     status: 'FAILED',
     caseId: safeIdentifier(input.caseId, 'invalid-case', 128),
     projectId: safeIdentifier(input.projectId, 'invalid-project', 80),
@@ -524,8 +533,18 @@ export function verifySyntheticDebugWorkerExecution(
   const outcome = executionOutcomeBlockers(record);
   const finalization = finalizationBlockers(proposal, record);
   const gate = canVerifyTestCandidate({
+    baselineMode: resolvedSyntheticDebugBaselineMode(input.baselineMode),
     baselineSha: record.baselineSha,
     baselineOwnerVerified: input.baselineOwnerVerified,
+    ...(input.defectReferenceOwnerAcknowledged === undefined
+      ? {}
+      : { defectReferenceOwnerAcknowledged: input.defectReferenceOwnerAcknowledged }),
+    ...(input.defectReferenceEntryRequirementsSatisfied === undefined
+      ? {}
+      : {
+          defectReferenceEntryRequirementsSatisfied:
+            input.defectReferenceEntryRequirementsSatisfied,
+        }),
     candidateSha: record.candidateSha,
     isolatedBranch: record.isolatedBranch,
     rollbackRef: record.rollbackRef,
@@ -561,6 +580,7 @@ export function verifySyntheticDebugWorkerExecution(
     workflowKind: 'synthetic',
     recordKind: 'VERIFICATION_DECISION',
     sourceBoundary: 'TRUSTED_APPLICATION',
+    baselineMode: resolvedSyntheticDebugBaselineMode(input.baselineMode),
     status,
     caseId: proposal.caseId,
     projectId: proposal.projectId,

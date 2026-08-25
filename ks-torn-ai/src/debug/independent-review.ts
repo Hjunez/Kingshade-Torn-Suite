@@ -1,14 +1,16 @@
 import { createHash } from 'node:crypto';
 
 import { redactRepositorySecrets } from '../repository/validation.js';
+import type { SyntheticDebugBaselineMode } from './baseline-mode.js';
 import { isFullCommitSha } from './gates.js';
 import {
   parseTrustedSyntheticDebugReviewRecord,
+  trustedSyntheticDebugDefectReferenceRecordSchema,
   type SyntheticDebugEvidenceReference,
   type SyntheticDebugIntakeRecord,
   type SyntheticDebugRootCauseRecord,
   type SyntheticDebugWriteProposal,
-  type TrustedSyntheticDebugBaselineRecord,
+  type TrustedSyntheticDebugReferenceRecord,
   type TrustedSyntheticDebugReviewRecord,
 } from './records.js';
 import type { IndependentReviewRecord } from './report.js';
@@ -52,6 +54,17 @@ export interface SyntheticDebugReviewWorkerActionOutcome {
   readonly profileId: string | null;
 }
 
+export interface SyntheticDebugReviewDefectReference {
+  readonly referenceVersion: string | null;
+  readonly historicalSearchBoundary: string;
+  readonly reasonSelected: string;
+  readonly knownPreExistingDefects: readonly string[];
+  readonly knownUnrelatedFailures: readonly string[];
+  readonly rollbackReferenceSemantics: string;
+  readonly ownerAcknowledgementReference: string;
+  readonly notOwnerVerifiedKnownGood: true;
+}
+
 export interface SyntheticDebugIndependentReviewPackage {
   readonly schemaVersion: '1.0';
   readonly workflowKind: 'synthetic';
@@ -60,7 +73,10 @@ export interface SyntheticDebugIndependentReviewPackage {
   readonly reviewPackageId: string;
   readonly caseId: string;
   readonly projectId: string;
-  readonly verifiedBaselineSha: string;
+  readonly baselineMode: SyntheticDebugBaselineMode;
+  readonly referenceSha: string;
+  readonly referenceWasOwnerVerifiedKnownGood: boolean;
+  readonly defectReference: SyntheticDebugReviewDefectReference | null;
   readonly candidateSha: string;
   readonly rollbackSha: string;
   readonly rollbackRef: string;
@@ -90,7 +106,8 @@ export interface SyntheticDebugIndependentReviewPackageInput {
   readonly caseId: string;
   readonly projectId: string;
   readonly intake: DeepReadonly<SyntheticDebugIntakeRecord>;
-  readonly knownGoodBaseline: DeepReadonly<TrustedSyntheticDebugBaselineRecord>;
+  readonly baselineMode: SyntheticDebugBaselineMode;
+  readonly reference: DeepReadonly<TrustedSyntheticDebugReferenceRecord>;
   readonly problemEvidence: readonly DeepReadonly<SyntheticDebugEvidenceReference>[];
   readonly rootCause: DeepReadonly<SyntheticDebugRootCauseRecord>;
   readonly proposal: DeepReadonly<SyntheticDebugWriteProposal>;
@@ -152,12 +169,20 @@ function sameStrings(left: readonly string[], right: readonly string[]): boolean
 
 function packageInputIsTrusted(input: SyntheticDebugIndependentReviewPackageInput): boolean {
   const verification = input.verification;
+  const reference = input.reference;
+  const referenceTrusted =
+    input.baselineMode === 'KNOWN_GOOD'
+      ? reference.recordKind === 'BASELINE' &&
+        reference.ownerVerification.status === 'OWNER_VERIFIED'
+      : reference.recordKind === 'DEFECT_REFERENCE' &&
+        trustedSyntheticDebugDefectReferenceRecordSchema.safeParse(reference).success &&
+        reference.knownPreExistingDefects.length > 0;
   return (
     input.intake.caseId === input.caseId &&
     input.intake.projectId === input.projectId &&
-    input.knownGoodBaseline.caseId === input.caseId &&
-    input.knownGoodBaseline.projectId === input.projectId &&
-    input.knownGoodBaseline.ownerVerification.status === 'OWNER_VERIFIED' &&
+    reference.caseId === input.caseId &&
+    reference.projectId === input.projectId &&
+    referenceTrusted &&
     input.rootCause.caseId === input.caseId &&
     input.rootCause.projectId === input.projectId &&
     input.rootCause.status === 'verified' &&
@@ -165,6 +190,7 @@ function packageInputIsTrusted(input: SyntheticDebugIndependentReviewPackageInpu
     input.proposal.projectId === input.projectId &&
     verification.caseId === input.caseId &&
     verification.projectId === input.projectId &&
+    verification.baselineMode === input.baselineMode &&
     verification.proposalId === input.proposal.proposalId &&
     verification.status === 'PASSED' &&
     verification.workerStatus === 'SUCCEEDED' &&
@@ -174,7 +200,7 @@ function packageInputIsTrusted(input: SyntheticDebugIndependentReviewPackageInpu
     isFullCommitSha(verification.baselineSha) &&
     isFullCommitSha(verification.candidateSha) &&
     isFullCommitSha(verification.rollbackSha) &&
-    verification.baselineSha.toLowerCase() === input.knownGoodBaseline.commitSha.toLowerCase() &&
+    verification.baselineSha.toLowerCase() === reference.commitSha.toLowerCase() &&
     verification.baselineSha.toLowerCase() === input.proposal.baselineSha.toLowerCase() &&
     verification.rollbackSha.toLowerCase() === input.proposal.rollbackSha.toLowerCase() &&
     verification.rollbackRef === input.proposal.rollbackRef &&
@@ -200,6 +226,29 @@ export function buildSyntheticDebugIndependentReviewPackage(
   }
 
   const verification = input.verification;
+  const defectReference =
+    input.reference.recordKind === 'DEFECT_REFERENCE'
+      ? {
+          referenceVersion:
+            input.reference.referenceVersion === null
+              ? null
+              : safeText(input.reference.referenceVersion, 500),
+          historicalSearchBoundary: safeText(input.reference.historicalSearchBoundary),
+          reasonSelected: safeText(input.reference.reasonSelected),
+          knownPreExistingDefects: input.reference.knownPreExistingDefects.map((item) =>
+            safeText(item, 500),
+          ),
+          knownUnrelatedFailures: input.reference.knownUnrelatedFailures.map((item) =>
+            safeText(item, 500),
+          ),
+          rollbackReferenceSemantics: safeText(input.reference.rollbackReferenceSemantics),
+          ownerAcknowledgementReference: safeText(
+            input.reference.ownerAcknowledgement.evidenceReference,
+            1_000,
+          ),
+          notOwnerVerifiedKnownGood: true as const,
+        }
+      : null;
   const requiredProfiles = new Set(verification.requiredProfileIds);
   const content = deepFreeze({
     schemaVersion: '1.0' as const,
@@ -208,7 +257,10 @@ export function buildSyntheticDebugIndependentReviewPackage(
     sourceBoundary: 'TRUSTED_VERIFIED_EVIDENCE' as const,
     caseId: safeText(input.caseId, 128),
     projectId: safeText(input.projectId, 80),
-    verifiedBaselineSha: verification.baselineSha?.toLowerCase() ?? '',
+    baselineMode: input.baselineMode,
+    referenceSha: verification.baselineSha?.toLowerCase() ?? '',
+    referenceWasOwnerVerifiedKnownGood: input.baselineMode === 'KNOWN_GOOD',
+    defectReference,
     candidateSha: verification.candidateSha?.toLowerCase() ?? '',
     rollbackSha: verification.rollbackSha?.toLowerCase() ?? '',
     rollbackRef: safeText(verification.rollbackRef ?? '', 1_000),

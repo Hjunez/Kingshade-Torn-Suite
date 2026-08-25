@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { isValidRepositoryRef, redactRepositorySecrets } from '../repository/validation.js';
 import { normalizeRelativeWorkerPath } from '../worker/path-policy.js';
+import { SYNTHETIC_DEBUG_BASELINE_MODES } from './baseline-mode.js';
 import { isFullCommitSha } from './gates.js';
 
 const MAX_RECORDS_PER_LIST = 30;
@@ -234,6 +235,34 @@ export const trustedSyntheticDebugBaselineRecordSchema = z
     }
   });
 
+export const trustedDefectReferenceOwnerAcknowledgementSchema = z
+  .object({
+    status: z.literal('OWNER_ACKNOWLEDGED_DEFECT_REFERENCE'),
+    evidenceReference: referenceSchema,
+    acknowledgedNotKnownGood: z.literal(true),
+  })
+  .strict();
+
+export const trustedSyntheticDebugDefectReferenceRecordSchema = z
+  .object({
+    ...workflowRecordFields,
+    recordKind: z.literal('DEFECT_REFERENCE'),
+    sourceBoundary: z.literal('TRUSTED_APPLICATION'),
+    baselineMode: z.literal(SYNTHETIC_DEBUG_BASELINE_MODES[1]),
+    commitSha: exactCommitShaSchema,
+    referenceVersion: shortStatementSchema.nullable(),
+    historicalSearchBoundary: statementSchema,
+    noOwnerVerifiedKnownGoodFound: z.literal(true),
+    defectEvidenceReferences: nonEmptyEvidenceIdListSchema,
+    reasonSelected: statementSchema,
+    knownPreExistingDefects: nonEmptyStatementListSchema,
+    knownUnrelatedFailures: statementListSchema,
+    rollbackReferenceSemantics: statementSchema,
+    ownerAcknowledgement: trustedDefectReferenceOwnerAcknowledgementSchema,
+    separateWriteApprovalRequired: z.literal(true),
+  })
+  .strict();
+
 export const trustedSyntheticDebugApprovalDecisionSchema = z
   .object({
     ...workflowRecordFields,
@@ -287,6 +316,7 @@ export const syntheticDebugWorkflowRecordSchema = z.union([
   modelSyntheticDebugRecordSchema,
   syntheticDebugWriteProposalSchema,
   trustedSyntheticDebugBaselineRecordSchema,
+  trustedSyntheticDebugDefectReferenceRecordSchema,
   trustedSyntheticDebugApprovalDecisionSchema,
   trustedSyntheticDebugReviewRecordSchema,
 ]);
@@ -302,6 +332,15 @@ export type TrustedOwnerVerification = z.infer<typeof trustedOwnerVerificationSc
 export type TrustedSyntheticDebugBaselineRecord = z.infer<
   typeof trustedSyntheticDebugBaselineRecordSchema
 >;
+export type TrustedDefectReferenceOwnerAcknowledgement = z.infer<
+  typeof trustedDefectReferenceOwnerAcknowledgementSchema
+>;
+export type TrustedSyntheticDebugDefectReferenceRecord = z.infer<
+  typeof trustedSyntheticDebugDefectReferenceRecordSchema
+>;
+export type TrustedSyntheticDebugReferenceRecord =
+  | TrustedSyntheticDebugBaselineRecord
+  | TrustedSyntheticDebugDefectReferenceRecord;
 export type TrustedSyntheticDebugApprovalDecision = z.infer<
   typeof trustedSyntheticDebugApprovalDecisionSchema
 >;
@@ -319,6 +358,12 @@ export function parseTrustedSyntheticDebugBaselineRecord(
   input: unknown,
 ): TrustedSyntheticDebugBaselineRecord {
   return trustedSyntheticDebugBaselineRecordSchema.parse(input);
+}
+
+export function parseTrustedSyntheticDebugDefectReferenceRecord(
+  input: unknown,
+): TrustedSyntheticDebugDefectReferenceRecord {
+  return trustedSyntheticDebugDefectReferenceRecordSchema.parse(input);
 }
 
 export function parseTrustedSyntheticDebugApprovalDecision(

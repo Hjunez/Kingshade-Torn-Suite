@@ -4,6 +4,10 @@ import { resolve } from 'node:path';
 import { tool } from '@openai/agents';
 import { z } from 'zod';
 
+import {
+  resolvedSyntheticDebugBaselineMode,
+  type SyntheticDebugBaselineMode,
+} from '../debug/baseline-mode.js';
 import { canStartImplementation } from '../debug/gates.js';
 import { redactRepositorySecrets } from '../repository/validation.js';
 import { WriteApprovalStore, type WriteApprovalGrant } from './approval.js';
@@ -77,7 +81,10 @@ export type ApplicationWriteApprovalReceipt = Omit<WriteApprovalGrant, 'token'>;
 export interface ApplicationWriteApprovalRequest {
   projectId: string;
   baselineSha: string;
+  baselineMode?: SyntheticDebugBaselineMode;
   baselineOwnerVerified: boolean;
+  defectReferenceOwnerAcknowledged?: boolean;
+  defectReferenceEntryRequirementsSatisfied?: boolean;
   problemEvidenceItems: number;
   rootCauseRecorded: boolean;
   unresolvedBaselineBlocker?: string | null;
@@ -261,9 +268,21 @@ export class WorkerAgentService {
           currentHead,
       );
     }
+    const baselineMode = resolvedSyntheticDebugBaselineMode(request.baselineMode);
     const implementationGate = canStartImplementation({
-      knownGoodBaselineSha: currentHead,
+      baselineMode,
+      knownGoodBaselineSha: baselineMode === 'KNOWN_GOOD' ? currentHead : null,
       baselineOwnerVerified: request.baselineOwnerVerified,
+      defectReferenceSha: baselineMode === 'DEFECT_REFERENCE' ? currentHead : null,
+      ...(request.defectReferenceOwnerAcknowledged === undefined
+        ? {}
+        : { defectReferenceOwnerAcknowledged: request.defectReferenceOwnerAcknowledged }),
+      ...(request.defectReferenceEntryRequirementsSatisfied === undefined
+        ? {}
+        : {
+            defectReferenceEntryRequirementsSatisfied:
+              request.defectReferenceEntryRequirementsSatisfied,
+          }),
       evidenceItems: request.problemEvidenceItems,
       rootCauseRecorded: request.rootCauseRecorded,
       ...(request.unresolvedBaselineBlocker === undefined

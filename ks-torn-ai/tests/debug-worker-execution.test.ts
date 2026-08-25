@@ -589,6 +589,7 @@ describe('C3.6 synthetic Worker execution', () => {
     expect(Object.keys(request).sort()).toEqual([
       'accessMode',
       'approvalDecisionReferenceId',
+      'baselineMode',
       'caseId',
       'operation',
       'projectId',
@@ -599,6 +600,7 @@ describe('C3.6 synthetic Worker execution', () => {
     expect(request).toMatchObject({
       accessMode: 'TRUSTED_WORKER_EXECUTION_ONLY',
       operation: 'EXECUTE_APPROVED_SYNTHETIC_IMPLEMENTATION',
+      baselineMode: 'KNOWN_GOOD',
       caseId,
       projectId: 'synthetic',
       approvalDecisionReferenceId: `approval-decision-${caseId}`,
