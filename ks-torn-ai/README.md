@@ -1,6 +1,6 @@
 # KS Leslie
 
-KS Leslie is a Torn-specific engineering and research agent. Its current priority is the Debug MVP: diagnose, change, test, independently review, and report on Kingshade scripts while preserving a verified rollback baseline.
+KS Leslie is a Torn-specific engineering and research agent. Its current priority is the Debug MVP: diagnose, change, test, independently review, and report on Kingshade scripts while preserving an exact authorized rollback reference.
 
 ## Debug MVP workflow
 
@@ -30,6 +30,7 @@ Phase C3 completes and synthetically accepts this orchestration, but the Debug M
 - Deterministic test profiles and structured implementation and delivery gates.
 - Synthetic end-to-end acceptance covering read-only analysis, failed-test blocking, scoped patching, candidate commit, cleanup, source-worktree preservation, and rollback reporting.
 - Deterministic C3 workflow from intake through evidence, an owner-verified baseline, root cause, trusted approval, isolated implementation, cached-result verification, independent review, and authoritative `TEST_READY`/`BLOCKED` delivery.
+- Explicit C4.9 `DEFECT_REFERENCE` exception mode for cases with no owner-verified defect-free historical baseline; `KNOWN_GOOD` remains the strict default, models cannot select the exception, and separate write approval remains mandatory.
 - One trusted application facade with bounded next actions and safe snapshots/errors; models cannot control identity, authorization, owner verification, approval, reviewer authority, target state, or final disposition.
 - Durable synthetic outcome persistence through the C2 memory service, retaining authorization, provenance, history, and conflicts without promoting automated results to owner verification.
 - Strict TypeScript, Vitest, ESLint, Prettier, locked installs, and runtime-only dependency auditing.
@@ -44,7 +45,7 @@ See [persistent memory](docs/PERSISTENT_MEMORY.md), [Stage B](docs/STAGE_B.md), 
 
 - Final GitHub verification of the Phase C3 checkpoint, followed by deliberate owner selection of the first real acceptance case.
 - Read-only discovery of the actual current local and remote project state.
-- Owner confirmation of a known-good full commit SHA and verified real defect evidence from source, DOM, video, or other applicable artifacts.
+- Owner confirmation of a known-good full commit SHA or a complete explicitly acknowledged `DEFECT_REFERENCE` contract, plus verified real defect evidence from source, DOM, video, or other applicable artifacts.
 - A real independent review bound to the candidate rather than fixture-supplied review evidence.
 - Restored remote War Dibs browser/compatibility profiles with portable, passing fixtures.
 - Direct PDA/mobile and relevant browser evidence; CI alone cannot establish Torn PDA behavior.
@@ -79,4 +80,4 @@ Exercise the complete workflow on a real Kingshade defect with independent revie
 - Do not infer known-good from the newest version, release history, or CI success.
 - Do not promote model inference, persistence, automated tests, or release records to owner verification.
 - Reject likely secrets, binary payloads, and unrelated personal data before durable persistence without echoing rejected values.
-- Preserve an owner-verified rollback baseline and treat PDA/mobile behavior as first-class evidence.
+- Preserve the exact owner-verified rollback baseline or explicitly authorized defect reference, never conflate the two, and treat PDA/mobile behavior as first-class evidence.

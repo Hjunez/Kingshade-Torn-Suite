@@ -47,6 +47,8 @@ Only explicit trusted owner/user-verification evidence can establish owner verif
 
 Model-originated writes remain pending hypotheses. They cannot request an owner-verified state or gain authority by selecting actor, role, project grants, zones, owner, or faction fields.
 
+C4.9 workflow outcomes preserve `KNOWN_GOOD` and `DEFECT_REFERENCE` as distinct modes. Exception records retain the exact SHA/version, owner acknowledgement that the reference is not known-good, historical search boundary, reproducible defect provenance, known pre-existing defects and unrelated failures, selection reason, rollback semantics, separate write-decision provenance, verification, and independent-review outcome. Synthetic persistence remains `SUPPORTING`; reading the record back cannot promote a defect reference to owner-verified known-good.
+
 ## Curated manifests
 
 Curated ingestion accepts a bounded, schema-validated manifest whose entries explicitly declare project, knowledge zone, provenance, source, content, and verification state. The service supports deterministic validation and collision behavior, and every accepted entry follows the same authorization, content-safety, and durable-write path as direct memory records.

@@ -57,6 +57,14 @@ Independent Review is read-only, has no Worker or approval authority, and return
 
 Final outcomes use the Phase C2 memory service with authorization before retrieval, preserved history and conflicts, no latest-wins promotion, and fail-safe persistence. Synthetic automated outcomes remain non-owner-verified. C3.11 exercised the complete path using the real Stage B Worker in a temporary repository, including negative cases, exactly-once execution, source-worktree preservation, secret non-exposure, memory retrieval, and deterministic reporting. It did not change or validate a production Torn userscript.
 
+## Phase C4.9 baseline exception
+
+`KNOWN_GOOD` remains the default and its owner-verification gates are unchanged. C4.9 adds a discriminated `DEFECT_REFERENCE` record for the narrow case where a documented historical boundary contains no owner-verified defect-free baseline. Only an injected trusted application capability can supply and authorize this record; model records and coordinator, Research, Engineering, and Review tools cannot select the mode or submit acknowledgement fields.
+
+Before exception authorization, Research or Engineering may record evidence-linked root cause read-only in `EVIDENCE_READY`; proposal creation and Worker execution remain unavailable. A valid exception binds the case/project, exact SHA, reproducible evidence, historical boundary, owner acknowledgement that it is not known-good, known defects/failures, selection reason, and rollback semantics. It still requires a separate write decision, private Worker approval, isolated worktree, approved paths, allowlisted verification, independent read-only review, final delivery gate, and later owner verification before production or release.
+
+Snapshots, Worker requests, verification decisions, review packages, durable memory, and final reports carry the baseline mode explicitly. `DEFECT_REFERENCE` provenance remains supporting/non-known-good on round-trip; no newest, release, CI, synthetic, persisted, or model evidence can promote it to `KNOWN_GOOD`.
+
 ## Access model
 
 KS Leslie uses default-deny RBAC plus capability and project grants. Authorization is enforced before retrieval and before every tool invocation; prompts are not a security boundary. Knowledge is divided into PUBLIC_TORN, FACTION_SHARED, PRIVATE_KINGSHADE_DEV, and per-user USER_PRIVATE zones.
@@ -78,7 +86,7 @@ KS Leslie is designed as a remotely reachable Core plus an optional local Worker
 - OpenAI API key: environment only; never indexed or committed.
 - Torn API key: future environment/secret store only; never indexed or committed.
 - Production repositories: read-only before controlled workspace support.
-- Write operations: scoped to an exact commit, separate branch, isolated worktree, approved paths, private one-time grant, SDK approval, required tests, and rollback state.
+- Write operations: scoped to an exact owner-verified baseline or explicitly authorized defect-reference commit, separate branch, isolated worktree, approved paths, private one-time grant, SDK approval, required tests, and rollback state.
 - Authorization: enforced in application code before retrieval or tool use.
 - Mobile access: authenticates to Core; the PC is not exposed directly to the public internet.
 - Torn gameplay: no automated gameplay actions.
@@ -97,7 +105,7 @@ Persistence does not improve evidence quality: releases, newer commits, CI succe
 
 ## Windows execution
 
-Stage B runs on Node.js 22 or newer and uses Git's native worktree isolation on Windows. The model receives only fixed, schema-validated Worker operations; process execution remains inside trusted application code and test-profile definitions. Controlled writes require an exact 40-character baseline, a private application-issued approval grant, an SDK approval interruption, an approved path set, a separate `ks-leslie/...` branch, and cleanup on failure or scope violation.
+Stage B runs on Node.js 22 or newer and uses Git's native worktree isolation on Windows. The model receives only fixed, schema-validated Worker operations; process execution remains inside trusted application code and test-profile definitions. Controlled writes require an exact 40-character selected reference, mode-appropriate trusted authorization, a separate private application-issued approval grant, an SDK approval interruption, an approved path set, a separate `ks-leslie/...` branch, and cleanup on failure or scope violation.
 
 Docker is optional and was not available for the Stage B acceptance run. It may become an additional isolation backend later, but it is not required by the current Worker implementation.
 

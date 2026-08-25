@@ -6,7 +6,7 @@ The Debug MVP exists to remove repetitive manual script-debugging work from the 
 
 ## Implemented Phase C3 workflow
 
-Phase C3 implements a deterministic synthetic workflow through the trusted application facade. Its actual states are `INTAKE`, `DISCOVERY`, `EVIDENCE_READY`, `BASELINE_READY`, `ROOT_CAUSE_READY`, `IMPLEMENTATION_READY`, `AWAITING_WRITE_APPROVAL`, `IMPLEMENTING`, `VERIFYING`, `REVIEWING`, and the terminal states `TEST_READY`, `BLOCKED`, `FAILED`, or `CANCELLED`. Terminal states reject further transitions.
+Phase C3 implements a deterministic synthetic workflow through the trusted application facade. Its actual states are `INTAKE`, `DISCOVERY`, `EVIDENCE_READY`, `BASELINE_READY`, `ROOT_CAUSE_READY`, `IMPLEMENTATION_READY`, `AWAITING_WRITE_APPROVAL`, `IMPLEMENTING`, `VERIFYING`, `REVIEWING`, and the terminal states `TEST_READY`, `BLOCKED`, `FAILED`, or `CANCELLED`. Terminal states reject further transitions. C4.9 adds only a bounded `DEFECT_REFERENCE` exception within this state model; `KNOWN_GOOD` remains the default.
 
 ### 1. Intake
 
@@ -16,6 +16,8 @@ Accept a concise natural-language bug report or engineering goal. Resolve the re
 
 Identify the current candidate, latest genuinely verified known-good baseline, relevant Git history, previous failed attempts, and existing regression tests. Newest/current commits, releases, and CI success are not automatically known-good: explicit owner verification is required. Conflicting evidence blocks selection, and a failed candidate never becomes the next baseline automatically. Do not patch-stack.
 
+The normal mode is `KNOWN_GOOD` and retains those requirements unchanged. `DEFECT_REFERENCE` is a non-default application-owned exception only when documented historical search found no owner-verified defect-free baseline. Its trusted record must bind the case and project, exact 40-character SHA, reproducible defect provenance, search boundary, selection reason, known pre-existing defects, known unrelated failures, rollback/reference semantics, and explicit owner acknowledgement that the reference is not known-good. No model tool accepts that record or selects the mode.
+
 ### 3. Evidence collection
 
 Search source, tests, logs, DOM probes, recorded observations, and available project documentation. Classify material claims as official/current, user-verified, community-derived, or inference.
@@ -24,11 +26,13 @@ Search source, tests, logs, DOM probes, recorded observations, and available pro
 
 Prefer a reproducible explanation over a speculative patch. Where possible, create or identify a regression test that fails for the defect before changing production logic.
 
+When discovery has no owner-verified known-good, evidence-linked root-cause analysis may be recorded read-only while the case remains in `EVIDENCE_READY`. This does not select `DEFECT_REFERENCE`, create a proposal, authorize the Worker, or permit mutation. Implementation remains blocked until the normal known-good contract or the complete trusted exception contract is present.
+
 ### 5. Controlled implementation
 
 After the trusted application records implementation readiness, it enters `AWAITING_WRITE_APPROVAL`. Models cannot approve their own work. Approval identities and private grants remain application-owned and are never exposed to models or persisted in safe snapshots, reports, or memory.
 
-Engineering can participate only through the trusted application facade. The application binds one approved proposal to an exact baseline, an isolated Git worktree, approved paths, allowlisted test profiles, and rollback state. The Worker exposes no arbitrary shell, process, executable, repository-root, patch, or approval-secret input. Scope or execution failure cleans up the failed candidate and preserves the source working copy; successful synthetic work is retained only for trusted verification and delivery handling.
+Engineering can participate only through the trusted application facade. The application binds one approved proposal to an exact known-good baseline or explicitly authorized defect-reference SHA, an isolated Git worktree, approved paths, allowlisted test profiles, and rollback state. Exception authorization is not write approval: the separate application decision and Worker approval gates remain mandatory. The Worker exposes no arbitrary shell, process, executable, repository-root, patch, or approval-secret input. Scope or execution failure cleans up the failed candidate and preserves the source working copy; successful synthetic work is retained only for trusted verification and delivery handling.
 
 ### 6. Verification loop
 
@@ -44,6 +48,8 @@ A separate Review capability checks the proposed change for unsupported assumpti
 
 The application persists the final synthetic outcome through the existing Phase C2 memory service after authorization. Automated synthetic outcomes remain non-owner-verified, history and conflicts are preserved without latest-wins promotion, and persistence failure fails safely. The facade exposes only schema-bounded next actions, safe snapshots, and safe errors, never a generic target-state operation.
 
+For `DEFECT_REFERENCE`, review packages, memory, and final reports preserve the mode and exact reference/candidate SHAs, the documented pre-existing defect, exception justification, owner acknowledgement, write-decision provenance, verification, and independent-review result. Reports state that the reference was not owner-verified known-good and that owner verification is still required before production or release. `TEST_READY` remains a test-candidate disposition, not production authority.
+
 ## Trust and agent boundaries
 
 Models provide bounded analysis or input through strict schemas. Application code owns actor identity, authorization, owner verification, approval, reviewer authority, state transitions, and final disposition. The coordinator has no direct Worker; Research is read-only; Engineering reaches the Worker only through the trusted application boundary; Review is independent and read-only with no Worker. No agent receives generic shell or process execution.
@@ -56,7 +62,7 @@ C3.11 proved one deterministic intake-to-`TEST_READY` happy path using the real 
 
 Debug MVP is accepted only after a real Kingshade regression can be handled end-to-end with the following evidence:
 
-- Correct project and known-good baseline selected without manual reconstruction by the owner.
+- Correct project and selected mode/reference established without conflating `KNOWN_GOOD` and `DEFECT_REFERENCE`.
 - Relevant code and history inspected.
 - Root-cause evidence recorded.
 - Isolated code change created.
@@ -64,7 +70,7 @@ Debug MVP is accepted only after a real Kingshade regression can be handled end-
 - At least one regression-specific check protects the defect when practical.
 - Independent review completed.
 - A TEST branch or equivalent controlled output is prepared.
-- The known-good rollback baseline remains intact.
+- The exact owner-verified rollback baseline or explicitly authorized defect reference remains intact.
 - The owner did not need to manually shuttle large code blocks between tools.
 
 ## Stage B acceptance boundary
@@ -91,4 +97,4 @@ Phase C3 does not claim completion of mobile/PWA, full faction RBAC, or real War
 
 ## Before the first real userscript regression
 
-After the final GitHub C3 checkpoint is verified, the owner must deliberately select the first real acceptance case. Leslie must then perform read-only discovery of the actual current local and remote project state, obtain an explicitly owner-verified known-good baseline, and gather verified real source, DOM, video, and other defect evidence as applicable. Production candidate changes require explicit write approval and the relevant real regression, browser, and PDA/mobile evidence. Nothing is automatically merged, released, or published.
+After the final GitHub checkpoint is verified, the owner must deliberately select the first real acceptance case. Leslie must then perform read-only discovery of the actual current local and remote project state, obtain an explicitly owner-verified known-good baseline or a separately owner-authorized `DEFECT_REFERENCE` satisfying the complete exception contract, and gather verified real source, DOM, video, and other defect evidence as applicable. Production candidate changes require separate explicit write approval and the relevant real regression, browser, and PDA/mobile evidence. Nothing is automatically merged, released, or published.
