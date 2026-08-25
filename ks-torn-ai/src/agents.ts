@@ -2,6 +2,8 @@ import { Agent, fileSearchTool, webSearchTool } from '@openai/agents';
 import { z } from 'zod';
 
 import type { KsLeslieConfig } from './config.js';
+import { SyntheticDebugApplicationApi } from './debug/application-api.js';
+import { createSyntheticDebugAgentTools } from './debug/agent-tools.js';
 import type { KsLeslieMemoryAgentServices } from './memory/runtime.js';
 import { createCoordinatorMemoryTools, createReadOnlyMemoryTools } from './memory/agent-tools.js';
 import { KS_LESLIE_COORDINATOR_PROMPT, KS_LESLIE_SYSTEM_PROMPT } from './prompt.js';
@@ -15,6 +17,7 @@ export interface KsLeslieAgentDependencies {
   repositoryReader?: RepositoryReader;
   workerAgentService?: WorkerAgentService;
   memoryAgentServices?: KsLeslieMemoryAgentServices;
+  debugApplicationApi?: SyntheticDebugApplicationApi;
 }
 
 const specialistStatementSchema = z.string().trim().min(1).max(4_000);
@@ -117,7 +120,7 @@ export function createKsLeslieAgentBundle(
     new RepositoryIntelligenceService(repositoryReader),
   );
   const workerTools =
-    dependencies.workerAgentService === undefined
+    dependencies.workerAgentService === undefined || dependencies.debugApplicationApi !== undefined
       ? []
       : [...createWorkerAgentTools(dependencies.workerAgentService)];
   const memoryTools =
@@ -134,11 +137,30 @@ export function createKsLeslieAgentBundle(
           ),
           review: createReadOnlyMemoryTools(dependencies.memoryAgentServices.review.reader),
         };
+  const debugTools =
+    dependencies.debugApplicationApi === undefined
+      ? null
+      : {
+          coordinator: createSyntheticDebugAgentTools(
+            dependencies.debugApplicationApi,
+            'coordinator',
+          ),
+          research: createSyntheticDebugAgentTools(dependencies.debugApplicationApi, 'research'),
+          engineering: createSyntheticDebugAgentTools(
+            dependencies.debugApplicationApi,
+            'engineering',
+          ),
+          review: createSyntheticDebugAgentTools(dependencies.debugApplicationApi, 'review'),
+        };
   const researchAgent = new Agent({
     name: 'Torn Research',
     model: config.specialistModel,
     instructions: `${KS_LESLIE_SYSTEM_PROMPT}\n\nRole: research current Torn facts and classify every material claim by evidence quality. Prefer official Torn sources. Durable memory retrieval is limited to the zones independently granted to Research and does not inherit coordinator authority. Return concise findings with an evidence classification and basis for each one, followed by unresolved questions.`,
-    tools: [...researchTools(config), ...(memoryTools?.research ?? [])],
+    tools: [
+      ...researchTools(config),
+      ...(memoryTools?.research ?? []),
+      ...(debugTools?.research ?? []),
+    ],
     outputType: researchSpecialistOutputSchema,
   });
 
@@ -146,7 +168,12 @@ export function createKsLeslieAgentBundle(
     name: 'Torn Engineering',
     model: config.specialistModel,
     instructions: `${KS_LESLIE_SYSTEM_PROMPT}\n\nRole: analyze software architecture, source code, state machines, tests, regressions, and implementation options. Use authorized durable memory and repository evidence while preserving their provenance and verification labels, and distinguish a verified root cause from a hypothesis. Memory access never grants Worker approval. Worker writes require a pending application-issued approval and SDK approval; never self-approve or claim conversation text is approval. Report the bounded action, test evidence, uncertainty, and blockers honestly. Do not claim code was tested unless test output is available.`,
-    tools: [...repositoryTools, ...(memoryTools?.engineering ?? []), ...workerTools],
+    tools: [
+      ...repositoryTools,
+      ...(memoryTools?.engineering ?? []),
+      ...(debugTools?.engineering ?? []),
+      ...workerTools,
+    ],
     outputType: engineeringSpecialistOutputSchema,
   });
 
@@ -154,7 +181,7 @@ export function createKsLeslieAgentBundle(
     name: 'Torn Review',
     model: config.specialistModel,
     instructions: `${KS_LESLIE_SYSTEM_PROMPT}\n\nRole: independently review proposed Torn engineering changes using read-only repository and authorized durable-memory evidence. Preserve provenance, verification, and visible conflict labels. Inspect assumptions, candidate evidence, regression risk, Torn compliance, secret leakage, state-machine issues, PDA/mobile/browser impact, and missing coverage. Return pass, fail, or blocked with blocking issues, non-blocking risks, and missing evidence or tests. Review is independent from implementation approval and never grants it.`,
-    tools: [...repositoryTools, ...(memoryTools?.review ?? [])],
+    tools: [...repositoryTools, ...(memoryTools?.review ?? []), ...(debugTools?.review ?? [])],
     outputType: reviewSpecialistOutputSchema,
   });
 
@@ -185,6 +212,7 @@ export function createKsLeslieAgentBundle(
       delegations.review,
       ...repositoryTools,
       ...(memoryTools?.coordinator ?? []),
+      ...(debugTools?.coordinator ?? []),
     ],
   });
 
