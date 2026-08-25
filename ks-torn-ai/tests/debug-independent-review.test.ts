@@ -872,4 +872,107 @@ describe('C3.8 independent-review orchestration', () => {
     });
     expect(harness.reviewCalls()).toBe(1);
   });
+
+  it('uses only the cached C3.1-C3.8 package and the authoritative gate to reach TEST_READY', async () => {
+    const harness = controllerHarness();
+    const reviewed = await harness.controller.evaluateIndependentReview(
+      await reviewingSnapshot(harness, 'c3-9-test-ready'),
+    );
+    if (!reviewed.ok) throw new Error(reviewed.error.message);
+
+    const result = await harness.controller.evaluateFinalDelivery(reviewed.snapshot);
+
+    expect(result).toMatchObject({
+      ok: true,
+      status: 'ADVANCED',
+      snapshot: {
+        machine: { state: 'TEST_READY', outcome: 'SUCCESS' },
+        finalDelivery: {
+          workflowKind: 'synthetic',
+          caseId: 'c3-9-test-ready',
+          projectId: 'synthetic',
+          baselineSha: BASELINE_SHA,
+          baselineOwnerVerified: true,
+          candidateSha: CANDIDATE_SHA,
+          rollbackSha: BASELINE_SHA,
+          problemEvidence: [{ classification: 'SYNTHETIC' }],
+          rootCause: 'The fixture retained the old deterministic value.',
+          approvedPaths: [FIXTURE_PATH],
+          changedPaths: [FIXTURE_PATH],
+          requiredProfileIds: [PROFILE_ID],
+          verification: [{ profileId: PROFILE_ID, status: 'passed' }],
+          review: { reviewId: 'review-c3-9-test-ready', status: 'passed' },
+          status: 'TEST_READY',
+          gate: { allowed: true, blockers: [] },
+        },
+      },
+      transition: { event: 'MARK_TEST_READY', from: 'REVIEWING', to: 'TEST_READY' },
+    });
+    if (!result.ok || result.snapshot.finalDelivery === null) {
+      throw new Error('Expected a final delivery report');
+    }
+    expectDeeplyFrozen(result.snapshot.finalDelivery);
+    expect(result.snapshot.finalDelivery.status).toBe(
+      result.snapshot.finalDelivery.gate.allowed ? 'TEST_READY' : 'BLOCKED',
+    );
+    expect(JSON.stringify(result)).not.toContain(APPROVAL_SECRET);
+    expect(JSON.stringify(result)).not.toContain(API_SECRET);
+    expect(harness.workerCalls()).toBe(1);
+    expect(harness.testProfileRuns()).toBe(1);
+    expect(harness.reviewCalls()).toBe(1);
+  });
+
+  it('replays the exact final decision without Worker, test, or review re-execution', async () => {
+    const harness = controllerHarness();
+    const reviewed = await harness.controller.evaluateIndependentReview(
+      await reviewingSnapshot(harness, 'c3-9-replay'),
+    );
+    if (!reviewed.ok) throw new Error(reviewed.error.message);
+    const first = await harness.controller.evaluateFinalDelivery(reviewed.snapshot);
+    const replay = await harness.controller.evaluateFinalDelivery(
+      structuredClone(reviewed.snapshot),
+    );
+
+    expect(replay).toBe(first);
+    expect(harness.workerCalls()).toBe(1);
+    expect(harness.testProfileRuns()).toBe(1);
+    expect(harness.reviewCalls()).toBe(1);
+    if (!first.ok) throw new Error(first.error.message);
+    const terminal = await harness.controller.evaluateFinalDelivery(first.snapshot);
+    expect(terminal).toBe(first);
+
+    const conflict = structuredClone(reviewed.snapshot);
+    if (conflict.independentReview === null) throw new Error('Expected review');
+    Object.assign(conflict.independentReview, { summary: 'conflicting final evidence' });
+    const rejected = await harness.controller.evaluateFinalDelivery(conflict);
+    expect(rejected).toMatchObject({
+      ok: false,
+      error: { code: 'FINAL_DELIVERY_INTEGRITY_MISMATCH' },
+    });
+    expect(first.snapshot.machine.state).toBe('TEST_READY');
+  });
+
+  it('rejects mismatched cached delivery evidence and cannot accept a model-authored disposition', async () => {
+    const harness = controllerHarness();
+    const reviewed = await harness.controller.evaluateIndependentReview(
+      await reviewingSnapshot(harness, 'c3-9-integrity'),
+    );
+    if (!reviewed.ok) throw new Error(reviewed.error.message);
+    const forged = structuredClone(reviewed.snapshot);
+    if (forged.verificationDecision === null) throw new Error('Expected verification');
+    Object.assign(forged.verificationDecision, { candidateSha: OTHER_SHA });
+
+    // @ts-expect-error Task J accepts no model-authored final disposition.
+    const result = await harness.controller.evaluateFinalDelivery(forged, { status: 'TEST_READY' });
+
+    expect(result).toMatchObject({
+      ok: true,
+      status: 'BLOCKED',
+      snapshot: { machine: { state: 'BLOCKED' }, finalDelivery: null },
+      transition: { reasons: [{ code: 'FINAL_DELIVERY_INTEGRITY_MISMATCH' }] },
+    });
+    expect(harness.workerCalls()).toBe(1);
+    expect(harness.testProfileRuns()).toBe(1);
+    expect(harness.reviewCalls()).toBe(1);
+  });
 });

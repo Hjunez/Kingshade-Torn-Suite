@@ -32,6 +32,7 @@ export interface IndependentReviewRecord {
 
 export interface DebugDeliveryInput {
   workflowKind: 'production' | 'synthetic';
+  caseId?: string;
   workerJobId: string;
   projectId: string;
   baselineSha: string | null;
@@ -55,7 +56,7 @@ export interface DebugDeliveryInput {
 
 export interface DebugDeliveryReport extends DebugDeliveryInput {
   schemaVersion: '1.0';
-  status: 'TEST_READY' | 'SYNTHETIC_ACCEPTED' | 'BLOCKED';
+  status: 'TEST_READY' | 'BLOCKED';
   gate: GateDecision;
 }
 
@@ -78,16 +79,20 @@ export function buildDebugDeliveryReport(input: DebugDeliveryInput): DebugDelive
     independentReviewSummary: input.review.summary,
     unresolvedBlockingUncertainty: input.unresolvedBlockingUncertainty,
   });
-  return {
+  return deepFreeze({
     ...input,
     schemaVersion: '1.0',
-    status: gate.allowed
-      ? input.workflowKind === 'synthetic'
-        ? 'SYNTHETIC_ACCEPTED'
-        : 'TEST_READY'
-      : 'BLOCKED',
+    status: gate.allowed ? 'TEST_READY' : 'BLOCKED',
     gate,
-  };
+  });
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
+    for (const child of Object.values(value)) deepFreeze(child);
+    Object.freeze(value);
+  }
+  return value;
 }
 
 export function serializeDebugDeliveryReport(report: DebugDeliveryReport): string {

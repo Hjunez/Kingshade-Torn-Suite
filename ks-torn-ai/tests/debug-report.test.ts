@@ -54,7 +54,7 @@ const base: DebugDeliveryInput = {
 describe('Debug delivery reporting', () => {
   it('uses a distinct accepted status for a complete synthetic exercise', () => {
     const report = buildDebugDeliveryReport(base);
-    expect(report.status).toBe('SYNTHETIC_ACCEPTED');
+    expect(report.status).toBe('TEST_READY');
     expect(report.gate.allowed).toBe(true);
     expect(JSON.parse(serializeDebugDeliveryReport(report))).toEqual(report);
   });

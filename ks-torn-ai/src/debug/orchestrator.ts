@@ -5,11 +5,13 @@ import { z } from 'zod';
 import { selectKnownGoodBaseline, type BaselineEvidence } from '../repository/baseline.js';
 import { redactRepositorySecrets } from '../repository/validation.js';
 import { canStartImplementation, isFullCommitSha, type GateDecision } from './gates.js';
+import { independentReviewForDelivery } from './independent-review.js';
 import {
   adaptSyntheticDebugIndependentReview,
   buildSyntheticDebugIndependentReviewPackage,
   type SyntheticDebugIndependentReviewPackage,
 } from './independent-review.js';
+import { buildDebugDeliveryReport, type DebugDeliveryReport } from './report.js';
 import {
   parseModelSyntheticDebugRecord,
   parseTrustedSyntheticDebugApprovalDecision,
@@ -250,6 +252,7 @@ export interface SyntheticDebugOrchestrationSnapshot {
   readonly verificationDecision: DeepReadonly<SyntheticDebugVerificationDecision> | null;
   readonly independentReviewPackage: DeepReadonly<SyntheticDebugIndependentReviewPackage> | null;
   readonly independentReview: DeepReadonly<TrustedSyntheticDebugReviewRecord> | null;
+  readonly finalDelivery: DeepReadonly<DebugDeliveryReport> | null;
 }
 
 export type SyntheticDebugOrchestrationOperation =
@@ -263,7 +266,8 @@ export type SyntheticDebugOrchestrationOperation =
   | 'RESOLVE_WRITE_APPROVAL'
   | 'EXECUTE_APPROVED_IMPLEMENTATION'
   | 'EVALUATE_VERIFICATION'
-  | 'EVALUATE_INDEPENDENT_REVIEW';
+  | 'EVALUATE_INDEPENDENT_REVIEW'
+  | 'EVALUATE_FINAL_DELIVERY';
 
 export type SyntheticDebugOrchestrationErrorCode =
   | 'MALFORMED_MODEL_RECORD'
@@ -281,6 +285,7 @@ export type SyntheticDebugOrchestrationErrorCode =
   | 'TRUSTED_APPROVAL_REPLAY_MISMATCH'
   | 'WORKER_EXECUTION_INTEGRITY_MISMATCH'
   | 'VERIFICATION_EXECUTION_INTEGRITY_MISMATCH'
+  | 'FINAL_DELIVERY_INTEGRITY_MISMATCH'
   | 'OUT_OF_ORDER'
   | 'TERMINAL_STATE'
   | 'TRANSITION_REJECTED';
@@ -348,6 +353,9 @@ export interface SyntheticDebugDiscoveryController {
     snapshot: SyntheticDebugOrchestrationSnapshot,
   ): Promise<SyntheticDebugOrchestrationResult>;
   evaluateIndependentReview(
+    snapshot: SyntheticDebugOrchestrationSnapshot,
+  ): Promise<SyntheticDebugOrchestrationResult>;
+  evaluateFinalDelivery(
     snapshot: SyntheticDebugOrchestrationSnapshot,
   ): Promise<SyntheticDebugOrchestrationResult>;
 }
@@ -421,6 +429,7 @@ type SyntheticDebugSnapshotPatch = Partial<
     | 'verificationDecision'
     | 'independentReviewPackage'
     | 'independentReview'
+    | 'finalDelivery'
   >
 >;
 
@@ -897,6 +906,13 @@ export function createSyntheticDebugDiscoveryController(
   const workerExecutionResults = new Map<string, Promise<SyntheticDebugOrchestrationResult>>();
   const verificationResults = new Map<string, Promise<SyntheticDebugOrchestrationResult>>();
   const independentReviewResults = new Map<string, Promise<SyntheticDebugOrchestrationResult>>();
+  const finalDeliveryResults = new Map<
+    string,
+    {
+      readonly inputFingerprint: string;
+      readonly result: SyntheticDebugOrchestrationResult;
+    }
+  >();
   const approvalDecisionBindings = new Map<
     string,
     {
@@ -1313,6 +1329,61 @@ export function createSyntheticDebugDiscoveryController(
     ]);
   }
 
+  function buildFinalDeliveryReport(
+    snapshot: SyntheticDebugOrchestrationSnapshot,
+  ): DeepReadonly<DebugDeliveryReport> | null {
+    const baseline = snapshot.knownGoodBaseline;
+    const proposal = snapshot.writeProposal;
+    const execution = snapshot.workerExecution;
+    const verification = snapshot.verificationDecision;
+    if (baseline === null || proposal === null || execution === null || verification === null) {
+      return null;
+    }
+    const verificationRecords = verification.profileResults.map((profile) => {
+      const action = execution.actions.find(
+        ({ actionIndex }) => actionIndex === profile.actionIndex,
+      );
+      return {
+        profileId: profile.profileId,
+        required: profile.required,
+        status: profile.status,
+        ...(action?.exitCode === null || action?.exitCode === undefined
+          ? {}
+          : { exitCode: action.exitCode }),
+        startedAt: action?.startedAt ?? '',
+        finishedAt: action?.finishedAt ?? '',
+        summary: action?.summary ?? `Cached verification outcome: ${profile.status}`,
+      };
+    });
+    return buildDebugDeliveryReport({
+      workflowKind: 'synthetic',
+      caseId: snapshot.caseId,
+      workerJobId: verification.workerJobId ?? '',
+      projectId: snapshot.projectId,
+      baselineSha: verification.baselineSha,
+      baselineOwnerVerified: baseline.ownerVerification.status === 'OWNER_VERIFIED',
+      candidateSha: verification.candidateSha,
+      isolatedBranch: verification.isolatedBranch,
+      workspacePath: execution.workspaceReference,
+      rollbackRef: verification.rollbackRef,
+      rollbackSha: verification.rollbackSha,
+      problemEvidence: snapshot.reproducibleDefectEvidence.map((evidence) => ({
+        evidenceId: evidence.evidenceId,
+        classification: 'SYNTHETIC' as const,
+        summary: evidence.reference,
+      })),
+      rootCause: snapshot.rootCause?.explanation ?? '',
+      approvedPaths: verification.approvedPaths,
+      changedPaths: verification.changedPaths,
+      affectedSurfaces: snapshot.intake.affectedSurfaces,
+      requiredProfileIds: verification.requiredProfileIds,
+      verification: verificationRecords,
+      review: independentReviewForDelivery(snapshot.independentReview),
+      unresolvedBlockingUncertainty: rootCauseUncertainty(snapshot.rootCause),
+      unresolvedNonBlockingUncertainty: [],
+    });
+  }
+
   async function resolvePendingWriteApproval(
     snapshot: SyntheticDebugOrchestrationSnapshot,
     proposal: DeepReadonly<SyntheticDebugWriteProposal>,
@@ -1474,6 +1545,7 @@ export function createSyntheticDebugDiscoveryController(
           verificationDecision: null,
           independentReviewPackage: null,
           independentReview: null,
+          finalDelivery: null,
         }),
       });
     },
@@ -2143,7 +2215,110 @@ export function createSyntheticDebugDiscoveryController(
       independentReviewResults.set(bindingKey, resolution);
       return await resolution;
     },
+
+    async evaluateFinalDelivery(snapshot: SyntheticDebugOrchestrationSnapshot) {
+      const operation = 'EVALUATE_FINAL_DELIVERY';
+      const proposal = snapshot.writeProposal;
+      const approval = snapshot.writeApprovalDecision;
+      if (proposal === null || approval === null) {
+        const invalid = requireState(snapshot, operation, 'REVIEWING');
+        return (
+          invalid ??
+          fail(
+            snapshot,
+            operation,
+            'FINAL_DELIVERY_INTEGRITY_MISMATCH',
+            'Final delivery requires the complete cached trusted C3 evidence package.',
+          )
+        );
+      }
+      const bindingKey = workerExecutionBindingKey(snapshot, proposal, approval);
+      const cachedFinal = finalDeliveryResults.get(bindingKey);
+      if (cachedFinal !== undefined) {
+        if (
+          JSON.stringify(snapshot) === cachedFinal.inputFingerprint ||
+          (cachedFinal.result.ok && serializedEqual(snapshot, cachedFinal.result.snapshot))
+        ) {
+          return cachedFinal.result;
+        }
+        return reject(
+          snapshot,
+          operation,
+          'FINAL_DELIVERY_INTEGRITY_MISMATCH',
+          'Conflicting final delivery evidence was rejected without replacing the first decision.',
+        );
+      }
+
+      const invalid = requireState(snapshot, operation, 'REVIEWING');
+      if (invalid !== null) return invalid;
+      const cachedReviewPromise = independentReviewResults.get(bindingKey);
+      if (cachedReviewPromise === undefined) {
+        return block(snapshot, operation, [
+          {
+            code: 'FINAL_DELIVERY_INTEGRITY_MISMATCH',
+            summary: 'Final delivery could not resolve the cached trusted C3.8 review result.',
+          },
+        ]);
+      }
+      const cachedReview = await cachedReviewPromise;
+      if (
+        !cachedReview.ok ||
+        cachedReview.status !== 'ADVANCED' ||
+        cachedReview.snapshot.machine.state !== 'REVIEWING' ||
+        cachedReview.snapshot.independentReview?.disposition !== 'pass' ||
+        !serializedEqual(snapshot, cachedReview.snapshot)
+      ) {
+        return block(snapshot, operation, [
+          {
+            code: 'FINAL_DELIVERY_INTEGRITY_MISMATCH',
+            summary:
+              'Final delivery rejected mismatched case, proposal, execution, verification, or review evidence.',
+          },
+        ]);
+      }
+
+      const report = buildFinalDeliveryReport(cachedReview.snapshot);
+      if (report === null) {
+        return fail(
+          cachedReview.snapshot,
+          operation,
+          'FINAL_DELIVERY_INTEGRITY_MISMATCH',
+          'The cached trusted C3 evidence package is incomplete or corrupt.',
+        );
+      }
+      const patch = { finalDelivery: report } as const;
+      const result = report.gate.allowed
+        ? apply(
+            cachedReview.snapshot,
+            operation,
+            'MARK_TEST_READY',
+            [
+              {
+                code: 'FINAL_DELIVERY_GATE_ALLOWED',
+                summary:
+                  'The authoritative final delivery gate allowed the synthetic test candidate.',
+              },
+            ],
+            'ADVANCED',
+            patch,
+          )
+        : block(
+            cachedReview.snapshot,
+            operation,
+            report.gate.blockers.map((summary) => ({
+              code: 'FINAL_DELIVERY_GATE_BLOCKER',
+              summary,
+            })) as [SyntheticDebugTransitionReason, ...SyntheticDebugTransitionReason[]],
+            patch,
+          );
+      finalDeliveryResults.set(
+        bindingKey,
+        Object.freeze({ inputFingerprint: JSON.stringify(snapshot), result }),
+      );
+      return result;
+    },
   };
   Object.defineProperty(controller, 'evaluateIndependentReview', { enumerable: false });
+  Object.defineProperty(controller, 'evaluateFinalDelivery', { enumerable: false });
   return Object.freeze(controller);
 }

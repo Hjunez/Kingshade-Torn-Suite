@@ -245,7 +245,7 @@ describe('Stage B synthetic acceptance', () => {
       candidateSha: string;
       rollbackSha: string;
     };
-    expect(machineReadable.status).toBe('SYNTHETIC_ACCEPTED');
+    expect(machineReadable.status).toBe('TEST_READY');
     expect(machineReadable.candidateSha).toBe(passed.headShaAfter);
     expect(machineReadable.rollbackSha).toBe(baseline);
     expect(await sourceState(root)).toEqual(original);
