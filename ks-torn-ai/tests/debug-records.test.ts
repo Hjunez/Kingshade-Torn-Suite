@@ -15,6 +15,7 @@ import {
 } from '../src/debug/records.js';
 
 const baselineSha = 'a'.repeat(40);
+const candidateSha = 'b'.repeat(40);
 
 const intake = {
   schemaVersion: '1.0',
@@ -89,6 +90,8 @@ const trustedReview = {
   projectId: 'synthetic',
   sourceBoundary: 'INDEPENDENT_REVIEW_SERVICE',
   reviewId: 'synthetic-review-1',
+  reviewPackageId: `review-package-${'c'.repeat(64)}`,
+  candidateSha,
   disposition: 'pass',
   summary: 'The synthetic plan is bounded and supported by its fixture evidence.',
   findings: ['The proposed path and test profile are bounded.'],

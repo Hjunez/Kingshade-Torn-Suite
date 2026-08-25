@@ -6,6 +6,11 @@ import { selectKnownGoodBaseline, type BaselineEvidence } from '../repository/ba
 import { redactRepositorySecrets } from '../repository/validation.js';
 import { canStartImplementation, isFullCommitSha, type GateDecision } from './gates.js';
 import {
+  adaptSyntheticDebugIndependentReview,
+  buildSyntheticDebugIndependentReviewPackage,
+  type SyntheticDebugIndependentReviewPackage,
+} from './independent-review.js';
+import {
   parseModelSyntheticDebugRecord,
   parseTrustedSyntheticDebugApprovalDecision,
   parseTrustedSyntheticDebugBaselineRecord,
@@ -18,6 +23,7 @@ import {
   type SyntheticDebugWriteProposal,
   type TrustedSyntheticDebugApprovalDecision,
   type TrustedSyntheticDebugBaselineRecord,
+  type TrustedSyntheticDebugReviewRecord,
 } from './records.js';
 import {
   adaptSyntheticDebugWorkerError,
@@ -183,10 +189,25 @@ export interface SyntheticDebugTaskGCapability {
   readonly executeApprovedSyntheticImplementation: (request: SyntheticDebugTaskGRequest) => unknown;
 }
 
+export type SyntheticDebugTaskIOperation = 'REVIEW_VERIFIED_SYNTHETIC_CANDIDATE';
+
+export interface SyntheticDebugTaskIRequest {
+  readonly schemaVersion: '1.0';
+  readonly workflowKind: 'synthetic';
+  readonly accessMode: 'INDEPENDENT_REVIEW_SERVICE_ONLY';
+  readonly operation: SyntheticDebugTaskIOperation;
+  readonly reviewPackage: DeepReadonly<SyntheticDebugIndependentReviewPackage>;
+}
+
+export interface SyntheticDebugTaskICapability {
+  readonly reviewVerifiedSyntheticCandidate: (request: SyntheticDebugTaskIRequest) => unknown;
+}
+
 export interface SyntheticDebugOrchestratorDependencies {
   readonly taskD?: SyntheticDebugTaskDCapability;
   readonly taskF?: SyntheticDebugTaskFCapability;
   readonly taskG?: SyntheticDebugTaskGCapability;
+  readonly taskI?: SyntheticDebugTaskICapability;
 }
 
 export interface SyntheticDebugCurrentCandidate {
@@ -227,6 +248,8 @@ export interface SyntheticDebugOrchestrationSnapshot {
   readonly writeApprovalDecision: DeepReadonly<TrustedSyntheticDebugApprovalDecision> | null;
   readonly workerExecution: DeepReadonly<SyntheticDebugWorkerExecutionRecord> | null;
   readonly verificationDecision: DeepReadonly<SyntheticDebugVerificationDecision> | null;
+  readonly independentReviewPackage: DeepReadonly<SyntheticDebugIndependentReviewPackage> | null;
+  readonly independentReview: DeepReadonly<TrustedSyntheticDebugReviewRecord> | null;
 }
 
 export type SyntheticDebugOrchestrationOperation =
@@ -239,7 +262,8 @@ export type SyntheticDebugOrchestrationOperation =
   | 'REQUEST_WRITE_APPROVAL'
   | 'RESOLVE_WRITE_APPROVAL'
   | 'EXECUTE_APPROVED_IMPLEMENTATION'
-  | 'EVALUATE_VERIFICATION';
+  | 'EVALUATE_VERIFICATION'
+  | 'EVALUATE_INDEPENDENT_REVIEW';
 
 export type SyntheticDebugOrchestrationErrorCode =
   | 'MALFORMED_MODEL_RECORD'
@@ -323,6 +347,9 @@ export interface SyntheticDebugDiscoveryController {
   evaluateVerification(
     snapshot: SyntheticDebugOrchestrationSnapshot,
   ): Promise<SyntheticDebugOrchestrationResult>;
+  evaluateIndependentReview(
+    snapshot: SyntheticDebugOrchestrationSnapshot,
+  ): Promise<SyntheticDebugOrchestrationResult>;
 }
 
 function deepFreeze<T>(value: T): DeepReadonly<T> {
@@ -392,6 +419,8 @@ type SyntheticDebugSnapshotPatch = Partial<
     | 'writeApprovalDecision'
     | 'workerExecution'
     | 'verificationDecision'
+    | 'independentReviewPackage'
+    | 'independentReview'
   >
 >;
 
@@ -591,6 +620,18 @@ function taskGRequest(
     projectId: snapshot.projectId,
     approvalDecisionReferenceId: decision.decisionReferenceId,
     proposal,
+  });
+}
+
+function taskIRequest(
+  reviewPackage: DeepReadonly<SyntheticDebugIndependentReviewPackage>,
+): SyntheticDebugTaskIRequest {
+  return deepFreeze({
+    schemaVersion: '1.0',
+    workflowKind: 'synthetic',
+    accessMode: 'INDEPENDENT_REVIEW_SERVICE_ONLY',
+    operation: 'REVIEW_VERIFIED_SYNTHETIC_CANDIDATE',
+    reviewPackage,
   });
 }
 
@@ -850,15 +891,24 @@ export function createSyntheticDebugDiscoveryController(
   const capability = dependencies.taskD;
   const taskFCapability = dependencies.taskF;
   const taskGCapability = dependencies.taskG;
+  const taskICapability = dependencies.taskI;
   const writeProposalResults = new Map<string, SyntheticDebugOrchestrationResult>();
   const writeApprovalResults = new Map<string, Promise<SyntheticDebugOrchestrationResult>>();
   const workerExecutionResults = new Map<string, Promise<SyntheticDebugOrchestrationResult>>();
   const verificationResults = new Map<string, Promise<SyntheticDebugOrchestrationResult>>();
+  const independentReviewResults = new Map<string, Promise<SyntheticDebugOrchestrationResult>>();
   const approvalDecisionBindings = new Map<
     string,
     {
       readonly bindingKey: string;
       readonly decision: TrustedSyntheticDebugApprovalDecision['decision'];
+    }
+  >();
+  const independentReviewIdBindings = new Map<
+    string,
+    {
+      readonly bindingKey: string;
+      readonly fingerprint: string;
     }
   >();
 
@@ -1037,6 +1087,232 @@ export function createSyntheticDebugDiscoveryController(
     return result;
   }
 
+  function serializedEqual(left: unknown, right: unknown): boolean {
+    try {
+      return JSON.stringify(left) === JSON.stringify(right);
+    } catch {
+      return false;
+    }
+  }
+
+  function trustedReviewPrerequisites(
+    result: SyntheticDebugOrchestrationResult,
+  ): SyntheticDebugOrchestrationSnapshot | null {
+    if (
+      !result.ok ||
+      result.status !== 'ADVANCED' ||
+      result.snapshot.machine.state !== 'REVIEWING' ||
+      result.snapshot.verificationDecision?.status !== 'PASSED' ||
+      result.snapshot.independentReviewPackage !== null ||
+      result.snapshot.independentReview !== null
+    ) {
+      return null;
+    }
+    return result.snapshot;
+  }
+
+  function independentReviewFingerprint(
+    record: DeepReadonly<TrustedSyntheticDebugReviewRecord>,
+  ): string {
+    return createHash('sha256').update(JSON.stringify(record), 'utf8').digest('hex');
+  }
+
+  function reviewOutcomeReasons(
+    review: DeepReadonly<TrustedSyntheticDebugReviewRecord>,
+  ): readonly [SyntheticDebugTransitionReason, ...SyntheticDebugTransitionReason[]] {
+    const code =
+      review.disposition === 'fail' ? 'INDEPENDENT_REVIEW_FAILED' : 'INDEPENDENT_REVIEW_BLOCKED';
+    return review.blockers.map((summary) => ({ code, summary })) as [
+      SyntheticDebugTransitionReason,
+      ...SyntheticDebugTransitionReason[],
+    ];
+  }
+
+  function buildTrustedReviewPackage(
+    snapshot: SyntheticDebugOrchestrationSnapshot,
+  ): DeepReadonly<SyntheticDebugIndependentReviewPackage> | null {
+    if (
+      snapshot.knownGoodBaseline === null ||
+      snapshot.rootCause === null ||
+      snapshot.writeProposal === null ||
+      snapshot.verificationDecision === null
+    ) {
+      return null;
+    }
+    try {
+      return buildSyntheticDebugIndependentReviewPackage({
+        caseId: snapshot.caseId,
+        projectId: snapshot.projectId,
+        intake: snapshot.intake,
+        knownGoodBaseline: snapshot.knownGoodBaseline,
+        problemEvidence: snapshot.reproducibleDefectEvidence,
+        rootCause: snapshot.rootCause,
+        proposal: snapshot.writeProposal,
+        verification: snapshot.verificationDecision,
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  async function resolvePendingIndependentReview(
+    snapshot: SyntheticDebugOrchestrationSnapshot,
+    bindingKey: string,
+    trustedVerificationPromise: Promise<SyntheticDebugOrchestrationResult>,
+  ): Promise<SyntheticDebugOrchestrationResult> {
+    const operation = 'EVALUATE_INDEPENDENT_REVIEW';
+    const trustedVerification = await trustedVerificationPromise;
+    const trustedSnapshot = trustedReviewPrerequisites(trustedVerification);
+    if (trustedSnapshot === null) {
+      return block(snapshot, operation, [
+        {
+          code: 'REVIEW_VERIFICATION_INTEGRITY_MISMATCH',
+          summary: 'Independent review requires the cached trusted passing C3.7 result.',
+        },
+      ]);
+    }
+
+    const reviewPackage = buildTrustedReviewPackage(trustedSnapshot);
+    if (reviewPackage === null) {
+      return block(trustedSnapshot, operation, [
+        {
+          code: 'INDEPENDENT_REVIEW_PACKAGE_INVALID',
+          summary: 'The cached trusted evidence could not produce a strict review package.',
+        },
+      ]);
+    }
+    const packagePatch = { independentReviewPackage: reviewPackage } as const;
+    if (!serializedEqual(snapshot, trustedSnapshot)) {
+      return block(
+        trustedSnapshot,
+        operation,
+        [
+          {
+            code: 'REVIEW_VERIFICATION_INTEGRITY_MISMATCH',
+            summary: 'Independent review rejected evidence outside the cached trusted C3.7 result.',
+          },
+        ],
+        packagePatch,
+      );
+    }
+    if (taskICapability === undefined) {
+      return block(
+        trustedSnapshot,
+        operation,
+        [
+          {
+            code: 'INDEPENDENT_REVIEW_NOT_RUN',
+            summary: 'The application-owned independent review capability was not injected.',
+          },
+        ],
+        packagePatch,
+      );
+    }
+
+    let reviewInput: unknown;
+    try {
+      reviewInput = await taskICapability.reviewVerifiedSyntheticCandidate(
+        taskIRequest(reviewPackage),
+      );
+    } catch {
+      return fail(
+        trustedSnapshot,
+        operation,
+        'INDEPENDENT_REVIEW_DEPENDENCY_ERROR',
+        'The injected independent review capability failed.',
+        packagePatch,
+      );
+    }
+
+    const adaptation = adaptSyntheticDebugIndependentReview(reviewInput, reviewPackage);
+    if (!adaptation.ok) {
+      return block(
+        trustedSnapshot,
+        operation,
+        [{ code: adaptation.code, summary: adaptation.summary }],
+        packagePatch,
+      );
+    }
+
+    const review = adaptation.record;
+    const fingerprint = independentReviewFingerprint(review);
+    const existingBinding = independentReviewIdBindings.get(review.reviewId);
+    if (
+      existingBinding !== undefined &&
+      (existingBinding.bindingKey !== bindingKey || existingBinding.fingerprint !== fingerprint)
+    ) {
+      return block(
+        trustedSnapshot,
+        operation,
+        [
+          {
+            code: 'INDEPENDENT_REVIEW_CONFLICT',
+            summary:
+              'The independent review identifier is already bound to different review evidence.',
+          },
+        ],
+        packagePatch,
+      );
+    }
+    independentReviewIdBindings.set(review.reviewId, Object.freeze({ bindingKey, fingerprint }));
+
+    const patch = { ...packagePatch, independentReview: review } as const;
+    if (review.disposition === 'pass') {
+      return apply(
+        trustedSnapshot,
+        operation,
+        'COMPLETE_REVIEW',
+        [
+          {
+            code: 'INDEPENDENT_REVIEW_PASSED',
+            summary:
+              'The application-owned independent review service passed the verified candidate.',
+          },
+        ],
+        'ADVANCED',
+        patch,
+      );
+    }
+    return block(trustedSnapshot, operation, reviewOutcomeReasons(review), patch);
+  }
+
+  async function resolveIndependentReviewReplay(
+    snapshot: SyntheticDebugOrchestrationSnapshot,
+    cachedPromise: Promise<SyntheticDebugOrchestrationResult>,
+    trustedVerificationPromise: Promise<SyntheticDebugOrchestrationResult>,
+  ): Promise<SyntheticDebugOrchestrationResult> {
+    const [cached, trustedVerification] = await Promise.all([
+      cachedPromise,
+      trustedVerificationPromise,
+    ]);
+    const trustedSnapshot = trustedReviewPrerequisites(trustedVerification);
+    if (
+      (trustedSnapshot !== null && serializedEqual(snapshot, trustedSnapshot)) ||
+      (cached.ok && serializedEqual(snapshot, cached.snapshot))
+    ) {
+      return cached;
+    }
+
+    const preserved =
+      cached.ok && cached.snapshot.machine.state === 'REVIEWING'
+        ? cached.snapshot
+        : trustedSnapshot;
+    if (preserved === null) {
+      return block(snapshot, 'EVALUATE_INDEPENDENT_REVIEW', [
+        {
+          code: 'INDEPENDENT_REVIEW_CONFLICT',
+          summary: 'Conflicting independent review evidence failed closed.',
+        },
+      ]);
+    }
+    return block(preserved, 'EVALUATE_INDEPENDENT_REVIEW', [
+      {
+        code: 'INDEPENDENT_REVIEW_CONFLICT',
+        summary: 'Conflicting independent review evidence failed closed without latest-wins.',
+      },
+    ]);
+  }
+
   async function resolvePendingWriteApproval(
     snapshot: SyntheticDebugOrchestrationSnapshot,
     proposal: DeepReadonly<SyntheticDebugWriteProposal>,
@@ -1147,7 +1423,7 @@ export function createSyntheticDebugDiscoveryController(
     );
   }
 
-  return Object.freeze({
+  const controller = {
     createCase(input: unknown): SyntheticDebugOrchestrationCreateResult {
       let parsed;
       try {
@@ -1196,6 +1472,8 @@ export function createSyntheticDebugDiscoveryController(
           writeApprovalDecision: null,
           workerExecution: null,
           verificationDecision: null,
+          independentReviewPackage: null,
+          independentReview: null,
         }),
       });
     },
@@ -1796,5 +2074,76 @@ export function createSyntheticDebugDiscoveryController(
         trustedExecution,
       );
     },
-  });
+
+    async evaluateIndependentReview(snapshot: SyntheticDebugOrchestrationSnapshot) {
+      const operation = 'EVALUATE_INDEPENDENT_REVIEW';
+      const invalid = requireState(snapshot, operation, 'REVIEWING');
+      if (invalid !== null) return invalid;
+
+      const proposal = snapshot.writeProposal;
+      const decisionInput = snapshot.writeApprovalDecision;
+      if (
+        proposal === null ||
+        decisionInput === null ||
+        snapshot.workerExecution === null ||
+        snapshot.verificationDecision === null
+      ) {
+        return block(snapshot, operation, [
+          {
+            code: 'REVIEW_VERIFICATION_INTEGRITY_MISMATCH',
+            summary: 'Independent review requires one cached passing C3.7 decision.',
+          },
+        ]);
+      }
+
+      const parsedProposal = syntheticDebugWriteProposalSchema.safeParse(proposal);
+      const parsedDecision = trustedSyntheticDebugApprovalDecisionSchema.safeParse(decisionInput);
+      if (!parsedProposal.success || !parsedDecision.success) {
+        return block(snapshot, operation, [
+          {
+            code: 'REVIEW_VERIFICATION_INTEGRITY_MISMATCH',
+            summary: 'Independent review rejected an invalid cached proposal binding.',
+          },
+        ]);
+      }
+
+      const bindingKey = workerExecutionBindingKey(snapshot, proposal, parsedDecision.data);
+      const trustedVerification = verificationResults.get(bindingKey);
+      if (trustedVerification === undefined) {
+        return block(snapshot, operation, [
+          {
+            code: 'REVIEW_VERIFICATION_INTEGRITY_MISMATCH',
+            summary: 'Independent review could not resolve the cached trusted C3.7 result.',
+          },
+        ]);
+      }
+
+      const existing = independentReviewResults.get(bindingKey);
+      if (existing !== undefined) {
+        return await resolveIndependentReviewReplay(snapshot, existing, trustedVerification);
+      }
+
+      const trustedVerificationResult = await trustedVerification;
+      const trustedSnapshot = trustedReviewPrerequisites(trustedVerificationResult);
+      if (trustedSnapshot === null || !serializedEqual(snapshot, trustedSnapshot)) {
+        const preserved = trustedSnapshot ?? snapshot;
+        return block(preserved, operation, [
+          {
+            code: 'REVIEW_VERIFICATION_INTEGRITY_MISMATCH',
+            summary: 'Independent review rejected evidence outside the cached trusted C3.7 result.',
+          },
+        ]);
+      }
+
+      const concurrent = independentReviewResults.get(bindingKey);
+      if (concurrent !== undefined) {
+        return await resolveIndependentReviewReplay(snapshot, concurrent, trustedVerification);
+      }
+      const resolution = resolvePendingIndependentReview(snapshot, bindingKey, trustedVerification);
+      independentReviewResults.set(bindingKey, resolution);
+      return await resolution;
+    },
+  };
+  Object.defineProperty(controller, 'evaluateIndependentReview', { enumerable: false });
+  return Object.freeze(controller);
 }

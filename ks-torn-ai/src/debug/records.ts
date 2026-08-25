@@ -51,6 +51,13 @@ const approvalDecisionReferenceSchema = recordIdentifierSchema.refine(
     redactRepositorySecrets(value).redactionCount === 0,
   'Expected a non-secret approval decision reference',
 );
+const independentReviewIdentifierSchema = recordIdentifierSchema.refine(
+  (value) => !/^[0-9a-f]{64}$/i.test(value) && redactRepositorySecrets(value).redactionCount === 0,
+  'Expected a non-secret independent review identifier',
+);
+const independentReviewPackageIdentifierSchema = recordIdentifierSchema.regex(
+  /^review-package-[0-9a-f]{64}$/i,
+);
 
 function hasUniqueStrings(values: readonly string[]): boolean {
   return new Set(values).size === values.length;
@@ -243,7 +250,9 @@ export const trustedSyntheticDebugReviewRecordSchema = z
     ...workflowRecordFields,
     recordKind: z.literal('INDEPENDENT_REVIEW'),
     sourceBoundary: z.literal('INDEPENDENT_REVIEW_SERVICE'),
-    reviewId: recordIdentifierSchema,
+    reviewId: independentReviewIdentifierSchema,
+    reviewPackageId: independentReviewPackageIdentifierSchema,
+    candidateSha: exactCommitShaSchema,
     disposition: z.enum(['pass', 'fail', 'blocked']),
     summary: statementSchema,
     findings: statementListSchema,

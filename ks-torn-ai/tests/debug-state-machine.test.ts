@@ -24,6 +24,7 @@ const SUCCESS_PATH = [
   ['GRANT_WRITE_APPROVAL', 'IMPLEMENTING'],
   ['START_VERIFICATION', 'VERIFYING'],
   ['START_REVIEW', 'REVIEWING'],
+  ['COMPLETE_REVIEW', 'REVIEWING'],
   ['MARK_TEST_READY', 'TEST_READY'],
 ] as const satisfies readonly (readonly [SyntheticDebugEvent, SyntheticDebugState])[];
 
@@ -90,7 +91,12 @@ describe('Synthetic Debug MVP state machine', () => {
         FAIL: 'FAILED',
       },
       VERIFYING: { START_REVIEW: 'REVIEWING', BLOCK: 'BLOCKED', FAIL: 'FAILED' },
-      REVIEWING: { MARK_TEST_READY: 'TEST_READY', BLOCK: 'BLOCKED', FAIL: 'FAILED' },
+      REVIEWING: {
+        COMPLETE_REVIEW: 'REVIEWING',
+        MARK_TEST_READY: 'TEST_READY',
+        BLOCK: 'BLOCKED',
+        FAIL: 'FAILED',
+      },
       TEST_READY: {},
       BLOCKED: {},
       FAILED: {},
