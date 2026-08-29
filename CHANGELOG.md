@@ -2,6 +2,29 @@
 
 All notable changes to Kingshade Suite are documented here.
 
+## KS Ranked War DIBS — 2026-08-29 — Emergency release
+
+This emergency release publishes the three already selected and sealed Ranked War builds without product-logic changes.
+
+### Torn PDA — KS Torn War Dibs 1.5.145
+
+- Published the sealed PDA build to the permanent stable update channel and an immutable 1.5.145 snapshot.
+- FF and shared DIBS are operational, and the new row/name stability solution passed live smoke.
+- Known limitation: the Est overlay was not visible on the tested current Torn PDA layout. Est is not claimed as working in this release.
+
+### Torn PC — KS Torn War Dibs PC 1.0.13
+
+- Added the dedicated Torn PC stable update channel and 1.0.13 snapshot.
+- Preserves the live-smoked PREWAR, FFScouter sort/filter, scrolling, route remount, native Attack and React-safe presentation behavior of the sealed build.
+
+### FFScouter War Room — KS FFScouter Call Guard 1.1.3
+
+- Published the sealed shared-claim correction to the permanent War Room stable channel and a 1.1.3 snapshot.
+- Preserves server queue order, claim/release authority and fail-closed shared-claim handling.
+- Shared DIBS depends on FFScouter Hit Calling, which FFScouter's current API documentation identifies as a Premium feature.
+
+All stable files and their matching versioned snapshots use the corresponding permanent stable update/download URL. No Cloudflare/backend file is part of this release.
+
 ## KS Ranked War DIBS — 2026-08-20 — Release
 
 ### KS Torn War Dibs 1.5.91

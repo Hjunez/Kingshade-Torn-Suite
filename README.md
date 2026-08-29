@@ -100,16 +100,20 @@ The FFScouter integration uses its documented `/register`, `/check-key`, `/get-s
 
 ## KS Ranked War DIBS
 
-Shared Ranked War target coordination across **Torn PDA** and **FFScouter War Room**.
+Shared Ranked War target coordination across **Torn PDA**, **Torn PC** and **FFScouter War Room**.
 
-- **KS Torn War Dibs 1.5.91** — PDA FF/Est, real Hospital countdown, FF 2.00–5.00 and shared DIBS.
-- **KS FFScouter Call Guard 1.1.2** — PC/Tampermonkey War Room DIBS, TAKEN + claimant name and RELEASE.
+- **Torn PDA — KS Torn War Dibs 1.5.145** — FF and shared DIBS are operational, and the new row/name stability solution passed live smoke. Known limitation: the Est overlay is not currently visible on the tested current Torn PDA layout.
+- **Torn PC — KS Torn War Dibs PC 1.0.13** — native Attack-column DIBS for Tampermonkey on Torn.
+- **FFScouter War Room — KS FFScouter Call Guard 1.1.3** — War Room DIBS, TAKEN + claimant name and RELEASE.
 - Stable update URLs use the unversioned `.user.js` files.
+- Shared DIBS depends on FFScouter Hit Calling, which FFScouter's current API documentation identifies as a Premium feature.
 - Full guide: [`docs/KS_RANKED_WAR_DIBS.md`](docs/KS_RANKED_WAR_DIBS.md).
 
-**PDA:** `https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs.user.js`
+**Torn PDA:** `https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs.user.js`
 
-**PC:** `https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_FFScouter_Call_Guard.user.js`
+**Torn PC:** `https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs_PC.user.js`
+
+**FFScouter War Room:** `https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_FFScouter_Call_Guard.user.js`
 
 ## Kingshade's Bootlegging Clean 4.1.1
 

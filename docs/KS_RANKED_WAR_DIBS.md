@@ -1,20 +1,23 @@
 # KS Ranked War DIBS
 
-Two coordinated userscripts provide shared Ranked War target claims across Torn PDA and FFScouter War Room.
+Three coordinated userscripts provide shared Ranked War target claims across Torn PDA, Torn PC and FFScouter War Room.
 
 ## Current releases
 
 | Platform | Script | Version | Stable install URL |
 |---|---|---:|---|
-| Torn PDA | KS Torn War Dibs | 1.5.91 | `https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs.user.js` |
-| PC / Tampermonkey | KS FFScouter Call Guard | 1.1.2 | `https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_FFScouter_Call_Guard.user.js` |
+| Torn PDA | KS Torn War Dibs | 1.5.145 | `https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs.user.js` |
+| Torn PC / Tampermonkey | KS Torn War Dibs PC | 1.0.13 | `https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs_PC.user.js` |
+| FFScouter War Room / Tampermonkey | KS FFScouter Call Guard | 1.1.3 | `https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_FFScouter_Call_Guard.user.js` |
 
 The unversioned URLs are the stable update channels. Versioned snapshots are retained for rollback and auditability.
+
+Shared DIBS depends on FFScouter Hit Calling. FFScouter's current API documentation identifies Hit Calling as a Premium feature, so the scripts require a registered FFScouter key whose owner has the necessary Premium access.
 
 ## What the system does
 
 - Reads the currently displayed Ranked War roster and binds targets by Torn player ID.
-- Shows FFScouter Fair Fight and battle-stat estimate information on Torn PDA.
+- Shows FFScouter Fair Fight information on Torn PDA and Torn PC.
 - Uses real Hospital status/countdown in release mode.
 - DIBS is eligible only when Hospital time is **2:00 or less** and Fair Fight is **2.00–5.00 inclusive**.
 - The first successful FFScouter Hit Calling claim wins.
@@ -22,6 +25,12 @@ The unversioned URLs are the stable update channels. Versioned snapshots are ret
 - The claimant can **RELEASE** the target.
 - One user can hold only one active DIBS at a time.
 - No attack, travel, crime, purchase or other Torn action is automated.
+
+## Known limitation — Torn PDA 1.5.145
+
+- FF and shared DIBS are operational.
+- The new row/name stability solution passed live smoke on the current Torn PDA layout.
+- The Est overlay was not visible on that tested layout. Est is not claimed as working in this emergency release.
 
 ## Torn PDA installation
 
@@ -41,15 +50,21 @@ The unversioned URLs are the stable update channels. Versioned snapshots are ret
 - Shared claim/release state is provided through FFScouter Hit Calling.
 - Network/DOM work is gated to the visible, focused and recently interacted-with page.
 
-## PC / Tampermonkey installation
+## Torn PC / Tampermonkey installation
 
-1. Open Tampermonkey and choose **Create a new script**.
-2. Delete the template content.
-3. Install the contents of the stable `KS_FFScouter_Call_Guard.user.js` URL and save it.
-4. Make sure the script is enabled.
-5. Open FFScouter War Room.
-6. Use your own FFScouter-compatible 16-character API key in FFScouter as normal.
-7. In the **KS Call Guard** panel, choose **Set key** and enter the same FFScouter-compatible key.
+1. Open the stable raw URL for `KS_Torn_War_Dibs_PC.user.js` in Tampermonkey and install it.
+2. Make sure the script is enabled.
+3. Open the Torn faction Ranked War page.
+4. In the **KS Torn War Dibs PC** panel, configure the Torn API key and FFScouter key if they are not already stored.
+5. Confirm Torn and shared connectivity. PREWAR remains locked until the war is live.
+
+## FFScouter War Room / Tampermonkey installation
+
+1. Open the stable raw URL for `KS_FFScouter_Call_Guard.user.js` in Tampermonkey and install it.
+2. Make sure the script is enabled.
+3. Open FFScouter War Room.
+4. Use your own FFScouter-compatible 16-character API key in FFScouter as normal.
+5. In the **KS Call Guard** panel, choose **Set key** and enter the same FFScouter-compatible key.
 
 The Call Guard key is encrypted locally. KS Call Guard makes no direct Torn API requests.
 
@@ -91,9 +106,9 @@ References:
 
 Before a Ranked War:
 
-1. Verify both scripts report their current release versions.
+1. Verify all three scripts report their current release versions.
 2. Verify keys load without errors.
-3. Confirm FF/Est appears on PDA.
+3. Confirm FF appears on PDA. The Est overlay is a documented limitation of PDA 1.5.145 on the tested current layout and is not a release-pass claim.
 4. Confirm a real Hospital target above 2:00 remains locked.
 5. Confirm a real target at <=2:00 is claimable only with FF 2.00–5.00.
 6. Claim once from one client, verify TAKEN + claimant name on another, then RELEASE.
@@ -101,7 +116,8 @@ Before a Ranked War:
 ## Troubleshooting
 
 - **Shared offline / too many requests:** wait for the backoff period; do not repeatedly press Sync.
-- **No FF/Est:** verify FFScouter key and that the target/player IDs are visible on the current roster.
+- **No FF:** verify the FFScouter key and that the target/player IDs are visible on the current roster.
+- **No Est on PDA 1.5.145:** this is the documented limitation on the tested current Torn PDA layout; do not treat this release as proof that Est is working.
 - **No Hospital timer on PDA:** verify Torn API status is online and the target is genuinely in Hospital.
 - **War Room button locked:** check Hospital time and FF range; unknown FF is intentionally non-claimable.
 - **Old behavior after update:** confirm the installed userscript version and stable raw URL, then reload the relevant page once.
