@@ -1,5 +1,6 @@
 import js from '@eslint/js';
 import globals from 'globals';
+import { KS_FORBIDDEN_SYNTAX } from './tools/compliance-syntax.mjs';
 
 const knownUnusedBindings =
   '^(extractEstimateFragment|findCommonContainer|formatRwRunway|tornTransportFailureStreak|tornUserBasicCapability)$';
@@ -38,6 +39,34 @@ export default [
           varsIgnorePattern: knownUnusedBindings,
         },
       ],
+    },
+  },
+  {
+    // KS compliance-baseline för allt nytt delat källkodslager.
+    files: ['src/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      globals: globals.browser,
+    },
+    rules: {
+      ...js.configs.recommended.rules,
+      'no-empty': ['error', { allowEmptyCatch: true }],
+      'no-restricted-syntax': ['error', ...KS_FORBIDDEN_SYNTAX],
+      'no-restricted-globals': [
+        'error',
+        {
+          name: 'unsafeWindow',
+          message: 'KS: unsafeWindow kringgår sandlådan — motivera eller undvik.',
+        },
+      ],
+    },
+  },
+  {
+    // Compliance-lagret självt måste få använda de primitiver det vaktar.
+    files: ['src/compliance/**/*.js'],
+    rules: {
+      'no-restricted-syntax': 'off',
     },
   },
   {
