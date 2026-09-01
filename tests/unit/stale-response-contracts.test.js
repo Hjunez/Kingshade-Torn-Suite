@@ -36,9 +36,22 @@ describe('stale-response defense contracts', () => {
       readRepositoryFile('KS_FFScouter_Call_Guard.user.js'),
     ]);
 
+    // War Dibs 1.5.145 and Call Guard 1.1.3 rewrote these guards from a negative
+    // early-return ("generation !== runtimeGeneration || !runtimeActive") into a
+    // positive isCurrentRequest() predicate. The contract is unchanged and in
+    // fact stricter: both now also pin the request serial / authority epoch and
+    // the credential in use, so a reply that outlives its generation, its key or
+    // its route is discarded rather than applied.
     expect(warDibs).toContain('const generation = runtimeGeneration;');
-    expect(warDibs).toContain('generation !== runtimeGeneration || !runtimeActive');
+    expect(warDibs).toContain('const isCurrentRequest = () => (');
+    expect(warDibs).toContain('generation === runtimeGeneration');
+    expect(warDibs).toContain('runtimeActive');
+    expect(warDibs).toContain('isRuntimeEligible()');
+
     expect(callGuard).toContain('const controller = new AbortController();');
-    expect(callGuard).toContain('if (controller.signal.aborted || !runtimeForeground');
+    expect(callGuard).toContain('const isCurrentRequest = () => (');
+    expect(callGuard).toContain('sharedReadAbortController === controller');
+    expect(callGuard).toContain('runtimeForeground');
+    expect(callGuard).toContain('sharedReadAbortController.abort();');
   });
 });

@@ -2,8 +2,8 @@
   {
     "file": "KS_FFScouter_Call_Guard.user.js",
     "name": "KS FFScouter Call Guard",
-    "sha256": "625DFA904A4E1CEB1728FC9C05C75A6B21F6A6787255563381539567B25271C1",
-    "version": "1.1.2"
+    "sha256": "7C2881920D12D0CD7FB50C5A97C9C5237D2F948D4447CB7C4AC7EB83FEBDAADF",
+    "version": "1.1.3"
   },
   {
     "file": "KS_FFScouter_Call_Guard_v1.0.0.user.js",
@@ -18,10 +18,34 @@
     "version": "1.1.2"
   },
   {
+    "file": "KS_FFScouter_Call_Guard_v1.1.3.user.js",
+    "name": "KS FFScouter Call Guard",
+    "sha256": "7C2881920D12D0CD7FB50C5A97C9C5237D2F948D4447CB7C4AC7EB83FEBDAADF",
+    "version": "1.1.3"
+  },
+  {
     "file": "KS_Torn_War_Dibs.user.js",
     "name": "KS Torn War Dibs",
-    "sha256": "1F7B5926A1CECAD7DDD8DE8973CD6AD1D5D0E79C84283882F41AFFD385327B3D",
-    "version": "1.5.144"
+    "sha256": "2D0A29595C1C9F412CF45714874BF6EC0B631E68B1E821C0ACB9B48F40088BBA",
+    "version": "1.5.145"
+  },
+  {
+    "file": "KS_Torn_War_Dibs_PC.user.js",
+    "name": "KS Torn War Dibs PC",
+    "sha256": "FA8A9F5F006D35FA0AAA394FAD5D6AD50C4C297FED0375567AC7923066AD383C",
+    "version": "1.0.13"
+  },
+  {
+    "file": "KS_Torn_War_Dibs_PC_v1.0.13.user.js",
+    "name": "KS Torn War Dibs PC",
+    "sha256": "FA8A9F5F006D35FA0AAA394FAD5D6AD50C4C297FED0375567AC7923066AD383C",
+    "version": "1.0.13"
+  },
+  {
+    "file": "KS_Torn_War_Dibs_v1.5.145.user.js",
+    "name": "KS Torn War Dibs",
+    "sha256": "2D0A29595C1C9F412CF45714874BF6EC0B631E68B1E821C0ACB9B48F40088BBA",
+    "version": "1.5.145"
   },
   {
     "file": "KS_Torn_War_Dibs_v1.5.91.user.js",

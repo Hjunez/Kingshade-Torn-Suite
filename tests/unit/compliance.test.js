@@ -126,7 +126,10 @@ describe('actionBudget', () => {
  */
 const USERSCRIPT = 'KS_Torn_War_Dibs.user.js';
 const FIXTURE = 'tests/fixtures/war-dibs-page.html';
-const INSTANCE_KEY = '__ksTornWarDibsV1517';
+// Read from the script rather than pinned here: the instance key carries the
+// version (…V1517, …PdaV15145), so every release would otherwise silently turn
+// the boot assertion below into a no-op.
+const INSTANCE_KEY = readInstanceKey(await readRepositoryFile(USERSCRIPT));
 /** @type {import('../../test-support/compliance.js').WarRow[]} */
 const ROWS = [
   { id: '100101', name: 'Compliance Row One', untilOffsetSeconds: 119 },
@@ -294,4 +297,14 @@ describe('userscript-metadata', () => {
 /** Låter skriptets mount-, timer- och microtask-arbete gå klart. */
 function settle() {
   return new Promise((resolve) => setTimeout(resolve, 600));
+}
+
+/**
+ * @param {string} source
+ * @returns {string}
+ */
+function readInstanceKey(source) {
+  const match = source.match(/instanceKey:\s*["']([^"']+)["']/);
+  if (!match?.[1]) throw new Error(`No instanceKey found in ${USERSCRIPT}.`);
+  return match[1];
 }
