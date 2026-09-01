@@ -1,0 +1,14 @@
+# Line endings are LF everywhere, in the repository and in the working tree.
+#
+# Without this, a Windows checkout with core.autocrlf=true writes CRLF to disk
+# while the blobs stay LF. Two gates read the working tree directly and break
+# under that split:
+#
+#   · tests/unit/userscript-integrity.test.js hashes each published userscript
+#     from disk, so its pinned SHA-256 values are only reproducible on the
+#     platform that generated them.
+#   · Prettier is configured with endOfLine "lf", so format:check fails on every
+#     file git has rewritten.
+#
+# Forcing eol=lf keeps both reproducible on Windows, macOS, Linux and CI alike.
+* text=auto eol=lf

@@ -1,0 +1,26 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "War Dibs: Offline Chrome arena",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/tools/launch-war-dibs-arena.mjs",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "War Dibs: Smoke-check offline Chrome arena",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/tools/launch-war-dibs-arena.mjs",
+      "args": ["--smoke"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "skipFiles": ["<node_internals>/**"]
+    }
+  ]
+}

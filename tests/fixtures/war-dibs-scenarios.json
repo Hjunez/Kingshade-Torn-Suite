@@ -1,0 +1,98 @@
+{
+  "baseNowMs": 1787529600000,
+  "keys": {
+    "ffscouter": "FFSCOUTERKEY1234",
+    "torn": "TORNAPIKEY123456"
+  },
+  "self": {
+    "id": "900001",
+    "name": "Kingshade Tester"
+  },
+  "hospitalGateRows": [
+    {
+      "id": "100101",
+      "name": "Above Two Minutes",
+      "untilOffsetSeconds": 120,
+      "fairFight": 3
+    },
+    {
+      "id": "100102",
+      "name": "Exactly Two Minutes",
+      "untilOffsetSeconds": 119,
+      "fairFight": 3
+    },
+    {
+      "id": "100103",
+      "name": "Below Two Minutes",
+      "untilOffsetSeconds": 118,
+      "fairFight": 3
+    }
+  ],
+  "fairFightRows": [
+    {
+      "id": "100201",
+      "name": "Below Minimum FF",
+      "untilOffsetSeconds": 119,
+      "fairFight": 1.99
+    },
+    {
+      "id": "100202",
+      "name": "Minimum FF",
+      "untilOffsetSeconds": 119,
+      "fairFight": 2
+    },
+    {
+      "id": "100203",
+      "name": "Maximum FF",
+      "untilOffsetSeconds": 119,
+      "fairFight": 5
+    },
+    {
+      "id": "100204",
+      "name": "Above Maximum FF",
+      "untilOffsetSeconds": 119,
+      "fairFight": 5.01
+    }
+  ],
+  "claimRow": {
+    "id": "100301",
+    "datasetId": "999999",
+    "name": "Claim Target",
+    "untilOffsetSeconds": 119,
+    "fairFight": 3
+  },
+  "sharedRow": {
+    "id": "100302",
+    "name": "Shared Target",
+    "untilOffsetSeconds": 119,
+    "fairFight": 3
+  },
+  "spaRows": [
+    {
+      "id": "100401",
+      "datasetId": "777777",
+      "name": "Old SPA Target",
+      "untilOffsetSeconds": 119,
+      "fairFight": 2.5
+    },
+    {
+      "id": "100402",
+      "datasetId": "888888",
+      "name": "New SPA Target",
+      "untilOffsetSeconds": 119,
+      "fairFight": 4.5
+    }
+  ],
+  "timeSync": {
+    "tornClockOffsetsMs": [1000, -1000],
+    "hospitalUntilFromLocalNowSeconds": 120
+  },
+  "claimIds": {
+    "first": "10000000-0000-4000-8000-000000000001",
+    "second": "10000000-0000-4000-8000-000000000002",
+    "remote": "10000000-0000-4000-8000-000000000003",
+    "winner": "10000000-0000-4000-8000-000000000004",
+    "loser": "10000000-0000-4000-8000-000000000005",
+    "stale": "10000000-0000-4000-8000-000000000006"
+  }
+}

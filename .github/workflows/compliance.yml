@@ -1,0 +1,66 @@
+name: Compliance
+
+# Compliance-testerna själva körs redan via `npm run verify` i
+# development-tests.yml. Den här workflowen lägger till de två grindar som inte
+# täcks där: hemlighetsskanning och den icke-blockerande rapporten över
+# förbjudna mönster i de publicerade userscripten.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
+    branches:
+      - main
+      - dev
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    name: Hemlighetsskanning
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # gitleaks behöver historiken
+
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  forbidden-syntax:
+    name: Förbjudna mönster (rapport)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Rapport, inte grind. Baselinen är avsiktligt striktare än Torns
+    # regeltext, och de publicerade skripten har i dag träffar som var för sig
+    # kan vara legitima. Sätt inte continue-on-error till false förrän varje
+    # träff är avstämd och antingen fixad eller motiverad med en
+    # eslint-disable-rad.
+    continue-on-error: true
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          cache: npm
+          node-version: 24
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: KS förbjudna mönster
+        run: npm run lint:compliance

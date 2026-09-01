@@ -1,0 +1,37 @@
+{
+  "name": "kingshade-torn-suite",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Development and regression tooling for the Kingshade Torn Suite userscripts.",
+  "engines": {
+    "node": ">=22.15.0"
+  },
+  "scripts": {
+    "arena:war-dibs": "node tools/launch-war-dibs-arena.mjs",
+    "arena:war-dibs:smoke": "node tools/launch-war-dibs-arena.mjs --smoke",
+    "validate:suite": "node tools/run-suite-validator.mjs",
+    "syntax": "node tools/check-js-syntax.mjs",
+    "lint": "eslint . --max-warnings 0",
+    "lint:compliance": "eslint --config eslint.compliance.mjs \"*.user.js\"",
+    "format:check": "prettier --check \"package*.json\" .prettierrc.json \".vscode/*.json\" eslint.config.mjs eslint.compliance.mjs tsconfig.json vitest.config.js playwright.config.js playwright.desktop.config.js \"tools/*.mjs\" \"test-support/**/*.js\" \"tests/**/*.{js,json,html}\" docs/DEVELOPMENT.md docs/WAR_DIBS_ARENA.md docs/WAR_DIBS_COMPATIBILITY.md .github/workflows/development-tests.yml",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:browser": "playwright test",
+    "test:browser:desktop": "playwright test --config playwright.desktop.config.js",
+    "browser:install": "playwright install chromium",
+    "verify": "node tools/run-verification.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.62.1",
+    "@types/node": "^24.13.3",
+    "eslint": "^10.9.0",
+    "globals": "^17.11.0",
+    "jsdom": "^30.0.1",
+    "prettier": "^3.9.6",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
+  }
+}

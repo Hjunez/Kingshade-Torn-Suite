@@ -1,0 +1,35 @@
+title = "KS Torn Suite — hemlighetsskanning"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "torn-api-key-assignment"
+description = "Torn API-nyckel tilldelad i kod eller config"
+regex = '''(?i)(torn[_-]?api[_-]?key|api[_-]?key|apikey|tornkey)\s*[:=]\s*['"]?([A-Za-z0-9]{16})['"]?'''
+secretGroup = 2
+tags = ["torn", "apikey"]
+
+[[rules]]
+id = "torn-api-key-in-url"
+description = "Torn API-nyckel i en URL (t.ex. inklistrad från devtools eller en capture)"
+regex = '''api\.torn\.com/[^\s'"]*[?&]key=([A-Za-z0-9]{16})'''
+secretGroup = 1
+tags = ["torn", "apikey", "url"]
+
+[[rules]]
+id = "torn-session-cookie"
+description = "Torn sessionscookie eller JWT i en capture-fixtur"
+regex = '''(?i)(PHPSESSID|torn_session|Authorization:\s*Bearer)\s*[:=]\s*[A-Za-z0-9._-]{20,}'''
+tags = ["torn", "session"]
+
+[allowlist]
+description = "Platshållare och testdata som inte är riktiga nycklar"
+regexes = [
+  '''###PDA-APIKEY###''',
+  '''(?i)key\s*[:=]\s*['"]?(YOUR_API_KEY|XXXXXXXXXXXXXXXX|0{16}|abcdefghij123456)['"]?''',
+]
+paths = [
+  '''(^|/)docs/''',
+  '''\.md$''',
+]

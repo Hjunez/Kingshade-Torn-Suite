@@ -1,0 +1,122 @@
+[
+  {
+    "file": "KS_FFScouter_Call_Guard.user.js",
+    "name": "KS FFScouter Call Guard",
+    "sha256": "77E1FFFA86B36234C4451A78D0368DF797ED8A0D93A8547797397A9D607EF28C",
+    "version": "1.1.3"
+  },
+  {
+    "file": "KS_FFScouter_Call_Guard_v1.0.0.user.js",
+    "name": "KS FFScouter Call Guard",
+    "sha256": "0FA7DB4ACA59329946CB4929591B3013A9312C0E6C22EC9EBB4504F01245E34C",
+    "version": "1.0.0"
+  },
+  {
+    "file": "KS_FFScouter_Call_Guard_v1.1.2.user.js",
+    "name": "KS FFScouter Call Guard",
+    "sha256": "24F096CAE2147A19D4EF101B8CD90D98D07416F337325378592C792F295CBCDF",
+    "version": "1.1.2"
+  },
+  {
+    "file": "KS_FFScouter_Call_Guard_v1.1.3.user.js",
+    "name": "KS FFScouter Call Guard",
+    "sha256": "77E1FFFA86B36234C4451A78D0368DF797ED8A0D93A8547797397A9D607EF28C",
+    "version": "1.1.3"
+  },
+  {
+    "file": "KS_Torn_War_Dibs.user.js",
+    "name": "KS Torn War Dibs",
+    "sha256": "2BF374590FD445EB4C344337A24DE610A9B6705F39A693A6EE14A526BDB3BAE9",
+    "version": "1.5.145"
+  },
+  {
+    "file": "KS_Torn_War_Dibs_PC.user.js",
+    "name": "KS Torn War Dibs PC",
+    "sha256": "723A0582A7EAE95E830313DCF67F6C208719D6A6EC74EC504583639D0E74A313",
+    "version": "1.0.13"
+  },
+  {
+    "file": "KS_Torn_War_Dibs_PC_v1.0.13.user.js",
+    "name": "KS Torn War Dibs PC",
+    "sha256": "723A0582A7EAE95E830313DCF67F6C208719D6A6EC74EC504583639D0E74A313",
+    "version": "1.0.13"
+  },
+  {
+    "file": "KS_Torn_War_Dibs_v1.5.145.user.js",
+    "name": "KS Torn War Dibs",
+    "sha256": "2BF374590FD445EB4C344337A24DE610A9B6705F39A693A6EE14A526BDB3BAE9",
+    "version": "1.5.145"
+  },
+  {
+    "file": "KS_Torn_War_Dibs_v1.5.91.user.js",
+    "name": "KS Torn War Dibs",
+    "sha256": "776D137F97EF7201838EA1735673F081F2651CC3F587C2534571CAD43C3D1D52",
+    "version": "1.5.91"
+  },
+  {
+    "file": "KS_War_Tools_Torn_PDA.user.js",
+    "name": "KS War Tools for Torn PDA",
+    "sha256": "8BC81E2C765B84906FB60B047A182557020814865E7C373ACDF53D9C488CB050",
+    "version": "0.8.7"
+  },
+  {
+    "file": "KS_War_Tools_Torn_PDA_v0.8.5.user.js",
+    "name": "KS War Tools for Torn PDA",
+    "sha256": "8BC81E2C765B84906FB60B047A182557020814865E7C373ACDF53D9C488CB050",
+    "version": "0.8.7"
+  },
+  {
+    "file": "KS_War_Tools_Torn_PDA_v0.8.6.user.js",
+    "name": "KS War Tools for Torn PDA",
+    "sha256": "2A5ED23CBE389AE07CC13B61435452784A3BB4DAC3E84AC4F50F604EAD77576E",
+    "version": "0.8.6"
+  },
+  {
+    "file": "KS_War_Tools_Torn_PDA_v0.8.7.user.js",
+    "name": "KS War Tools for Torn PDA",
+    "sha256": "8BC81E2C765B84906FB60B047A182557020814865E7C373ACDF53D9C488CB050",
+    "version": "0.8.7"
+  },
+  {
+    "file": "Kingshade_Scout_Torn_PDA.user.js",
+    "name": "Kingshade Scout for Torn PDA",
+    "sha256": "8F67611F24A94E72F5CE4FFD7DBF31E2ECD84C01BE6FABD134BD14AFE7E8438D",
+    "version": "0.8.7"
+  },
+  {
+    "file": "Kingshade_Scout_Torn_PDA_v0.8.5.user.js",
+    "name": "Kingshade Scout for Torn PDA",
+    "sha256": "8F67611F24A94E72F5CE4FFD7DBF31E2ECD84C01BE6FABD134BD14AFE7E8438D",
+    "version": "0.8.7"
+  },
+  {
+    "file": "Kingshade_Scout_Torn_PDA_v0.8.6.user.js",
+    "name": "Kingshade Scout for Torn PDA",
+    "sha256": "0873FD7AB207B43E85443DF96E254FE7C56EDEFE83658397552B448F0793CF74",
+    "version": "0.8.6"
+  },
+  {
+    "file": "Kingshade_Scout_Torn_PDA_v0.8.7.user.js",
+    "name": "Kingshade Scout for Torn PDA",
+    "sha256": "8F67611F24A94E72F5CE4FFD7DBF31E2ECD84C01BE6FABD134BD14AFE7E8438D",
+    "version": "0.8.7"
+  },
+  {
+    "file": "Kingshades_Bootlegging_Advisor.user.js",
+    "name": "Kingshade's Bootlegging Advisor",
+    "sha256": "6409796F6845FE8F6D4B2E5869BF0684258BB97BC6338540EA78017FBA61F1F8",
+    "version": "5.2.14"
+  },
+  {
+    "file": "Kingshades_Bootlegging_Advisor_v5.2.14.user.js",
+    "name": "Kingshade's Bootlegging Advisor",
+    "sha256": "6409796F6845FE8F6D4B2E5869BF0684258BB97BC6338540EA78017FBA61F1F8",
+    "version": "5.2.14"
+  },
+  {
+    "file": "Kingshades_Market_Advisor_v0.9.3.user.js",
+    "name": "Kingshade's Market Advisor",
+    "sha256": "2596857AC9E776C6FB3262819A2843F9E1348CBB5B4C52363801178D09AC05B7",
+    "version": "0.9.4.1"
+  }
+]

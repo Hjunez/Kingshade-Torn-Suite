@@ -115,21 +115,43 @@ Shared Ranked War target coordination across **Torn PDA**, **Torn PC** and **FFS
 
 **FFScouter War Room:** `https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_FFScouter_Call_Guard.user.js`
 
-## Kingshade's Bootlegging Clean 4.1.1
+## Kingshade's Bootlegging Advisor 5.2.14
 
 Standalone visual guidance for the Bootlegging crime. It keeps its own version number.
 
 - Blue highlight — copy that genre
 - Green highlight — sell counterfeit DVDs
 - No highlight — wait
-- Reads only Bootlegging data already loaded on the open Crimes page
+- Reads only Bootlegging data already rendered on the open Crimes page
+- Makes no network requests of any kind
 - Does not click, perform crimes or initiate additional Torn requests
 
-**Repository file:** `Kingshades_Bootlegging_Clean_v4.1.1.user.js`
+**Repository file:** `Kingshades_Bootlegging_Advisor_v5.2.14.user.js`
 
 **Raw installation URL:**
 
-`https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/Kingshades_Bootlegging_Clean_v4.1.1.user.js`
+`https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/Kingshades_Bootlegging_Advisor.user.js`
+
+### Upgrading from Bootlegging Clean 4.1.1
+
+Advisor replaces Bootlegging Clean, but it **cannot arrive as an update**. Clean was
+published under the script name `Kingshade's Bootlegging Clean` and carried no update
+channel at all, so neither Tampermonkey nor Torn PDA can turn an installed Clean into
+an Advisor. Installing Advisor without removing Clean leaves both enabled on the
+Crimes page; they share one instance guard, so only one of them renders, and which one
+wins is not predictable.
+
+Migrate in this order:
+
+1. Remove **Kingshade's Bootlegging Clean** from Tampermonkey or Torn PDA.
+2. Confirm it is gone from the installed-scripts list.
+3. Install Advisor from the raw URL above.
+
+This is a one-time manual step. Advisor ships `@updateURL` and `@downloadURL` pointing
+at the unversioned stable endpoint, so from 5.2.14 onward the Update button works and
+future Bootlegging releases arrive in place — the same stable-channel arrangement Scout
+and War Tools use. `Kingshades_Bootlegging_Advisor_v5.2.14.user.js` is retained as the
+immutable historical snapshot; new installs should always use the unversioned URL.
 
 ## Installation in Torn PDA
 
