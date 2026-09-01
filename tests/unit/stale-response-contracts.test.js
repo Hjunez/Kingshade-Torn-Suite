@@ -2,14 +2,32 @@ import { describe, expect, it } from 'vitest';
 import { readRepositoryFile } from '../../test-support/repository.js';
 
 describe('stale-response defense contracts', () => {
-  it('retains Bootlegging response ordering protection', async () => {
-    const source = await readRepositoryFile('Kingshades_Bootlegging_Clean_v4.1.1.user.js');
+  it('retains Bootlegging stale-capture protection', async () => {
+    const source = await readRepositoryFile('Kingshades_Bootlegging_Advisor_v5.2.14.user.js');
 
-    expect(source).toContain('const requestSerial = ++state.requestSerial;');
-    expect(source).toContain('if (requestSerial < state.latestAppliedSerial)');
-    expect(source.indexOf('if (requestSerial < state.latestAppliedSerial)')).toBeLessThan(
-      source.indexOf('state.latestAppliedSerial = requestSerial;'),
+    // Advisor 5.2.14 reads the rendered stats panel instead of observing Torn's
+    // own crimesData responses, so the serial guard that ordered intercepted
+    // fetch replies (Bootlegging Clean 4.1.1) was replaced by a capture
+    // generation. The contract is unchanged: work started under an older
+    // generation must never apply on top of newer work.
+    expect(source).toContain('statsCaptureGeneration: 0,');
+    expect(source).toContain('const generation = ++state.statsCaptureGeneration;');
+    expect(source).toContain('generation !== state.statsCaptureGeneration');
+
+    // The guard has to be read before any capture is applied, not after.
+    expect(source.indexOf('generation !== state.statsCaptureGeneration')).toBeLessThan(
+      source.indexOf('const generation = ++state.statsCaptureGeneration;'),
     );
+  });
+
+  it('no longer wraps the page fetch implementation', async () => {
+    const source = await readRepositoryFile('Kingshades_Bootlegging_Advisor_v5.2.14.user.js');
+
+    // Bootlegging Clean 4.1.1 monkey-patched window.fetch to inspect Torn's
+    // crimesData traffic. Advisor drops that entirely — it must stay dropped.
+    expect(source).not.toMatch(/\bfetch\b/);
+    expect(source).not.toContain('XMLHttpRequest');
+    expect(source).not.toContain('crimesData');
   });
 
   it('retains lifecycle and abort guards in both DIBS clients', async () => {

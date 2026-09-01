@@ -36,6 +36,9 @@ export default [
         {
           argsIgnorePattern: '^(?:_|row$|rwPhase$)',
           caughtErrors: 'none',
+          // `const { button, ...row } = x` is the omit idiom: the named sibling
+          // exists precisely so it is left out of the rest. Not dead code.
+          ignoreRestSiblings: true,
           varsIgnorePattern: knownUnusedBindings,
         },
       ],

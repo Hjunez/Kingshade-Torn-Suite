@@ -19,7 +19,7 @@ SCOUT_STABLE="Kingshade_Scout_Torn_PDA.user.js"
 WAR_STABLE="KS_War_Tools_Torn_PDA.user.js"
 SCOUT_LEGACY="Kingshade_Scout_Torn_PDA_v0.8.5.user.js"
 WAR_LEGACY="KS_War_Tools_Torn_PDA_v0.8.5.user.js"
-BOOT="Kingshades_Bootlegging_Clean_v4.1.1.user.js"
+BOOT="Kingshades_Bootlegging_Advisor_v5.2.14.user.js"
 
 for f in "$SCOUT" "$WAR" "$SCOUT_STABLE" "$WAR_STABLE" "$SCOUT_LEGACY" "$WAR_LEGACY" "$BOOT"; do
   [[ -f "$f" ]] || fail "Missing required file: $f"

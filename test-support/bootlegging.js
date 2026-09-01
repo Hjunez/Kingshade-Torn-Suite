@@ -16,7 +16,7 @@ export async function installBootleggingUserscript() {
     writable: true,
   });
 
-  window.eval(await readRepositoryFile('Kingshades_Bootlegging_Clean_v4.1.1.user.js'));
+  window.eval(await readRepositoryFile('Kingshades_Bootlegging_Advisor_v5.2.14.user.js'));
 
   if (document.readyState === 'loading') {
     document.dispatchEvent(new Event('DOMContentLoaded'));

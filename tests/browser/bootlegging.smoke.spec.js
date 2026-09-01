@@ -15,7 +15,7 @@ test('published Bootlegging userscript runs and cleans up in Chromium', async ({
     });
   });
   await page.addScriptTag({
-    path: repositoryPath('Kingshades_Bootlegging_Clean_v4.1.1.user.js'),
+    path: repositoryPath('Kingshades_Bootlegging_Advisor_v5.2.14.user.js'),
   });
 
   const action = page.locator('[aria-label^="Copying Action"]');
@@ -24,7 +24,7 @@ test('published Bootlegging userscript runs and cleans up in Chromium', async ({
   await expect(page.locator('#ks-boot-clean-v411-styles')).toHaveCount(1);
   await expect
     .poll(() => page.evaluate(() => Reflect.get(window, '__ksBootleggingAssistantClean')?.version))
-    .toBe('4.1.1');
+    .toBe('5.2.14');
 
   await page.evaluate(() => Reflect.get(window, '__ksBootleggingAssistantClean')?.destroy());
 

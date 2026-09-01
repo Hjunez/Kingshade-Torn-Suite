@@ -2,6 +2,45 @@
 
 All notable changes to Kingshade Suite are documented here.
 
+## Bootlegging — 2026-09-01
+
+### Kingshade's Bootlegging Advisor 5.2.14
+
+Replaces Kingshade's Bootlegging Clean 4.1.1, which is retired. The published file
+is now `Kingshades_Bootlegging_Advisor_v5.2.14.user.js`; the script keeps its
+existing controller key, so an installed copy upgrades in place.
+
+- Multi-page desktop capture fix: the stats capture now settles across paginated
+  stats pages instead of reading only the first.
+- Strict visibility oracle, fail-closed: `paintedStatsPageAtPoint` requires the
+  topmost element at each sampled point to belong to the panel, so a point covered
+  by a modal, tooltip or notification counts as zero hits rather than silently
+  reading the page underneath it.
+- The flat/non-paginated-layout fallback added in 5.2.12 is removed.
+- `@grant` drops from `unsafeWindow` to `none`; `@match` adds the `loader.php`
+  crimes route.
+
+**Removed: the page `fetch` wrapper.** Bootlegging Clean monkey-patched
+`window.fetch` to inspect Torn's own `crimesData` responses. Advisor does not touch
+`fetch`, `XMLHttpRequest` or any network API at all — it reads the rendered DOM.
+The script now makes and observes zero network traffic.
+
+Test-suite consequences of that removal:
+
+- `tests/race/bootlegging-stale-response.test.js` is deleted. It existed solely to
+  prove that an older intercepted `fetch` reply could not overwrite a newer one;
+  with no interception there is no such ordering to defend. Its fixtures
+  (`bootlegging-responses.json`, `bootlegging-shell.html`) are deleted with it.
+- The stale-response contract test now asserts Advisor's replacement guard, the
+  `statsCaptureGeneration` counter, which enforces the same rule for stats capture:
+  work started under an older generation never applies over newer work.
+- `tests/dom/bootlegging.dom.test.js` no longer asserts the "highlight the
+  lowest-stock genre" behaviour. That path now needs a capture of the real
+  Bootlegging stats DOM, which does not exist yet; the file documents the gap and
+  covers boot, DOM ownership, no-marking-without-evidence, and full cleanup on
+  destroy in the meantime. **Restore the behavioural assertions once a real
+  stats-panel capture is available.**
+
 ## KS Ranked War DIBS — 2026-08-20 — Release
 
 ### KS Torn War Dibs 1.5.91
