@@ -6,9 +6,19 @@ All notable changes to Kingshade Suite are documented here.
 
 ### Kingshade's Bootlegging Advisor 5.2.14
 
-Replaces Kingshade's Bootlegging Clean 4.1.1, which is retired. The published file
-is now `Kingshades_Bootlegging_Advisor_v5.2.14.user.js`; the script keeps its
-existing controller key, so an installed copy upgrades in place.
+Replaces Kingshade's Bootlegging Clean 4.1.1, which is retired.
+
+**This does not arrive as an update — existing users must migrate by hand.** The
+script name changed from `Kingshade's Bootlegging Clean` to `Kingshade's Bootlegging
+Advisor`, and Clean shipped without `@updateURL`/`@downloadURL`, so no script manager
+can turn an installed Clean into an Advisor. Remove Bootlegging Clean first, then
+install Advisor; running both leaves two scripts contending for one instance guard,
+with no guarantee which version renders. Migration steps are in the README.
+
+Advisor adds `@updateURL`/`@downloadURL` pointing at a new unversioned stable
+endpoint, `Kingshades_Bootlegging_Advisor.user.js`, so Bootlegging now follows the
+same stable-channel arrangement as Scout and War Tools and future releases do update
+in place. `tools/validate-suite.sh` gained the matching channel checks.
 
 - Multi-page desktop capture fix: the stats capture now settles across paginated
   stats pages instead of reading only the first.

@@ -78,9 +78,15 @@
     "version": "0.8.7"
   },
   {
+    "file": "Kingshades_Bootlegging_Advisor.user.js",
+    "name": "Kingshade's Bootlegging Advisor",
+    "sha256": "6409796F6845FE8F6D4B2E5869BF0684258BB97BC6338540EA78017FBA61F1F8",
+    "version": "5.2.14"
+  },
+  {
     "file": "Kingshades_Bootlegging_Advisor_v5.2.14.user.js",
     "name": "Kingshade's Bootlegging Advisor",
-    "sha256": "E1D38E22586FE69409032712C611276CBA1DC2160419BD70EA809920A3C87DD1",
+    "sha256": "6409796F6845FE8F6D4B2E5869BF0684258BB97BC6338540EA78017FBA61F1F8",
     "version": "5.2.14"
   },
   {

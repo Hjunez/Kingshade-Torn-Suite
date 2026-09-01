@@ -20,8 +20,10 @@ WAR_STABLE="KS_War_Tools_Torn_PDA.user.js"
 SCOUT_LEGACY="Kingshade_Scout_Torn_PDA_v0.8.5.user.js"
 WAR_LEGACY="KS_War_Tools_Torn_PDA_v0.8.5.user.js"
 BOOT="Kingshades_Bootlegging_Advisor_v5.2.14.user.js"
+BOOT_STABLE="Kingshades_Bootlegging_Advisor.user.js"
+BOOT_VERSION="5.2.14"
 
-for f in "$SCOUT" "$WAR" "$SCOUT_STABLE" "$WAR_STABLE" "$SCOUT_LEGACY" "$WAR_LEGACY" "$BOOT"; do
+for f in "$SCOUT" "$WAR" "$SCOUT_STABLE" "$WAR_STABLE" "$SCOUT_LEGACY" "$WAR_LEGACY" "$BOOT" "$BOOT_STABLE"; do
   [[ -f "$f" ]] || fail "Missing required file: $f"
 done
 
@@ -40,6 +42,15 @@ for f in "$WAR" "$WAR_STABLE" "$WAR_LEGACY"; do
   grep -Fq "// @updateURL    ${WAR_URL}" "$f" || fail "$f has wrong/missing War Tools @updateURL."
   grep -Fq "// @downloadURL  ${WAR_URL}" "$f" || fail "$f has wrong/missing War Tools @downloadURL."
 done
+
+BOOT_URL="https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/${BOOT_STABLE}"
+for f in "$BOOT" "$BOOT_STABLE"; do
+  grep -Eq "^// @version[[:space:]]+${BOOT_VERSION}$" "$f" || fail "$f metadata version does not match ${BOOT_VERSION}."
+  grep -Fq "// @updateURL    ${BOOT_URL}" "$f" || fail "$f has wrong/missing Bootlegging @updateURL."
+  grep -Fq "// @downloadURL  ${BOOT_URL}" "$f" || fail "$f has wrong/missing Bootlegging @downloadURL."
+  node --check "$f" >/dev/null || fail "$f failed JavaScript syntax check."
+done
+cmp -s "$BOOT" "$BOOT_STABLE" || fail "Stable Bootlegging endpoint differs from current release."
 
 cmp -s "$SCOUT" "$SCOUT_STABLE" || fail "Stable Scout endpoint differs from current release."
 cmp -s "$WAR" "$WAR_STABLE" || fail "Stable War Tools endpoint differs from current release."
