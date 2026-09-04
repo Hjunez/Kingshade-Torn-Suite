@@ -1,0 +1,127 @@
+name: Build Scout Members Gate Test
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/build-scout-members-gate-test.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build isolated 0.8.8 TEST from release 0.8.7
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          src = Path('Kingshade_Scout_Torn_PDA.user.js')
+          out = Path('Kingshade_Scout_Torn_PDA_v0.8.8_MEMBERS_ONLY_GATE_TEST.txt')
+          s = src.read_text(encoding='utf-8')
+
+          if '// @version      0.8.7' not in s or 'const VERSION = "0.8.7";' not in s:
+              raise SystemExit('Unexpected Scout release base')
+
+          s = s.replace('// @version      0.8.7', '// @version      0.8.8', 1)
+          s = s.replace('const VERSION = "0.8.7";', 'const VERSION = "0.8.8";', 1)
+          s = s.replace('// @name         Kingshade Scout for Torn PDA', '// @name         Kingshade Scout for Torn PDA [TEST]', 1)
+          s = s.replace('// @description  Kingshade Suite Scout for Torn PDA with FF/EST, faction status and FFScouter flight estimates.', '// @description  TEST 0.8.8: Scout runs only on the normal Faction Members view; Ranked War is explicitly excluded.', 1)
+          s = s.replace('// ==/UserScript==\n', '// ==/UserScript==\n//\n// TEST 0.8.8: hard Members-only runtime gate. Ranked War must not mount Scout UI, scan rows, observe rows or run Scout network work.\n', 1)
+
+          old = '''    function factionMemberLists() {\n        if (!isFactionPath()) return [];\n        return Array.from(document.querySelectorAll(".members-list")).filter(list =>\n            list instanceof HTMLElement && list.querySelector(".table-body")\n        );\n    }\n\n    function hasFactionMemberList() {\n        return factionMemberLists().length > 0;\n    }\n'''
+          new = '''    function isRankedWarView() {\n        return Boolean(document.getElementById("faction_war_list_id"));\n    }\n\n    function factionMemberLists() {\n        if (!isFactionPath() || isRankedWarView()) return [];\n        return Array.from(document.querySelectorAll(".members-list")).filter(list =>\n            list instanceof HTMLElement &&\n            list.querySelector(".table-body") &&\n            !list.closest("#faction_war_list_id")\n        );\n    }\n\n    function hasFactionMemberList() {\n        return !isRankedWarView() && factionMemberLists().length > 0;\n    }\n\n    function suspendOutsideMembers() {\n        if (hasFactionMemberList()) return false;\n        clearTimeout(scanTimer);\n        scanTimer = null;\n        clearTimeout(statusTimer);\n        statusTimer = null;\n        clearTimeout(ffRetryTimer);\n        ffRetryTimer = null;\n        stopStartupProbe();\n        abortActiveRequests();\n        disconnectObserver();\n        clearRendered();\n        removePanel();\n        return true;\n    }\n'''
+          if old not in s:
+              raise SystemExit('Member-list anchor not found')
+          s = s.replace(old, new, 1)
+
+          old_route = '''        setTimeout(() => {\n            if (!hasFactionMemberList()) {\n                clearRendered();\n                removePanel();\n            }\n            scheduleScan(0);\n            scheduleStatusRefresh(0);\n            startStartupProbe();\n        }, 120);\n'''
+          new_route = '''        setTimeout(() => {\n            if (suspendOutsideMembers()) return;\n            connectObserver();\n            scheduleScan(0);\n            scheduleStatusRefresh(0);\n            startStartupProbe();\n        }, 120);\n'''
+          if old_route not in s:
+              raise SystemExit('Route-change anchor not found')
+          s = s.replace(old_route, new_route, 1)
+
+          old_req = '''    function requireVisiblePage() {\n        if (!isPageVisible()) throw hiddenPageError();\n    }\n'''
+          new_req = '''    function requireVisiblePage() {\n        if (!isPageVisible()) throw hiddenPageError();\n        if (!hasFactionMemberList()) {\n            const error = new Error("Kingshade Scout is active only on Faction Members.");\n            error.code = "KS_NOT_MEMBERS_VIEW";\n            throw error;\n        }\n    }\n'''
+          if old_req not in s:
+              raise SystemExit('requireVisiblePage anchor not found')
+          s = s.replace(old_req, new_req, 1)
+
+          old_visibility = '''        connectObserver();\n        updatePanelStatus("Visible and focused again · resuming scan…");\n        if (hasFactionMemberList()) scheduleStatusRefresh(0);\n        scheduleScan(resumeScanWhenVisible ? 0 : 80);\n        startStartupProbe();\n'''
+          new_visibility = '''        if (suspendOutsideMembers()) return;\n        connectObserver();\n        updatePanelStatus("Visible and focused again · resuming scan…");\n        scheduleStatusRefresh(0);\n        scheduleScan(resumeScanWhenVisible ? 0 : 80);\n        startStartupProbe();\n'''
+          if old_visibility not in s:
+              raise SystemExit('Visibility resume anchor not found')
+          s = s.replace(old_visibility, new_visibility, 1)
+
+          old_init = '''        reconcileSuiteDataState({ purgeApiCache: true });\n        loadPublishedStatusSnapshot();\n        ensureStyles();\n\n        observer = new MutationObserver(mutations => {\n'''
+          new_init = '''        reconcileSuiteDataState({ purgeApiCache: true });\n        loadPublishedStatusSnapshot();\n        ensureStyles();\n\n        observer = new MutationObserver(mutations => {\n'''
+          if old_init not in s:
+              raise SystemExit('Init anchor missing')
+
+          old_mut = '''        observer = new MutationObserver(mutations => {\n            if (!isPageVisible()) return;\n            if (!isFactionPath()) return;\n\n            const relevant = mutations.some(mutation =>\n'''
+          new_mut = '''        observer = new MutationObserver(mutations => {\n            if (!isPageVisible()) return;\n            if (!isFactionPath()) return;\n            if (isRankedWarView()) {\n                suspendOutsideMembers();\n                return;\n            }\n\n            const relevant = mutations.some(mutation =>\n'''
+          if old_mut not in s:
+              raise SystemExit('MutationObserver anchor not found')
+          s = s.replace(old_mut, new_mut, 1)
+
+          old_connect = '''    function connectObserver() {\n        if (!observer || observerConnected || !document.body || !isPageVisible() || destroyed) return;\n        observer.observe(document.body, OBSERVER_OPTIONS);\n        observerConnected = true;\n    }\n'''
+          new_connect = '''    function connectObserver() {\n        if (!observer || observerConnected || !document.body || !isPageVisible() || destroyed || !hasFactionMemberList()) return;\n        observer.observe(document.body, OBSERVER_OPTIONS);\n        observerConnected = true;\n    }\n'''
+          if old_connect not in s:
+              raise SystemExit('connectObserver anchor missing')
+          s = s.replace(old_connect, new_connect, 1)
+
+          old_startup = '''    function startStartupProbe() {\n        stopStartupProbe();\n        if (destroyed || !isPageVisible() || !isFactionPath()) return;\n'''
+          new_startup = '''    function startStartupProbe() {\n        stopStartupProbe();\n        if (destroyed || !isPageVisible() || !isFactionPath() || isRankedWarView()) return;\n'''
+          if old_startup not in s:
+              raise SystemExit('Startup probe anchor missing')
+          s = s.replace(old_startup, new_startup, 1)
+
+          # First-load onboarding must obey the same Members-only rule.
+          old_onboard = '''    function memberListVisible() {\n        if (!isFactionPath()) return false;\n        return Array.from(document.querySelectorAll(".members-list")).some(list => {\n'''
+          new_onboard = '''    function memberListVisible() {\n        if (!isFactionPath() || document.getElementById("faction_war_list_id")) return false;\n        return Array.from(document.querySelectorAll(".members-list")).some(list => {\n'''
+          if old_onboard not in s:
+              raise SystemExit('Onboarding member-list anchor missing')
+          s = s.replace(old_onboard, new_onboard, 1)
+
+          required = [
+              'if (destroyed || statusRequestRunning || !isPageVisible() || !hasFactionMemberList()) return;',
+              'if (destroyed || !suiteDataEnabled() || !isPageVisible() || !hasFactionMemberList()) return;',
+              'if (!hasFactionMemberList()) return null;'
+          ]
+          for token in required:
+              if token not in s:
+                  raise SystemExit(f'Missing existing runtime guard: {token}')
+
+          s = re.sub(r'^// @downloadURL.*\n', '', s, count=1, flags=re.M)
+          s = re.sub(r'^// @updateURL.*\n', '', s, count=1, flags=re.M)
+          out.write_text('// REDIGERA ETT BEFINTLIGT SCRIPT\n' + s, encoding='utf-8')
+
+          checks = {
+              'ranked_war_explicitly_blocked': 'function isRankedWarView()' in s,
+              'member_lists_fail_closed': 'if (!isFactionPath() || isRankedWarView()) return [];' in s,
+              'route_suspend': 'if (suspendOutsideMembers()) return;' in s,
+              'requests_aborted': 'abortActiveRequests();' in s,
+              'observer_disconnected': 'disconnectObserver();' in s,
+              'observer_members_only': 'destroyed || !hasFactionMemberList()) return;' in s,
+              'network_gate': 'KS_NOT_MEMBERS_VIEW' in s,
+              'onboarding_blocked_on_rw': 'document.getElementById("faction_war_list_id")' in s,
+              'release_logic_retained': 'const API_BASE = "https://ffscouter.com/api/v1";' in s,
+          }
+          failed = [k for k,v in checks.items() if not v]
+          if failed:
+              raise SystemExit('Invariant failure: ' + ', '.join(failed))
+          print(checks)
+      - name: Syntax check
+        run: |
+          tail -n +2 Kingshade_Scout_Torn_PDA_v0.8.8_MEMBERS_ONLY_GATE_TEST.txt > /tmp/scout.js
+          node --check /tmp/scout.js
+      - name: Upload TEST artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kingshade_Scout_Torn_PDA_v0.8.8_MEMBERS_ONLY_GATE_TEST
+          path: Kingshade_Scout_Torn_PDA_v0.8.8_MEMBERS_ONLY_GATE_TEST.txt
+          if-no-files-found: error
