@@ -1,0 +1,1 @@
+Temporary validation trigger for War Tools 0.8.8 TEST. Do not merge.
