@@ -1,0 +1,152 @@
+KINGShade's BOOTLEGGING ADVISOR v5.2.6
+INSTALLATION AND USE GUIDE
+
+WHY USE IT?
+
+Bootlegging has eight DVD genres that do not need the same stock level.
+The Advisor removes manual ratio calculations, includes the complete copying queue,
+and makes the next decision clear.
+
+Community guides and player experience generally suggest that larger,
+well-balanced sales can improve cash returns and Bootlegging Crime Skill efficiency.
+This is community-based guidance, not a guaranteed Torn formula.
+The script does not claim increased hidden Crime Experience.
+
+NEW INSTALLATION IN TORN PDA
+
+1. Open Torn PDA.
+2. Go to Settings → User scripts.
+3. Press + to add a script.
+4. Use the manual source/code option, not Remote URL.
+5. Script name:
+   Kingshade's Bootlegging Advisor
+6. Open:
+   01_Kingshades_Bootlegging_Advisor_v5.2.6_FACTION_TEST.txt
+7. Copy the entire file and paste it into the script source field.
+8. Set Injection time to START.
+9. Save and enable the script.
+10. Open Crimes → Bootlegging or reload the Bootlegging page.
+
+UPDATING AN EXISTING VERSION
+
+1. Open Torn PDA → Settings → User scripts.
+2. Edit the existing Kingshade's Bootlegging Advisor.
+3. Delete the complete old script contents.
+4. Paste the complete v5.2.6 faction-test script.
+5. Keep Injection time set to START.
+6. Save and reload the Bootlegging page.
+
+SCRIPT STATES
+
+PÅ / ENABLED
+- Kingshade's Bootlegging Advisor v5.2.6
+
+AV / DISABLED
+- Every other Bootlegging Advisor version
+- Any duplicate copy of the same script
+
+Do not run two versions at the same time.
+
+THE THREE RECOMMENDATIONS
+
+COPY
+
+Example:
+COPY FANTASY
+
+The highlighted genre is furthest behind its planning target.
+Start the copying batch manually.
+
+WAIT
+
+The finished stock may be low, but the current copying queue already covers the shortage.
+Wait for the existing queue instead of overproducing another genre.
+
+SELL
+
+The projected stock is above the Advisor's refill threshold for every genre.
+Use Torn's native Sell Counterfeit DVDs action manually when you choose.
+
+DEFAULT PLANNING TARGETS
+
+Action      100
+Comedy      70
+Drama       55
+Fantasy     70
+Horror      30
+Romance     30
+Thriller    40
+Sci-Fi      20
+
+These are proportional planning targets, not a requirement to reach every full number before each sale.
+
+HOW THE CALCULATION WORKS
+
+Projected = Stock + Queued
+
+Example:
+
+Action stock:       24
+Action queued:      49
+Projected Action:   73
+Action target:      100
+Coverage:           73%
+
+The Advisor compares coverage percentages, not only the lowest raw stock number.
+
+MAIN ADVISOR CARD
+
+The main card shows:
+- current recommendation
+- stock and queue for the relevant genre
+- projected total
+- target or coverage
+- next priorities
+- one LIVE indicator when the visible data is stable
+- DETAILS
+
+DETAILS
+
+Details always uses PRIORITY ORDER.
+
+P1 is the genre furthest behind its target.
+P8 is the genre with the strongest coverage.
+
+Each genre shows:
+- STOCK
+- QUEUED
+- PROJECTED
+- TARGET
+- coverage percentage
+- copies missing to the full planning target
+
+DATA STATUS
+
+READY means all eight visible genres are loaded and stable.
+
+Highlight recommended Torn tile:
+- ON: the recommended COPY genre receives a visual outline.
+- OFF: the recommendation remains visible in the Advisor, but Torn's tile is not highlighted.
+
+COPY SAFE DIAGNOSTIC
+
+Use this only when:
+- the stock or queue values are wrong
+- the wrong genre is recommended
+- the Advisor is stuck
+- the page shows incomplete data
+
+The diagnostic is designed not to include player identity or raw page HTML.
+
+BOTTOM CONTROLS
+
+Sell Counterfeit DVDs and Set Up Online Store must remain reachable above Torn PDA's bottom navigation.
+The page should then reach a natural stopping point without shaking or being pulled back.
+
+NORMAL WORKFLOW
+
+1. Open Bootlegging and wait for all eight genres.
+2. Follow COPY, WAIT or SELL.
+3. Perform the action manually.
+4. Let Torn update the visible stock and queue.
+5. Confirm that the Advisor updates.

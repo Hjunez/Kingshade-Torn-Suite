@@ -1,0 +1,172 @@
+KSBA v5.2.6 — FACTION TEST PLAN
+
+PURPOSE
+
+Test the script during normal Bootlegging use in Torn PDA.
+Do not waste nerve, cancel useful queues, or sell only to manufacture a test case.
+
+BEFORE TESTING
+
+- Confirm that only v5.2.6 is enabled.
+- Confirm Injection time is START.
+- Keep your other normal Torn PDA scripts enabled unless a conflict is suspected.
+- Note your phone model, Android version and Torn PDA version for the bug report.
+
+TEST 1 — FIRST LOAD AND PLACEMENT
+
+1. Open Crimes → Bootlegging.
+2. Wait until all eight genres are visible.
+3. Confirm that the Advisor is above the complete Bootlegging card.
+4. Confirm that Copy controls, time, computer, blank discs and nerve cost remain visible.
+5. Confirm that no Torn element overlaps another element.
+6. Confirm that there is only one Advisor.
+
+PASS:
+- One Advisor.
+- No overlap.
+- Torn's original controls remain usable.
+
+Send: one screenshot showing the Advisor, the Bootlegging header/level area and the Copy row.
+
+TEST 2 — RECOMMENDATION AND PRIORITY
+
+1. Read the recommendation in the main card.
+2. Open DETAILS.
+3. Confirm that P1 matches the recommendation when the state is COPY.
+4. Confirm that the list runs continuously from P1 to P8.
+5. Confirm that the percentage and Stock + Queued = Projected values match the visible Torn values.
+6. Confirm that PRIORITY ORDER is informational and not an A–Z switch.
+
+PASS:
+- P1 is the correct lowest-coverage genre.
+- No missing or repeated priorities.
+- Numbers match Torn.
+
+Send: one screenshot showing the main recommendation and the first entries in Details. If any number is wrong, also press COPY SAFE DIAGNOSTIC and include the copied report.
+
+TEST 3 — COPY HIGHLIGHT
+
+1. Use a natural COPY state.
+2. Confirm that only the recommended Torn genre tile is highlighted.
+3. Turn Highlight recommended Torn tile OFF and confirm the outline disappears.
+4. Turn it ON again and confirm the correct outline returns.
+
+PASS:
+- Correct tile only.
+- Toggle works immediately.
+- No tile changes size or position.
+
+Send: a short video showing the toggle OFF and ON with the recommended genre visible.
+
+TEST 4 — QUEUE UPDATE
+
+1. When you normally need to copy, note the recommendation.
+2. Start a copying batch manually.
+3. Wait for Torn's queue values to update.
+4. Confirm that Queued and Projected update.
+5. Confirm that the recommendation changes only after the visible values are stable.
+6. Confirm that there is no flicker, duplicated panel or stuck old recommendation.
+
+PASS:
+- Queue is included correctly.
+- Recommendation updates without page damage.
+- No repeated flashing.
+
+Send: a short video beginning before the batch is added and ending after the Advisor has updated.
+
+TEST 5 — DETAILS STABILITY
+
+1. Open DETAILS.
+2. Scroll from P1 to P8 and Data Status.
+3. Leave Details open for at least 20 seconds.
+4. Scroll up and down again.
+5. Confirm that cards do not blink, jump, reorder unexpectedly or disappear.
+6. Confirm DATA STATUS shows READY when all eight genres are loaded.
+7. Confirm DONE closes Details.
+
+PASS:
+- Smooth internal scrolling.
+- No flicker or jumping.
+- Header and footer remain usable.
+
+Send: a short video covering P1, P8, Data Status and closing with DONE.
+
+TEST 6 — PAGE BOTTOM AND HARD STOP
+
+1. Close Details.
+2. Scroll the normal Bootlegging page to the bottom.
+3. Confirm that Sell Counterfeit DVDs and Set Up Online Store can be moved above Torn PDA's bottom navigation.
+4. Continue the gesture at the bottom.
+5. Confirm that the page reaches a natural end without shaking, bouncing repeatedly or being pulled back.
+6. Confirm there is no very large empty area below the controls.
+
+PASS:
+- Final controls are reachable.
+- Natural hard stop.
+- No shaking.
+- No excessive blank page.
+
+Send: a short video showing the final controls and the bottom stopping behavior.
+
+TEST 7 — PAGE CHANGE AND RETURN
+
+1. Leave Bootlegging for another crime or page.
+2. Return to Bootlegging.
+3. Confirm that the Advisor returns once.
+4. Confirm that the old panel, highlight and Details overlay were cleaned up.
+5. Repeat once more.
+
+PASS:
+- One Advisor after every return.
+- No duplicate overlay or stale highlight.
+
+Send: a short video showing the page change and return. A screenshot is enough if a duplicate appears.
+
+TEST 8 — WAIT STATE
+
+Test this only when WAIT occurs naturally.
+
+1. Confirm that the queue already covers the current shortage.
+2. Confirm no genre is presented as an urgent additional COPY action.
+3. Compare the queue totals in Details.
+
+PASS:
+- WAIT is consistent with the visible queue.
+
+Send: one screenshot showing WAIT and the relevant Details values.
+
+TEST 9 — SELL STATE
+
+Test this only when SELL occurs naturally. Do not sell only for testing.
+
+1. Confirm that the main Advisor says SELL COUNTERFEIT DVDS.
+2. Confirm LOWEST COVERAGE matches the lowest genre in Details.
+3. Confirm the message says all genres are above the refill threshold.
+4. Confirm Torn's native Sell Counterfeit DVDs row is visually unchanged by the script.
+5. Do not press Sell unless you intended to sell during normal play.
+
+PASS:
+- Sell guidance is internally consistent.
+- Native Torn Sell row remains untouched.
+
+Send: one screenshot showing the Advisor's SELL state and the native Torn Sell row.
+
+TEST 10 — ERROR RECOVERY
+
+Use this only if the Advisor shows missing data, waits indefinitely or recommends the wrong genre.
+
+1. Reload the Bootlegging page.
+2. Wait for all eight genres.
+3. If the problem remains, open Details → Data Status.
+4. Press COPY SAFE DIAGNOSTIC.
+5. Complete the bug report template.
+
+Send: the safe diagnostic, one screenshot, and a short video if the problem involves flicker, timing, scrolling or duplication.
+
+FINAL RESULT
+
+Report one of:
+
+PASS — No problems found.
+PASS WITH NOTES — Works, but a non-blocking visual issue was found.
+FAIL — A calculation, recommendation, interaction or layout problem was found.
