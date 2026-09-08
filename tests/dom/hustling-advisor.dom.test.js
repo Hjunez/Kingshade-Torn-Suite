@@ -8,6 +8,7 @@ import {
   mountHustlingFixture,
   readHustlingFixture,
   removeHustlingTestGlobals,
+  setSidebarCash,
   tick,
 } from '../../test-support/hustling.js';
 import { installUserscriptUnderObservation } from '../../test-support/compliance.js';
@@ -122,6 +123,33 @@ describe('mounting', () => {
     const text = panelText();
     expect(text).toContain('Snail Racing has an active $4,328 bet you cannot act on');
     expect(text).toContain(`"You don't have enough nerve"`);
+  });
+
+  it('warns about the stake before the money runs out, in the panel', async () => {
+    // $177 live on Snail Racing against a $500 balance is 35%.
+    await mountHustlingFixture(FIXTURE);
+    await setSidebarCash(500);
+
+    await installHustlingUserscript();
+    await tick(SETTLE_MS);
+
+    const text = panelText();
+    expect(text).toContain(
+      "Snail Racing's $177 bet is 35% of your $500 cash. One more loss would empty you.",
+    );
+  });
+
+  it('says so in the panel when the balance cannot be read', async () => {
+    await mountHustlingFixture(FIXTURE);
+    await setSidebarCash(null);
+
+    await installHustlingUserscript();
+    await tick(SETTLE_MS);
+
+    const text = panelText();
+    expect(text).toContain('The cash check is UNKNOWN');
+    // The advice itself is unaffected.
+    expect(text).toContain('LOSE');
   });
 
   it('leaves Torn’s own markup byte-for-byte untouched', async () => {

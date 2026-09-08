@@ -1,10 +1,11 @@
 /** @vitest-environment jsdom */
 
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   detachedHustlingRoot,
   installHustlingUserscript,
   removeHustlingTestGlobals,
+  setSidebarCash,
 } from '../../test-support/hustling.js';
 
 /**
@@ -28,16 +29,29 @@ beforeAll(async () => {
   internals = controller.internals;
 });
 
+beforeEach(async () => {
+  // Every case that is not about cash runs with a balance far above any stake in
+  // the fixtures, so the 0.1.3 warning stays out of the way. Cash cases set their own.
+  await setSidebarCash(RICH);
+});
+
 afterEach(() => {
   removeHustlingTestGlobals();
   document.body.innerHTML = '';
 });
 
 /**
+ * A balance far above any stake in the fixtures, so cases that are not about cash
+ * are not perturbed by the 0.1.3 warning. Cases that ARE about cash set their own.
+ */
+const RICH = 1_000_000;
+
+/**
  * @param {string} fixture
- * @param {{ attentionThreshold?: number }} [options]
+ * @param {{ attentionThreshold?: number, cash?: number | string | null }} [options]
  */
 async function adviseOn(fixture, options) {
+  if (options && 'cash' in options) await setSidebarCash(options.cash ?? null);
   const root = await detachedHustlingRoot(fixture);
   const state = internals.readState(root);
   return { root, state, result: internals.decide(state, options) };
@@ -474,6 +488,162 @@ describe('recommendation', () => {
 });
 
 /**
+ * The 0.1.3 change: warn before the money runs out, not after Torn blocks the button.
+ *
+ * Torn's wiki states that raising a game's Technique raises the audience's betting
+ * values, and Technique rises on every Win and Lose — so following this advisor's
+ * own advice drives the stake up. The owner's measured series on one Snail Racing
+ * row ran $1,102 -> $2,238 -> $5,190 -> $8,106 and then the money was gone.
+ *
+ * The balance comes from Torn's sidebar (id="user-money", data-money). The fixture
+ * sidebar-cash.html is the real captured block with the amount substituted; the
+ * bets below are the real amounts from the capture fixtures.
+ */
+describe('the cash check', () => {
+  const ACTIVE_BET = 'active-bet-two-bets-no-nerve.html'; // Snail Racing, $2,159 live.
+
+  it('reads the balance out of Torn’s own data attribute', async () => {
+    await setSidebarCash(47_890);
+
+    expect(internals.readCash(document)).toEqual({ amount: 47_890, readable: true });
+  });
+
+  it('falls back to the rendered text when the data attribute is gone', async () => {
+    await setSidebarCash('$47,890');
+
+    expect(internals.readCash(document)).toEqual({ amount: 47_890, readable: true });
+  });
+
+  it('normalises a rendered balance rather than assuming one shape', async () => {
+    await setSidebarCash('  $ 1,234,567  ');
+    expect(internals.readCash(document)).toEqual({ amount: 1_234_567, readable: true });
+
+    await setSidebarCash('-$500');
+    expect(internals.readCash(document)).toEqual({ amount: -500, readable: true });
+  });
+
+  it('reports an unreadable balance as unreadable, never as zero or plenty', async () => {
+    await setSidebarCash(null);
+    expect(internals.readCash(document)).toEqual({ amount: null, readable: false });
+
+    await setSidebarCash('coming soon');
+    expect(internals.readCash(document)).toEqual({ amount: null, readable: false });
+  });
+
+  it('stays quiet while the stake is a small share of the balance', async () => {
+    const { state, result } = await adviseOn(ACTIVE_BET, { cash: 100_000 });
+
+    expect(state.cash).toEqual({ amount: 100_000, readable: true });
+    expect(result.warnings.join(' ')).not.toMatch(/of your .* cash|more than the/);
+  });
+
+  it('warns once the stake reaches a fifth of the balance, naming game, stake and cash', async () => {
+    // $2,159 against $10,000 is 22%.
+    const { result } = await adviseOn(ACTIVE_BET, { cash: 10_000 });
+
+    expect(result.warnings).toContain(
+      "Snail Racing's $2,159 bet is 22% of your $10,000 cash. About 2 more losses would empty you.",
+    );
+  });
+
+  it('says one loss when the stake is half the balance', async () => {
+    const { result } = await adviseOn(ACTIVE_BET, { cash: 4_000 });
+
+    expect(result.warnings).toContain(
+      "Snail Racing's $2,159 bet is 54% of your $4,000 cash. One more loss would empty you.",
+    );
+  });
+
+  it('says plainly when the stake is already more than the balance', async () => {
+    const { result } = await adviseOn(ACTIVE_BET, { cash: 248 });
+
+    expect(result.warnings).toContain(
+      "Snail Racing's $2,159 bet is more than the $248 you are carrying.",
+    );
+  });
+
+  it('is exactly on the boundary at a fifth', async () => {
+    // 2159 / 10795 is exactly 0.2.
+    const at = await adviseOn(ACTIVE_BET, { cash: 10_795 });
+    expect(at.result.warnings.join(' ')).toContain("Snail Racing's $2,159 bet is 20%");
+
+    const under = await adviseOn(ACTIVE_BET, { cash: 10_796 });
+    expect(under.result.warnings.join(' ')).not.toContain('of your');
+  });
+
+  it('says so when the balance cannot be read, and never calls it plenty', async () => {
+    const { state, result } = await adviseOn(ACTIVE_BET, { cash: null });
+
+    expect(state.cash).toEqual({ amount: null, readable: false });
+    expect(result.warnings).toContain(
+      'Your cash could not be read from the sidebar, so no stake can be checked against it. ' +
+        'The cash check is UNKNOWN — that is not the same as having plenty.',
+    );
+  });
+
+  it('still advises normally when the balance is unreadable', async () => {
+    const readable = await adviseOn(ACTIVE_BET, { cash: RICH });
+    const unreadable = await adviseOn(ACTIVE_BET, { cash: null });
+
+    expect(unreadable.result.action).toBe(readable.result.action);
+    expect(unreadable.result.target).toBe(readable.result.target);
+    expect(unreadable.result.confidence).toBe(readable.result.confidence);
+  });
+
+  it('raises nothing about cash when there is no active bet', async () => {
+    const { result } = await adviseOn('audience-no-bets-hype.html', { cash: 10 });
+
+    expect(result.action).toBe('HYPE');
+    expect(result.warnings.join(' ')).not.toMatch(/cash|bet is/);
+  });
+
+  it('says nothing about cash on a board with no bet even when unreadable', async () => {
+    const { result } = await adviseOn('no-audience.html', { cash: null });
+
+    expect(result.action).toBe('GATHER');
+    expect(result.warnings.join(' ')).not.toContain('cash');
+  });
+
+  it('sits after the blocked-bet warning and before the attention one', async () => {
+    // Snail Racing's $4,328 is blocked by nerve, and $4,328 dwarfs a $5,000 balance.
+    const { result } = await adviseOn('failure-outcome-no-nerve.html', { cash: 5_000 });
+
+    expect(result.warnings[0]).toContain('has an active $4,328 bet you cannot act on');
+    expect(result.warnings[1]).toContain("Snail Racing's $4,328 bet is 87% of your $5,000 cash");
+  });
+
+  it('is ordered ahead of the attention warning on a board that raises both', async () => {
+    // Snail Racing's $2,159 is live and actionable, the bettors sit under 60, and
+    // the balance is small enough for the cash warning to fire as well.
+    const { result } = await adviseOn(ACTIVE_BET, { cash: 5_000 });
+    const cashAt = result.warnings.findIndex((/** @type {string} */ w) => w.includes('of your'));
+    const attentionAt = result.warnings.findIndex((/** @type {string} */ w) =>
+      w.includes('below the community threshold'),
+    );
+
+    expect(cashAt).toBeGreaterThanOrEqual(0);
+    expect(attentionAt).toBeGreaterThanOrEqual(0);
+    expect(cashAt).toBeLessThan(attentionAt);
+  });
+
+  it('leaves the recommendation and its ranking untouched', async () => {
+    const rich = await adviseOn(ACTIVE_BET, { cash: RICH });
+    const broke = await adviseOn(ACTIVE_BET, { cash: 248 });
+
+    expect(rich.result.action).toBe('LOSE');
+    expect(broke.result.action).toBe('LOSE');
+    expect(broke.result.confidence).toBe(rich.result.confidence);
+  });
+
+  it('never prints an internal ratio as diagnostics', async () => {
+    const { result } = await adviseOn(ACTIVE_BET, { cash: 10_000 });
+    const text = result.warnings.join(' ');
+
+    expect(text).not.toMatch(/0\.2|ratio|CASH_WARNING_RATIO/);
+  });
+});
+
+/**
  * The 0.1.2 change: a bet the player cannot act on must stay in the state.
  *
  * Torn overwrites a blocked button's aria-label with the block reason, so once
@@ -721,7 +891,7 @@ describe('the harness itself', () => {
   it('exposes the published version and the documented internals surface', async () => {
     const controller = await installHustlingUserscript();
 
-    expect(controller.version).toBe('0.1.2');
+    expect(controller.version).toBe('0.1.3');
     expect(controller.status).toBe('CANDIDATE');
     expect(controller.mode).toBe('MAX CE + CS');
     expect(controller.internals.ATTENTION_THRESHOLD).toBe(60);

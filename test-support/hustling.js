@@ -23,7 +23,9 @@ export const HUSTLING_INSTANCE_KEY = '__ksTornHustlingAdvisorV010A1';
  * @property {(label: string) => any} parseAudienceMemberLabel
  * @property {(text: string) => any} parseAudienceSummary
  * @property {(text: string) => number | null} parseMoney
- * @property {(root: Element | null) => any} readState
+ * @property {(doc: Document | null) => { amount: number | null, readable: boolean }} readCash
+ * @property {(root: Element | null, doc?: Document) => any} readState
+ * @property {number} CASH_WARNING_RATIO
  */
 
 /**
@@ -59,6 +61,38 @@ export async function mountHustlingFixture(name) {
   const root = app.querySelector('div.crime-root.hustling-root');
   if (!root) throw new Error(`Fixture ${name} has no hustling-root.`);
   return root;
+}
+
+/**
+ * Installs Torn's sidebar balance block in the current document.
+ *
+ * The markup is the real captured block (see the fixture's own comment); only the
+ * amount is substituted here, because that is the whole point of the test.
+ *
+ * @param {number | string | null} amount a number sets both data-money and the
+ *   rendered text; a string sets only the rendered text, so the fallback path can
+ *   be exercised; null removes the sidebar entirely.
+ * @returns {Promise<void>}
+ */
+export async function setSidebarCash(amount) {
+  document.getElementById('ks-test-sidebar')?.remove();
+  if (amount === null) return;
+
+  const holder = document.createElement('div');
+  holder.id = 'ks-test-sidebar';
+  holder.innerHTML = await readHustlingFixture('sidebar-cash.html');
+  document.body.append(holder);
+
+  const value = holder.querySelector('#user-money');
+  if (!value) throw new Error('sidebar-cash.html no longer contains #user-money.');
+
+  if (typeof amount === 'number') {
+    value.setAttribute('data-money', String(amount));
+    value.textContent = `$${amount.toLocaleString('en-US')}`;
+  } else {
+    value.removeAttribute('data-money');
+    value.textContent = amount;
+  }
 }
 
 /**

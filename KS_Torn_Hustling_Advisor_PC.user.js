@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KS Torn Hustling Advisor PC
 // @namespace    DieselBladeScripts.ARS.Kingshade
-// @version      0.1.2
+// @version      0.1.3
 // @description  Read-only Hustling next-action advisor for Torn on PC. Reads only the Hustling view you have open and shows exactly one recommended manual action, its nerve cost and the warnings that follow from visible data. It never clicks, submits, navigates, stores, exports or sends anything, and it makes no network or API calls.
 // @license      GPL-3.0-or-later
 // @author       Kingshade
@@ -17,12 +17,85 @@
     'use strict';
 
     /*
-     * KS Torn Hustling Advisor PC v0.1.2 — STATUS: CANDIDATE
+     * KS Torn Hustling Advisor PC v0.1.3 — STATUS: CANDIDATE
      *
      * ---------------------------------------------------------------------
      * CHANGELOG
      *
-     * 0.1.2
+     * 0.1.3
+     *
+     *   FIXED
+     *     - The advisor no longer walks the player into an empty wallet without
+     *       saying anything. Torn's wiki states that raising a game's Technique
+     *       raises the audience's betting values, and Technique rises on every Win
+     *       and Lose — so following this advisor's own advice drives the stake up.
+     *       The owner's measured series on one Snail Racing row ran $1,102 ->
+     *       $2,238 -> $5,190 -> $8,106 and then the money was gone. Up to 0.1.2 the
+     *       advisor read neither the balance nor Technique and could not see it
+     *       coming; the only signal was Torn blocking the button afterwards, which
+     *       0.1.2 reports but which arrives too late to act on.
+     *
+     *   ADDED
+     *     - The player's cash is read from Torn's own sidebar: the unhashed
+     *       id="user-money", whose data-money attribute carries the amount as a
+     *       plain integer. Present exactly once in all eleven captures from
+     *       2026-08-28 and 2026-09-08. The rendered text is a normalised fallback.
+     *     - A warning whenever a live bet is CASH_WARNING_RATIO of the balance or
+     *       more, naming the game, the stake, the balance and how many further
+     *       losses the balance can absorb. It is raised whatever action ends up
+     *       being recommended, because it describes the table and not the advice.
+     *       It sits after the blocked-bet warning and before the attention one.
+     *     - A fail-closed notice when the balance cannot be read at all, so an
+     *       unreadable balance is never silently taken for a healthy one.
+     *
+     *   CHANGED
+     *     - Nothing in the recommendation logic. The action ranking, the attention
+     *       threshold and the blocked-bet warning are all untouched.
+     *     - readState now takes an optional document, defaulting to the root's own,
+     *       so the sidebar read stays in the adapter layer and is testable.
+     *
+     *   KNOWN ISSUES
+     *     - CASH_WARNING_RATIO = 0.2 is a DERIVED SAFETY MARGIN from the owner's
+     *       own measured stake series, not a Torn-verified figure — the same
+     *       standing as ATTENTION_THRESHOLD.
+     *     - affordableLosses() assumes a clean doubling per loss. That is the
+     *       owner's measured series, not a published rule, so the count is an
+     *       estimate and nothing more. It is also demonstrably incomplete:
+     *       on 2026-09-08 the Cornhole stake went DOWN, from $4,428 to $2,804,
+     *       when the audience shrank from two bettors to one. Torn's wiki says
+     *       "The more audience members betting at once, the larger the size of
+     *       the bets", so the stake is driven by at least Technique, the number
+     *       of bettors and their wealth — and it can fall as well as rise.
+     *     - Technique itself is still not read, so the advisor cannot say how fast
+     *       the stake will climb from here — only where it stands now.
+     *     - The balance is read at render time only. A balance that changes while
+     *       nothing on the Hustling board changes is not noticed until the next
+     *       board update. That is deliberate: no polling, no extra observer.
+     *     - The attention ceiling (attention + suspicion = 100) is still not used.
+     *     - Still no suspicion logic, still no lower attention bound of 40, and
+     *       CRITICAL FAILURE's outcome class is still unobserved.
+     *
+     *   VERIFICATION
+     *     - Vitest: full suite green against the real published file.
+     *     - ESLint, Prettier, tsc, node --check, suite validator: green.
+     *     - KS compliance-syntax gate on this file: zero hits, unchanged from 0.1.2.
+     *     - Playwright: NOT green and not touched — a pre-existing War Dibs
+     *       harness mismatch fails the whole browser suite.
+     *     - Real Torn PC runtime, the "is more than" branch: VERIFIED on PC
+     *       2026-09-08. With $297 in hand and a $472 bet on Cornhole the panel
+     *       read "Cornhole has an active $472 bet you cannot act on: \"You're not
+     *       carrying enough money\"" followed by "Cornhole's $472 bet is more than
+     *       the $297 you are carrying", in that order and ahead of the attention
+     *       warning, with no ratio or internal value printed — and the advice
+     *       still pointed at a feasible action on another row.
+     *     - The percentage branch (a stake at 20-99% of the balance, "About N more
+     *       losses would empty you") and the UNKNOWN branch (unreadable balance)
+     *       have NOT been seen in live runtime. Both are covered by tests only.
+     *     - The nerve block with a live bet, carried over from 0.1.2 as a
+     *       candidate, was verified in the same session. It runs through the same
+     *       code path, so that verification applies to both versions.
+     *
+     * 0.1.2  (runtime-verified on PC 2026-09-08, no-money case)
      *
      *   FIXED
      *     - A blocked bet no longer disappears from the state.
@@ -170,7 +243,7 @@
      * file — no Hustling capture from PDA exists, so its DOM would be guesswork.
      */
 
-    const VERSION = '0.1.2';
+    const VERSION = '0.1.3';
     const STATUS = 'CANDIDATE';
     const MODE = 'MAX CE + CS';
     const INSTANCE_KEY = '__ksTornHustlingAdvisorV010A1';
@@ -200,6 +273,28 @@
      * state and still stores nothing. The lower bound of 40 is not implemented.
      */
     const ATTENTION_THRESHOLD = 60;
+
+    /**
+     * Warn once a row's live bet is this share of the player's cash, or more.
+     *
+     * DERIVED SAFETY MARGIN — not Torn-verified, same standing as
+     * ATTENTION_THRESHOLD. Torn's wiki states that raising a game's Technique
+     * raises the audience's betting values, and Technique rises on every Win and
+     * Lose. Following this advisor therefore drives the stake up on its own. The
+     * owner's measured series on one Snail Racing row ran
+     * $1,102 -> $2,238 -> $5,190 -> $8,106: roughly a doubling per successful
+     * Lose. At one fifth of the balance there is room for about two more losses;
+     * below that there is margin, above it the next pair is the one that empties
+     * the account.
+     */
+    const CASH_WARNING_RATIO = 0.2;
+
+    /**
+     * Torn's own sidebar balance. Unhashed id, and it carries the amount as a
+     * plain integer in data-money. Present exactly once in all eleven captures
+     * from 2026-08-28 and 2026-09-08.
+     */
+    const CASH_ELEMENT_ID = 'user-money';
 
     /** Actions this version is allowed to recommend. Anything else is fail-closed. */
     const RECOMMENDABLE = ['WIN', 'LOSE', 'HYPE', 'DEMO', 'GATHER'];
@@ -346,6 +441,48 @@
      * Layer 2 — DOM adapter (reads, never writes, never saves node references)
      * ------------------------------------------------------------------ */
 
+    /**
+     * The player's cash, read from Torn's sidebar.
+     *
+     * This is the one thing the advisor reads outside hustling-root, and it is read
+     * at render time only — inside readState, on the same debounced pass that reads
+     * the rows. No observer watches the sidebar, no timer polls it, and no new
+     * container is observed. Torn keeps the amount in a data attribute, so nothing
+     * has to be inferred from formatting; the rendered text is only a fallback and
+     * is normalised rather than assumed to keep any one shape.
+     *
+     * Fail-closed: an unreadable balance is reported as unreadable. It is never
+     * treated as "plenty", and it never blocks the recommendation.
+     */
+    function readCash(doc) {
+        if (!doc) return { amount: null, readable: false };
+        const element = doc.getElementById(CASH_ELEMENT_ID);
+        if (!element) return { amount: null, readable: false };
+
+        const raw = element.getAttribute('data-money');
+        if (raw !== null && raw.trim() !== '') {
+            const value = Number(raw.trim());
+            if (Number.isFinite(value)) return { amount: value, readable: true };
+        }
+
+        const normalised = (element.textContent ?? '').replace(/[$,\s]/g, '');
+        if (/^-?\d+$/.test(normalised)) {
+            const value = Number(normalised);
+            if (Number.isFinite(value)) return { amount: value, readable: true };
+        }
+
+        return { amount: null, readable: false };
+    }
+
+    /**
+     * How many further losses the balance can absorb when the stake roughly
+     * doubles each time. Losing n times in a row costs bet * (2^n - 1).
+     */
+    function affordableLosses(bet, cash) {
+        if (!(bet > 0) || !(cash > 0)) return 0;
+        return Math.floor(Math.log2(cash / bet + 1));
+    }
+
     function emptyAudience() {
         return { summary: parseAudienceSummary(''), members: [], memberCount: 0, confidence: 'none' };
     }
@@ -355,12 +492,20 @@
      * live in a virtualised list that mounts and unmounts on scroll, so no node
      * reference may survive an update.
      */
-    function readState(root) {
+    /**
+     * @param {Element | null} root
+     * @param {Document} [doc] where to look for Torn's sidebar balance. Defaults to
+     *   the root's own document, so callers normally pass nothing.
+     */
+    function readState(root, doc) {
+        const documentRef = doc ?? (root ? root.ownerDocument : null);
+
         if (!root) {
             return {
                 ready: false,
                 rows: [],
                 audience: emptyAudience(),
+                cash: readCash(documentRef),
                 counters: null,
                 skill: null,
                 notes: ['The Hustling root element is not present.'],
@@ -384,6 +529,8 @@
             ready: rows.length > 0,
             rows,
             audience,
+            /* Read on the same render pass as the rows. No observer, no timer. */
+            cash: readCash(documentRef),
             counters: readCounters(root),
             skill: readSkill(root),
             notes,
@@ -606,6 +753,40 @@
                     ? `${name} has an active ${amount} bet you cannot act on: "${row.betBlockedReason}"`
                     : `${name} has an active ${amount} bet you cannot act on, and Torn did not say why.`,
             );
+        }
+
+        /* Cash check, immediately after the blocked-bet warning and well before the
+         * attention one: a bet you cannot act on still outranks a bet you can act on
+         * but cannot afford. This is information about the table, so it is raised
+         * whatever action ends up being recommended. */
+        const cash = state.cash ?? { amount: null, readable: false };
+        const liveBets = state.rows.filter(
+            (row) => row.hasActiveBet && typeof row.bet === 'number' && row.bet > 0,
+        );
+        if (liveBets.length > 0 && !cash.readable) {
+            warnings.push(
+                'Your cash could not be read from the sidebar, so no stake can be checked ' +
+                    'against it. The cash check is UNKNOWN — that is not the same as having plenty.',
+            );
+        } else if (liveBets.length > 0 && typeof cash.amount === 'number') {
+            for (const row of liveBets) {
+                const share = cash.amount > 0 ? row.bet / cash.amount : Infinity;
+                if (share < CASH_WARNING_RATIO) continue;
+                const name = row.name ?? 'A row';
+                const stake = `$${formatMoney(row.bet)}`;
+                const held = `$${formatMoney(cash.amount)}`;
+                if (share >= 1) {
+                    warnings.push(`${name}'s ${stake} bet is more than the ${held} you are carrying.`);
+                    continue;
+                }
+                const losses = affordableLosses(row.bet, cash.amount);
+                warnings.push(
+                    `${name}'s ${stake} bet is ${Math.round(share * 100)}% of your ${held} cash. ` +
+                        (losses <= 1
+                            ? 'One more loss would empty you.'
+                            : `About ${losses} more losses would empty you.`),
+                );
+            }
         }
 
         for (const row of state.rows) {
@@ -1245,6 +1426,7 @@
             destroy,
             internals: Object.freeze({
                 ATTENTION_THRESHOLD,
+                CASH_WARNING_RATIO,
                 classifyOutcomeClasses,
                 decide,
                 isObserving: () => observing,
@@ -1254,6 +1436,7 @@
                 parseAudienceMemberLabel,
                 parseAudienceSummary,
                 parseMoney,
+                readCash,
                 readState,
             }),
         }),
