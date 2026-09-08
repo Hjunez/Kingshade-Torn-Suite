@@ -3,6 +3,9 @@
 TEST_NOTES_v*.txt
 KS_Status_Diagnostics*.user.js
 
+# Local Codex knowledge source files (never commit)
+knowledge-local/
+
 # Editor and operating-system files
 .DS_Store
 Thumbs.db
