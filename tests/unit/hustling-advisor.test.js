@@ -891,7 +891,7 @@ describe('the harness itself', () => {
   it('exposes the published version and the documented internals surface', async () => {
     const controller = await installHustlingUserscript();
 
-    expect(controller.version).toBe('0.1.4');
+    expect(controller.version).toBe('0.1.5');
     expect(controller.status).toBe('CANDIDATE');
     expect(controller.mode).toBe('MAX CE + CS');
     expect(controller.internals.ATTENTION_THRESHOLD).toBe(60);

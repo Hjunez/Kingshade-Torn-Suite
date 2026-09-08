@@ -1,7 +1,9 @@
 // ==UserScript==
 // @name         KS Torn Hustling Advisor PC
 // @namespace    DieselBladeScripts.ARS.Kingshade
-// @version      0.1.4
+// @version      0.1.5
+// @downloadURL  https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_Hustling_Advisor_PC.user.js
+// @updateURL    https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_Hustling_Advisor_PC.user.js
 // @description  Read-only Hustling next-action advisor for Torn on PC. Reads only the Hustling view you have open and shows exactly one recommended manual action, its nerve cost and the warnings that follow from visible data. It never clicks, submits, navigates, stores, exports or sends anything, and it makes no network or API calls.
 // @license      GPL-3.0-or-later
 // @author       Kingshade
@@ -17,10 +19,42 @@
     'use strict';
 
     /*
-     * KS Torn Hustling Advisor PC v0.1.4 — STATUS: CANDIDATE
+     * KS Torn Hustling Advisor PC v0.1.5 — STATUS: CANDIDATE
      *
      * ---------------------------------------------------------------------
      * CHANGELOG
+     *
+     * 0.1.5
+     *
+     *   FIXED
+     *     - Nothing. No defect was reported against 0.1.4 and none was looked for.
+     *
+     *   ADDED
+     *     - @downloadURL and @updateURL, pointing at this file's raw URL on the
+     *       main branch, so Tampermonkey can offer and apply updates once this
+     *       file is published there. Same two lines, same placement directly
+     *       after @version, as KS_FFScouter_Call_Guard.user.js already uses on
+     *       main — no new publishing convention was invented for this script.
+     *
+     *   CHANGED
+     *     - Nothing else. This is a publishing-metadata-only release: no
+     *       decision logic, no adapter, no CSS, no panel text, no threshold,
+     *       no constant besides @version and VERSION, and no @grant. Still
+     *       @grant none, still no @connect, still zero network calls.
+     *
+     *   KNOWN ISSUES
+     *     - Every 0.1.4 known issue below still stands unchanged. None of them
+     *       is a metadata matter and this release neither fixes nor worsens
+     *       any of them.
+     *
+     *   VERIFICATION
+     *     - NOT runtime-verified yet. This release only adds update-channel
+     *       metadata; Tampermonkey does not evaluate @downloadURL/@updateURL
+     *       while a script is already installed and running, so the 0.1.4
+     *       runtime verification below still describes this script's actual
+     *       behaviour in the browser. What is unverified is the update path
+     *       itself: that Tampermonkey can find and apply this file for a
+     *       fresh or existing install once it is live on main.
      *
      * 0.1.4
      *
@@ -314,7 +348,7 @@
      * file — no Hustling capture from PDA exists, so its DOM would be guesswork.
      */
 
-    const VERSION = '0.1.4';
+    const VERSION = '0.1.5';
     const STATUS = 'CANDIDATE';
     const MODE = 'MAX CE + CS';
     const INSTANCE_KEY = '__ksTornHustlingAdvisorV010A1';
