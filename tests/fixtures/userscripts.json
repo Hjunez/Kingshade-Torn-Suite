@@ -26,8 +26,14 @@
   {
     "file": "KS_Torn_Hustling_Advisor_PC.user.js",
     "name": "KS Torn Hustling Advisor PC",
-    "sha256": "1FF6DF2D1A1770708B4FECB796D284AD3475753C4E36C56E3B1F5E12D2B719FB",
-    "version": "0.1.3"
+    "sha256": "CE1B33D22904129C221316D6DFD781647586F5401CE85556BC980CC86F9396AB",
+    "version": "0.1.4"
+  },
+  {
+    "file": "KS_Torn_Hustling_Advisor_PC_v0.1.4.user.js",
+    "name": "KS Torn Hustling Advisor PC",
+    "sha256": "CE1B33D22904129C221316D6DFD781647586F5401CE85556BC980CC86F9396AB",
+    "version": "0.1.4"
   },
   {
     "file": "KS_Torn_War_Dibs.user.js",
