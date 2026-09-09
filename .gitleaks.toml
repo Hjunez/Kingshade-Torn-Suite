@@ -28,6 +28,15 @@ description = "Platshållare och testdata som inte är riktiga nycklar"
 regexes = [
   '''###PDA-APIKEY###''',
   '''(?i)key\s*[:=]\s*['"]?(YOUR_API_KEY|XXXXXXXXXXXXXXXX|0{16}|abcdefghij123456)['"]?''',
+  # __ksTornHustlingAdvisor<tag> is KS Torn Hustling Advisor PC's
+  # double-injection instance key (INSTANCE_KEY / HUSTLING_INSTANCE_KEY,
+  # window.__ksTornHustlingAdvisorV010A1). It stops two copies of the
+  # published userscript from mounting at once and is deliberately readable
+  # in the plain-text .user.js file itself and in its test harness — it is
+  # not a secret, generic-api-key only flags it on string entropy. Matches
+  # the fixed prefix plus any version tag so future Hustling Advisor
+  # version snapshots stay covered without editing this file again.
+  '''__ksTornHustlingAdvisor[A-Za-z0-9]+''',
 ]
 paths = [
   '''(^|/)docs/''',
