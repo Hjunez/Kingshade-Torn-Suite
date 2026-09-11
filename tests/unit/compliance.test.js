@@ -289,7 +289,10 @@ describe('userscript-metadata', () => {
   it('parsar headern och plockar ut @connect', async () => {
     const metadata = parseUserscriptMetadata(await readRepositoryFile(USERSCRIPT));
 
-    expect(metadata.name?.[0]).toBe('KS Torn War Dibs');
+    // Namnet bytte till "KS Torn War Dibs PDA" i 1.5.167. Avsiktligt: filnamnet
+    // — och därmed medlemmarnas @updateURL — är oförändrat, och Tampermonkey
+    // matchar uppdateringen på URL, inte på namn.
+    expect(metadata.name?.[0]).toBe('KS Torn War Dibs PDA');
     expect(declaredConnectHosts(metadata)).toEqual(['ffscouter.com', 'api.torn.com']);
   });
 });

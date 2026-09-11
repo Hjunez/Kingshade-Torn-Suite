@@ -3,7 +3,7 @@ import globals from 'globals';
 import { KS_FORBIDDEN_SYNTAX } from './tools/compliance-syntax.mjs';
 
 const knownUnusedBindings =
-  '^(extractEstimateFragment|findCommonContainer|formatRwRunway|tornTransportFailureStreak|tornUserBasicCapability)$';
+  '^(extractEstimateFragment|findCommonContainer|formatRwRunway|lastPublicBasicFetchAt|publicBasicRequestSerial|tornTransportFailureStreak|tornUserBasicCapability)$';
 
 export default [
   {
@@ -42,6 +42,17 @@ export default [
           varsIgnorePattern: knownUnusedBindings,
         },
       ],
+    },
+  },
+  {
+    // War Dibs PDA 1.5.167 är en förseglad, runtime-verifierad build. Den bär
+    // ett tomt `if (selfPlayerId) {}` — rester efter en borttagen väg, utan
+    // körbar effekt. En enda ändrad byte i filen bryter bindningen till den
+    // artefakt ägaren faktiskt kört i telefonen, så resten städas i nästa
+    // PDA-version i stället för här.
+    files: ['KS_Torn_War_Dibs.user.js', 'KS_Torn_War_Dibs_PDA_v1.5.167.user.js'],
+    rules: {
+      'no-empty': 'off',
     },
   },
   {

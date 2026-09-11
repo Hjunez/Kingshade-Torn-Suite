@@ -43,9 +43,9 @@
   },
   {
     "file": "KS_Torn_War_Dibs.user.js",
-    "name": "KS Torn War Dibs",
-    "sha256": "2BF374590FD445EB4C344337A24DE610A9B6705F39A693A6EE14A526BDB3BAE9",
-    "version": "1.5.145"
+    "name": "KS Torn War Dibs PDA",
+    "sha256": "E0DE464C2D502713D060F27B6FD58D7671A8E9B12E1DC7B8482534865A6C072D",
+    "version": "1.5.167"
   },
   {
     "file": "KS_Torn_War_Dibs_PC.user.js",
@@ -64,6 +64,12 @@
     "name": "KS Torn War Dibs PC",
     "sha256": "B957F9716F5B5D71960A86DC4613F75368B5DC26D709B571CD63742B80CC800B",
     "version": "1.0.40"
+  },
+  {
+    "file": "KS_Torn_War_Dibs_PDA_v1.5.167.user.js",
+    "name": "KS Torn War Dibs PDA",
+    "sha256": "E0DE464C2D502713D060F27B6FD58D7671A8E9B12E1DC7B8482534865A6C072D",
+    "version": "1.5.167"
   },
   {
     "file": "KS_Torn_War_Dibs_v1.5.145.user.js",
