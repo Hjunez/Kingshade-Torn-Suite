@@ -104,7 +104,7 @@ Shared Ranked War target coordination across **Torn PDA**, **Torn PC** and **FFS
 
 - **Torn PDA — KS Torn War Dibs 1.5.145** — FF and shared DIBS are operational, and the new row/name stability solution passed live smoke. Known limitation: the Est overlay is not currently visible on the tested current Torn PDA layout.
 - **Torn PC — KS Torn War Dibs PC 1.0.40** — native Attack-column DIBS for Tampermonkey on Torn.
-- **FFScouter War Room — KS FFScouter Call Guard 1.1.3** — War Room DIBS, TAKEN + claimant name and RELEASE.
+- **FFScouter War Room — KS FFScouter Call Guard 1.1.4** — War Room DIBS, TAKEN + claimant name and RELEASE.
 - Stable update URLs use the unversioned `.user.js` files.
 - Shared DIBS depends on FFScouter Hit Calling, which FFScouter's current API documentation identifies as a Premium feature.
 - Full guide: [`docs/KS_RANKED_WAR_DIBS.md`](docs/KS_RANKED_WAR_DIBS.md).
