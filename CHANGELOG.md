@@ -2,6 +2,97 @@
 
 All notable changes to Kingshade Suite are documented here.
 
+## KS FFScouter Call Guard — 2026-09-11 — War Room release
+
+### KS FFScouter Call Guard 1.1.4
+
+Publishes the build the owner already runs to the permanent War Room stable
+update channel, plus an immutable 1.1.4 snapshot. The channel had been left at
+1.1.3 since the 2026-08-29 emergency release.
+
+**FIXED**
+
+- `normalizeSharedClaims` no longer discards the entire shared claims response
+  the moment a single queue entry cannot be read. PC and PDA already skip the
+  bad entry and flag its target instead; Call Guard discarded the whole
+  response and went offline, so one broken entry made Call Guard show nothing
+  while PC and PDA kept working on the exact same server response. The base
+  requirement — PC, PDA and Call Guard say the same thing about the same
+  target — was broken by this divergence.
+- The practical consequence on 1.1.3 is that a claimed target can be shown as
+  free. 1.1.4 flags it `DIBS?` and disables the button instead, so two members
+  cannot be sent at the same target by a response Call Guard could not fully
+  read.
+
+**ADDED**
+
+- `sharedClaimsUnreadable`, a Set of target IDs the shared server sent a claim
+  for that could not be read. A flagged target renders as `DIBS?` / `UNKNOWN`
+  with the button disabled — it can never be claimed and is never shown as
+  free.
+- Panel `degraded` state: when one or more targets are flagged unreadable the
+  status line reports both counts (`Shared: online · N targets · M
+  unreadable`) instead of the whole panel dropping to `offline`. The
+  unreadable count is never hidden.
+
+**CHANGED**
+
+- `normalizeSharedClaims` returns `{ claims: Map, unreadable: Set }` instead
+  of a bare `Map`. The read call site now requires an object carrying a `Map`
+  in `claims`; a shape fault (missing/non-object `claims.faction`, a
+  non-empty array, or a key that is not a Torn ID) still returns `null` and
+  still throws `"malformed claims response"`, taking the panel fully offline
+  exactly as before — there is no row to warn on for a shape fault, so it is
+  still rejected whole.
+- Ported verbatim from the sealed PC reference implementation so PC, PDA and
+  Call Guard read the same server response the same way. No new network calls
+  and no new `@connect` host; this is parsing and rendering of a response the
+  script already fetches.
+
+**KNOWN ISSUES**
+
+- Call Guard has no war-phase gate. Before a war goes live it shows `READY`
+  on a target where PC and PDA show `LOCKED` / `rw-not-started` — the words
+  `PREWAR`, `rwPhase` and `LIVE` do not appear in the file at all, and the
+  button is driven only by hospital time, Fair Fight and shared claims. This
+  is deliberate: without phase detection, the lockout that made PDA unusable
+  during the previous war cannot recur. No double hit results — reading works
+  in every direction — but a target can be locked from the War Room page
+  before the war is live, and PC and the phone will then show it as taken
+  without being able to claim it themselves. Adding a phase gate is an owner
+  decision and its own version, after the war.
+- Call Guard reads raw `Date.now()` for claim expiry, where PC reads Torn time
+  from the server response interval and PDA reads Torn PDA's own
+  `getCurrentTimestamp()`. Measured 2026-09-11: with the machine clock correct
+  Call Guard says exactly what PC says. A divergence appears at one second of
+  clock error, and it is visible only in the seconds nearest a claim's expiry
+  — never in the hospital gate, because hospital time is read from FFScouter's
+  own page text. With an NTP-synchronised Windows clock this has no practical
+  effect.
+- v1.1.3 never received a documented runtime verification on the War Room
+  page. v1.1.4 is the first live confirmation of both the v1.1.3 shared-claim
+  correction and this fix.
+
+**VERIFICATION**
+
+- Source: byte-identical to the runtime-verified artifact
+  `FFScouter War Room/Test Artifacts/KS_FFScouter_Call_Guard_v1.1.4_UNREADABLE_CLAIM_TEST.txt`
+  — 69 182 bytes, SHA-256 `03D1D927…E8E300E`. Both the stable channel file and
+  the 1.1.4 snapshot carry that digest, pinned in
+  `tests/fixtures/userscripts.json`.
+- Cross-client: measured 2026-09-11 in the three-party simulation against the
+  versions the owner actually runs. `normalizeSharedClaims` is 1 308
+  characters in both Call Guard 1.1.4 and PC 1.0.40 once whitespace and
+  comments are stripped, and the two agree on 20 000 randomised server
+  responses.
+- Runtime: verified live on ffscouter.com/war-room on 2026-09-06 by the owner
+  — panel online with the correct target count, DIBS buttons rendered in every
+  state (hospital countdown, travel lock, okay), Tampermonkey showing 1.1.4
+  active and 1.1.3 disabled, and a claim followed by a release both completed.
+  **Call Guard v1.1.4 = VERIFIED.**
+- The three-party simulation is an offline measurement and does not by itself
+  carry the VERIFIED status word; the live War Room run above does.
+
 ## KS Ranked War DIBS — 2026-09-11 — Torn PC release
 
 ### Torn PC — KS Torn War Dibs PC 1.0.40
