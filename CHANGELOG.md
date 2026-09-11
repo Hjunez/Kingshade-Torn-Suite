@@ -2,6 +2,117 @@
 
 All notable changes to Kingshade Suite are documented here.
 
+## KS Ranked War DIBS — 2026-09-11 — Torn PDA release
+
+### Torn PDA — KS Torn War Dibs 1.5.167
+
+Replaces the 1.5.145 emergency build on the permanent Torn PDA stable update
+channel and adds an immutable 1.5.167 snapshot. 1.5.145 is marked FAILED /
+DO NOT USE in the project's own status files; anyone installing from the GitHub
+raw URL today was walking into the 2026-09-12 ranked war on it.
+
+The published file is the release copy
+`KS Torn War Dibs/Releases/KS_Torn_War_Dibs_PDA_v1.5.167.txt`, which differs
+from the runtime-verified artifact on exactly three lines — `@name` loses the
+` TEST` suffix, `@description` loses its `TEST: ` prefix, and the panel's
+version line drops ` TEST`. Verified by diff: six changed lines, no logic
+difference.
+
+**FIXED**
+
+- **The lock.** A redraw of Torn's war card no longer resets the confirmed LIVE
+  phase (1.5.151, `refreshCurrentWarSurface`). On 1.5.145 the DIBS button
+  locked itself once the war started, which is what happened to the owner
+  throughout the previous ranked war and is the single heaviest complaint
+  against that build.
+- **The clock.** The hospital countdown reads Torn time via Torn PDA's own
+  `getCurrentTimestamp()` instead of the phone clock (1.5.154). A phone running
+  ahead of Torn made the countdown show less time than there was, so the hit
+  missed. The `+1` was removed and `hospitalUntilExpired` added, so an expired
+  hospital time stops counting as hospital instead of persisting for up to 30
+  seconds until the next member fetch.
+- **Dropped claims.** CLAIM now goes through `hitApiWriteWithBusyRetry`
+  (1.5.155). 1.5.145 gave up on the first refusal, so a `409 busy` — normal
+  when several members claim at once, i.e. exactly the hottest moment of a war
+  — lost the claim on the phone while PC retried and won. Same button press,
+  different outcome per device.
+- **Unreadable claims.** The same contract as PC (1.5.156): an unreadable
+  entry is skipped and its target flagged `DIBS?` and unclaimable, while a
+  shape fault is still rejected whole and takes the panel offline. On 1.5.145
+  a single broken entry took the whole client offline.
+
+**ADDED**
+
+- Auto-release, ported from PC 1.0.38 (1.5.158): a claim is released once the
+  target is back in hospital well above the claim gate.
+- DEMO mode (1.5.162): a preview of the finished war look on a foreign roster.
+  Pixels only — impossible on the owner's own war route, and sends nothing
+  anywhere.
+
+**CHANGED**
+
+- The DIBS button moved to the Status cell and carries the hospital countdown
+  itself (1.5.164). Measured 2026-09-05: Torn PDA's roster has no Attack
+  column and its attack cell measures 0×0, so the button was never drawn at
+  all on the previous layout.
+- Three cell rules, one per version, so KS's own UI never covers Torn's: the
+  native Status cell is hidden only while the button covers it (1.5.165), Est
+  replaces the Score cell only when there is an estimate to show (1.5.166),
+  and the FF pill on the nameplate stays blank and invisible until there is a
+  real value (1.5.167) — it used to draw `FF -` across part of the member name
+  on every row without an FF value.
+- An unreadable hospital time reads `Hosp ?` instead of `Hosp 0:00` (1.5.163).
+  Zero means attack now; unknown must never be able to say that.
+- The country gate was removed (1.5.157). PC never had one, and two clients
+  with different gates cannot say the same thing about the same target.
+- `@name` changes from `KS Torn War Dibs` to `KS Torn War Dibs PDA`. Members
+  will see the new name in their script manager. This is deliberate and
+  harmless: Tampermonkey matches the update on the URL, not the name, and the
+  filename `KS_Torn_War_Dibs.user.js` — the path the installed 1.5.145 points
+  at in its `@updateURL` — is unchanged.
+
+**KNOWN ISSUES**
+
+- **The file carries no `@updateURL` and no `@downloadURL`.** The installed
+  1.5.145 still points at this path, so this update reaches existing
+  installations — but 1.5.167 itself declares no update channel, so it will
+  not automatically update any further after this installation. Adding the two
+  headers is a header change and needs its own version; it is deferred until
+  after the war.
+- The lock fix is proven against the rig, not against a live war. Measured:
+  13 passed / 7 failed against 1.5.150, where the seven failures are exactly
+  the lock behaviour, and 20 of 20 against 1.5.151. A real own-faction war is
+  the only thing that can close it.
+- Auto-release (1.5.158), busy-retry (1.5.155) and the unreadable-claim
+  contract (1.5.156) cannot be verified outside an own-faction war, because
+  the VIEW transport deliberately denies FFScouter. All three remain
+  CANDIDATE.
+- The Est overlay limitation recorded against 1.5.145 is superseded: Est is
+  drawn from FFScouter's API by the script itself, and was confirmed on screen
+  2026-09-05.
+- The PDA test rig under `tools/war-dibs-pda/` is absent from disk and was
+  never tracked in git, so the project's own test-gate step cannot be run.
+  That blocks the next functional change, not this publication, which is a
+  rename of an already runtime-verified file.
+
+**VERIFICATION**
+
+- Source: byte-identical to
+  `KS Torn War Dibs/Releases/KS_Torn_War_Dibs_PDA_v1.5.167.txt` — 245 918
+  bytes, SHA-256 `E0DE464C…5A6C072D`, no BOM, LF throughout, first line
+  `// ==UserScript==`, `node --check` clean. Both the stable channel file and
+  the 1.5.167 snapshot carry that digest, pinned in
+  `tests/fixtures/userscripts.json`.
+- Runtime: verified on a real Torn PDA against a foreign ranked war on
+  2026-09-05 (two owner screenshots, Just Fer Khaos vs Subversive Alliance).
+  Demo off: member names render whole with no `FF -` in front, Torn's own
+  scores stand alone and readable, `Abroad` rows keep Torn's own cyan text.
+  Demo on: FF pills, Est boxes and DIBS buttons all render in every state
+  (`0:42 / DIBS · FF3.5`, `3h 12m / LOCKED`, `DIBS? / UNKNOWN`,
+  `TAKEN / Kingshade`, `DIBBED / RELEASE`). No regression.
+- Countdown measured against Torn's own timestamp on 2026-09-03: Torn moved
+  seven seconds and four tracked targets each moved exactly seven seconds. No
+  drift.
 ## KS FFScouter Call Guard — 2026-09-11 — War Room release
 
 ### KS FFScouter Call Guard 1.1.4

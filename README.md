@@ -102,7 +102,7 @@ The FFScouter integration uses its documented `/register`, `/check-key`, `/get-s
 
 Shared Ranked War target coordination across **Torn PDA**, **Torn PC** and **FFScouter War Room**.
 
-- **Torn PDA — KS Torn War Dibs 1.5.145** — FF and shared DIBS are operational, and the new row/name stability solution passed live smoke. Known limitation: the Est overlay is not currently visible on the tested current Torn PDA layout.
+- **Torn PDA — KS Torn War Dibs PDA 1.5.167** — FF, Est and shared DIBS on the roster, with the war-phase lock fix, Torn-time countdown, claim busy-retry and the unreadable-claim contract. Known limitation: the file declares no `@updateURL`/`@downloadURL`, so it does not auto-update further after installation.
 - **Torn PC — KS Torn War Dibs PC 1.0.40** — native Attack-column DIBS for Tampermonkey on Torn.
 - **FFScouter War Room — KS FFScouter Call Guard 1.1.4** — War Room DIBS, TAKEN + claimant name and RELEASE.
 - Stable update URLs use the unversioned `.user.js` files.
