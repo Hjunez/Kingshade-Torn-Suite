@@ -72,6 +72,18 @@
     "version": "1.5.167"
   },
   {
+    "file": "KS_Torn_War_Dibs_WSE_PC.user.js",
+    "name": "KS Torn War Dibs WSE PC",
+    "sha256": "8E29B0C3EDDBE3464A18C1CDCFEB333670DBC325589E030515D904BADE2AC7F8",
+    "version": "0.1.0"
+  },
+  {
+    "file": "KS_Torn_War_Dibs_WSE_PC_v0.1.0.user.js",
+    "name": "KS Torn War Dibs WSE PC",
+    "sha256": "8E29B0C3EDDBE3464A18C1CDCFEB333670DBC325589E030515D904BADE2AC7F8",
+    "version": "0.1.0"
+  },
+  {
     "file": "KS_Torn_War_Dibs_v1.5.145.user.js",
     "name": "KS Torn War Dibs",
     "sha256": "2BF374590FD445EB4C344337A24DE610A9B6705F39A693A6EE14A526BDB3BAE9",
