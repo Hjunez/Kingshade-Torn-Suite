@@ -19,6 +19,16 @@ This disclosure is also displayed directly beside the API-key input in Suite Con
 - No attacks, clicks, travel, purchases, crimes or other Torn actions are automated.
 - No background alerts are generated from hidden or unfocused Torn pages.
 
+## KS Torn War Dibs WSE PC 0.1.0
+
+`KS_Torn_War_Dibs_WSE_PC.user.js` shows this disclosure in its panel, beside the key controls. Copied verbatim from the script:
+
+- **Torn API key:** stored only locally, encrypted in this browser; sent only to api.torn.com. Purpose: key-owner identity, own-faction Ranked War state, one opponent-members status batch while the roster is visible, and one final target basic check immediately before DIBS. Required selections: faction → members,wars and user → basic.
+- **FFScouter key/integration:** key stored only locally, encrypted in this browser; sent only to FFScouter for shared Hit Calling claims, claim and release, and to FFScouter's get-stats endpoint for Fair Fight and battle-stat estimates of the opponent roster (one batched request, refreshed at most once a minute). FFScouter terms/data policy: https://ffscouter.com/ · Privacy: https://ffscouter.com/privacy.
+- **War Stuff Enhanced:** detected read-only. This script never writes to, hides or moves anything War Stuff Enhanced renders.
+
+`@connect` hosts: `ffscouter.com`, `api.torn.com`. Torn endpoints: `/v2/key/info`, `/v2/faction/wars`, `/v2/faction/{id}/members`, `/v2/user/{id}/basic`. FFScouter endpoints: `/api/v1/hit-calling/claims`, `/api/v1/hit-calling/claim`, `/api/v1/hit-calling/unclaim`, `/api/v1/get-stats`. In read-only VIEW mode on another faction's Ranked War page only the members batch and get-stats are sent.
+
 ## External policies
 
 - Torn API Terms: https://www.torn.com/api.html

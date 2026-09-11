@@ -5,6 +5,13 @@ import { KS_FORBIDDEN_SYNTAX } from './tools/compliance-syntax.mjs';
 const knownUnusedBindings =
   '^(extractEstimateFragment|findCommonContainer|formatRwRunway|lastPublicBasicFetchAt|publicBasicRequestSerial|tornTransportFailureStreak|tornUserBasicCapability)$';
 
+// War Dibs WSE PC 0.1.0 bär två funktioner som blev oanvända när KS egen
+// statuscell togs bort. Se undantaget för de förseglade WSE-filerna nedan.
+const wseSealedUnusedBindings = knownUnusedBindings.replace(
+  /\)\$$/,
+  '|freshApiStatusForTarget|statusPresentation)$',
+);
+
 export default [
   {
     ignores: [
@@ -53,6 +60,26 @@ export default [
     files: ['KS_Torn_War_Dibs.user.js', 'KS_Torn_War_Dibs_PDA_v1.5.167.user.js'],
     rules: {
       'no-empty': 'off',
+    },
+  },
+  {
+    // War Dibs WSE PC 0.1.0 är en förseglad, runtime-verifierad build (eget krig,
+    // PREWAR, 2026-09-11, med War Stuff Enhanced 2.1 igång). Den bär två
+    // funktioner som blev oanvända när KS egen statuscell togs bort:
+    // freshApiStatusForTarget och statusPresentation. En enda ändrad byte i
+    // filen bryter bindningen till den artefakt ägaren faktiskt kört, så de
+    // städas i nästa WSE-version i stället för här.
+    files: ['KS_Torn_War_Dibs_WSE_PC.user.js', 'KS_Torn_War_Dibs_WSE_PC_v0.1.0.user.js'],
+    rules: {
+      'no-unused-vars': [
+        'error',
+        {
+          argsIgnorePattern: '^(?:_|row$|rwPhase$)',
+          caughtErrors: 'none',
+          ignoreRestSiblings: true,
+          varsIgnorePattern: wseSealedUnusedBindings,
+        },
+      ],
     },
   },
   {

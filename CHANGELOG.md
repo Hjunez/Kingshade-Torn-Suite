@@ -2,6 +2,105 @@
 
 All notable changes to Kingshade Suite are documented here.
 
+## KS Ranked War DIBS — 2026-09-11 — Torn PC + War Stuff Enhanced release
+
+### Torn PC — KS Torn War Dibs WSE PC 0.1.0
+
+A new, standalone Torn PC script on its own stable update channel
+(`KS_Torn_War_Dibs_WSE_PC.user.js`), plus an immutable 0.1.0 snapshot. It is a
+copy of KS Torn War Dibs PC 1.0.40 with exactly the changes needed to run on
+the same Ranked War roster as Torn War Stuff Enhanced 2.1. It does not replace
+`KS_Torn_War_Dibs_PC.user.js` (1.0.40), which is untouched. The two must never
+be enabled at the same time in one browser: two KS DIBS clients on one page
+talk to the same shared server.
+
+**FIXED**
+
+- Nothing. 0.1.0 is the first version of this script.
+
+**ADDED**
+
+- New standalone PC script, `KS Torn War Dibs WSE PC` 0.1.0: a copy of War
+  Dibs PC 1.0.40 that coexists with War Stuff Enhanced 2.1 instead of blocking
+  on it. The decision core — clock, hospital arithmetic, Ranked War phase,
+  classify, shared-claim normalisation, claim/release, unreadable entries, the
+  Torn and FFScouter transport — is character-identical to 1.0.40, checked
+  function by function (123 core functions).
+- FF and Est come from FFScouter's `/api/v1/get-stats` endpoint, the same code
+  as War Dibs PDA 1.5.167, instead of from FF Scouter V2's row attributes. One
+  batched GET for the opponent roster, refreshed at most once a minute, also
+  permitted in the read-only VIEW mode. Hit Calling stays refused in VIEW.
+- Own storage namespace (`ks_torn_war_dibs_wse_*`, IndexedDB
+  `KSTornWarDibsWseSecure`): the Torn key and the FFScouter key are entered
+  once more in this script.
+
+**CHANGED** (relative to War Dibs PC 1.0.40)
+
+- The War Stuff Enhanced gate no longer blocks. Presence is still detected and
+  shown as a panel line, `WSE: detected` / `WSE: not detected`; nothing is
+  gated on it.
+- The Status cell is left to War Stuff Enhanced: KS no longer hides Torn's
+  Status column and no longer renders its own status cell. The hospital
+  countdown stays in the DIBS cell, as it already was.
+- The FFScouter Sort/filter warning is gone; the panel FF line reports the
+  get-stats fetch instead (`FF: syncing…`, `FF: n of m targets`,
+  `FF: offline · <error>`).
+- DIBS sorting is permanently off: War Stuff Enhanced re-sorts
+  `ul.members-list` on every childList change and would undo it at once. The
+  DIBS header is a plain label.
+- The row observer no longer watches FF Scouter V2's `data-ff-value` and
+  `data-est-value`.
+- The panel disclosure text names the get-stats request and War Stuff
+  Enhanced; `docs/API_DISCLOSURE.md` carries the same text.
+- `@name`, `SCRIPT.name`, every storage key and every DOM id carry a `wse`
+  namespace, so the script cannot collide with 1.0.40 if both are installed.
+
+**KNOWN ISSUES**
+
+- **The file carries no `@updateURL` and no `@downloadURL`.** Deliberate: with
+  `@version` 0.1.0 below the published PC channel, an inherited `@updateURL`
+  pointing at `KS_Torn_War_Dibs_PC.user.js` would have let Tampermonkey replace
+  this script with the PC script. Updates are expected to reach existing
+  installations through the installation address,
+  `https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs_WSE_PC.user.js`
+  — that Tampermonkey checks the install address when `@updateURL` is absent
+  is an assumption, to be confirmed when the next version ships. A header
+  update channel is a header change and gets its own version after the war.
+- CLAIM and RELEASE in a LIVE own-faction war are not runtime-verified in this
+  script. The code is character-identical to 1.0.40, which has been used in
+  live wars, but 0.1.0 itself has only been run in PREWAR.
+- Inherits PC 1.0.40's handling of zero-prefixed target IDs in the shared
+  claims response (multi-client simulation row E2: PC, WSE and Call Guard
+  store such a key uncanonicalised and can show that target as free, while
+  PDA rejects the response). Not new and not changed here.
+- Dead code inherited from 1.0.40 is left in place rather than cleaned up
+  (`statusPresentation`, `STATUS_LABELS`, `freshApiStatusForTarget`,
+  `viewMemberStatusForTarget`, the `rosterStatusWidthPx` measurement, the
+  FF Scouter V2 attributes still listed in the observer filter). Harmless;
+  cleanup is a separate version.
+
+**VERIFICATION**
+
+- Source: byte-identical to
+  `KS Torn War Dibs/Test Artifacts/KS_Torn_War_Dibs_WSE_PC_v0.1.0_TEST.txt`
+  — 222 737 bytes, 5 153 lines, SHA-256 `8E29B0C3…2AC7F8`, no BOM, LF
+  throughout, first line `// ==UserScript==`, `node --check` clean. Both the
+  stable channel file and the 0.1.0 snapshot carry that digest, pinned in
+  `tests/fixtures/userscripts.json`.
+- Build: generated from 1.0.40 by an asserted build script in which every edit
+  must match exactly once. A per-function identity check found 216 of 253
+  top-level functions character-identical, 27 changed — all inside the eight
+  listed changes — 10 removed and 9 added. Multi-client simulation with 0.1.0
+  as fourth client: the same button decision as PC in all 1 296 combinations,
+  the same claim expiry second by second and in 97 ms steps, the same reading
+  of 20 000 fuzzed server responses. Network surface: exactly two origins,
+  `api.torn.com` and `ffscouter.com`; no `console.*`.
+- Runtime: installed in the owner's real Torn PC runtime on 2026-09-11 in the
+  owner's own Ranked War during PREWAR, with War Stuff Enhanced 2.1 and
+  FF Scouter V2 enabled at the same time. Screenshot-verified: panel, DIBS
+  column left of Attack, FF 60 of 60 targets via get-stats, Shared online,
+  WSE detected.
+
 ## KS Ranked War DIBS — 2026-09-11 — Torn PDA release
 
 ### Torn PDA — KS Torn War Dibs 1.5.167
