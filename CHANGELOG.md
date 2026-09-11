@@ -2,6 +2,75 @@
 
 All notable changes to Kingshade Suite are documented here.
 
+## KS Ranked War DIBS — 2026-09-11 — Torn PC release
+
+### Torn PC — KS Torn War Dibs PC 1.0.40
+
+Publishes the build the owner already runs to the permanent Torn PC stable
+update channel, plus an immutable 1.0.40 snapshot. The stable channel had been
+left at 1.0.13 since 2026-08-29, so faction members who installed from the
+GitHub URL were 27 versions behind the owner's own install.
+
+**FIXED**
+
+- The queue notice a caller gets when their claim lands at position 2 now
+  survives long enough to be read. `claimSharedTarget` writes
+  `Shared: queued behind <name> · RELEASE required` and then its own `finally`
+  block starts a shared poll, which overwrote the line within roughly 100 ms.
+  That line is the only place the owner is told they hold a queue position they
+  must release by hand, so losing it left a claim silently parked on the server.
+
+**ADDED**
+
+- Nothing. 1.0.40 adds no feature, no request, no stored record and no new
+  `@connect` host over 1.0.39.
+
+**CHANGED**
+
+- The position-2 notice goes through `holdSharedWriteFailure` instead of
+  `setSharedStatus("error", …)`, so it is held for `CONFIG.sharedErrorHoldMs`
+  (6000 ms) exactly like a failed claim or release. Routine `syncing`/`online`
+  updates are suppressed while the hold runs, a newer error replaces an older
+  one immediately, and `beginSharedWriteFeedback` drops the hold the moment the
+  owner starts another write — so the hold can never mask the state of
+  something they are doing right now.
+- This is the presentation layer only. Queue order, claim and release
+  authority, and the request itself are untouched.
+
+**KNOWN ISSUES**
+
+- The stable channel moves 1.0.13 → 1.0.40 in one step. Members updating
+  receive every change from 1.0.14 through 1.0.39 at the same time — the
+  in-column countdown, the Torn clock-offset sources, DIBS sorting, the Est
+  column, auto-release and the unreadable-claim handling. Those versions were
+  verified individually in the owner's runtime but were never published here,
+  so this is the first time anyone else receives them.
+- The banner comment at the top of the file still reads
+  `v1.0.20 COUNTDOWN TEST -- CANDIDATE`. It is stale narrative inside a
+  comment block; the `@version` metadata, `SCRIPT.version` and `instanceKey`
+  all say 1.0.40. Left exactly as sealed rather than edited, because a
+  one-character change would break the byte-for-byte tie to the
+  runtime-verified artifact.
+- `KS_Torn_War_Dibs.user.js` (Torn PDA) stays at 1.5.145 and is not part of
+  this release. The PDA build the owner runs is named `KS Torn War Dibs PDA`
+  and declares no `@updateURL`/`@downloadURL`; publishing it here would rename
+  members' installed script and cut their update path. That is a separate
+  decision.
+
+**VERIFICATION**
+
+- Source: byte-identical to
+  `KS Torn War Dibs/Test Artifacts/KS_Torn_War_Dibs_PC_v1.0.40_QUEUE_NOTICE_TEST.txt`,
+  SHA-256 `B957F971…CC800B`. Both the stable channel file and the 1.0.40
+  snapshot carry that digest, pinned in `tests/fixtures/userscripts.json`.
+- Diff against the sealed 1.0.39 artifact is one behavioural line plus the
+  version, `SCRIPT.version` and `instanceKey` strings — one main change, as
+  required.
+- Runtime: installed in real Torn PC runtime and screenshot-verified by the
+  owner on 2026-09-06. No repository test exercises the six-second hold; the
+  jsdom compliance harness cannot produce the trusted interaction War Dibs
+  gates its runtime on, so live runtime is the only evidence for this fix.
+
 ## Bootlegging — 2026-09-01
 
 ### Kingshade's Bootlegging Advisor 5.2.14
