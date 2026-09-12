@@ -2,6 +2,56 @@
 
 All notable changes to Kingshade Suite are documented here.
 
+## KS Torn War Dibs PDA — 2026-09-12
+
+### KS Torn War Dibs PDA 1.5.169
+
+**FIXED**
+
+- The panel's control row did not respond to a tap in Torn PDA. Three
+  independent causes, all confirmed in code and, for at least one member
+  besides the owner, in the field:
+  - While the shared FF key lacked fresh ownership proof (`Shared:
+    syncing…`), `updatePanel()` set `disabled` on all four key controls. A
+    disabled button dispatches no click. Fixed in 1.5.168: `aria-disabled`
+    instead, so the tap reaches the handler and the action prints the
+    reason.
+  - Each control measured 9.8px tall, eight to a row. Fixed in 1.5.168: a
+    minimum 44px hit target, a wrapping grid, a delegated handler, a
+    visible pressed state.
+  - The panel sits as a sibling of Torn's war card, inside the section Torn
+    collapses. A click inside an open shadow root bubbles out through the
+    host and up into Torn's tree, so every tap in the panel reached Torn's
+    collapse handler. Fixed in 1.5.169: propagation is stopped on the
+    panel's own host, which is a KS-owned element.
+
+**ADDED**
+
+- `isolatePanelHostInteraction`, `stopPanelInteractionPropagation`,
+  `bindPanelControls`, `handlePanelControl`, `setPanelControlState`.
+
+**CHANGED**
+
+- `ensureInlinePanel`, `ensurePresentationLayer`, `updatePanel` — panel
+  control-row wiring only. War-path functions (claim/release, clock,
+  Ranked War phase, classification, auto-release, FFScouter/Torn fetch)
+  are character-identical to 1.5.167.
+
+**KNOWN ISSUES**
+
+- The file still has no `@updateURL` / `@downloadURL`, so it does not
+  update itself further. Addressed after the war, in its own version.
+- `instanceKey` still ends in `Test`
+  (`__ksTornWarDibsPdaV15169Test`) — left as-is deliberately: changing it
+  would make this file no longer the runtime-verified artifact.
+
+**VERIFICATION**
+
+- PDA VERIFIED 2026-09-12 on the owner's phone: the key controls open
+  their edit box, Save and Cancel close it, and Torn's own collapse
+  function still works outside the panel. War paths unchanged against
+  1.5.167.
+
 ## KS Ranked War DIBS — 2026-09-11 — Torn PC + War Stuff Enhanced release
 
 ### Torn PC — KS Torn War Dibs WSE PC 0.1.0
