@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KS Torn War Dibs PDA
 // @namespace    kingshade.torn
-// @version      1.5.167
+// @version      1.5.168
 // @description  Roster-local PDA presentation with v1.5.145 authority and shared-claim safety.
 // @author       Kingshade
 // @match        https://www.torn.com/factions.php*
@@ -46,6 +46,20 @@
  * element, not a Torn cell, so it drew "FF -" over part of the member name on
  * every row that had no FF value yet (owner Demo-off screenshot 2026-09-05).
  * The pill is now blank and invisible until there is a real value to show.
+ * 1.5.168: the panel's control row answers a tap on a phone. MEASURED
+ * 2026-09-12 from the owner's PDA reading ("nothing happens on any of those
+ * links", own RW PREWAR, Shared: syncing): while the shared key has no current
+ * ownership proof, updatePanel() set the disabled property on all four
+ * credential controls, and a disabled button dispatches no click at all -- so
+ * the four actions that already knew how to explain the lock could never say
+ * it. The lock itself is unchanged and still fail-closed: every action
+ * re-checks it on entry and refuses. What changed is that the control is now
+ * marked aria-disabled instead of disabled, so the tap arrives and the script
+ * answers with the reason. The row is also a touch target now: 44px minimum
+ * per control, wrapped, with a visible pressed state, instead of eight 9.8px
+ * text links sharing one line. One delegated click handler on the panel
+ * replaces eight per-control handlers, so the row keeps its tap path when
+ * Torn re-renders the war card underneath it.
  */
 
 (() => {
@@ -53,8 +67,8 @@
 
   const SCRIPT = Object.freeze({
     name: "KS Torn War Dibs",
-    version: "1.5.167",
-    instanceKey: "__ksTornWarDibsPdaV15167Test",
+    version: "1.5.168",
+    instanceKey: "__ksTornWarDibsPdaV15168Test",
     layerId: "ks-twd-pda-layer",
     rowHostPrefix: "ks-twd-pda-row-",
     panelId: "ks-twd-pda-panel",
@@ -3431,7 +3445,23 @@
   const hostBindings = new WeakMap();
   const ownedPresentationLayers = new WeakSet();
   const ownedPanelHosts = new WeakSet();
-  const boundPanelHosts = new WeakSet();
+  const boundPanelNodes = new WeakSet();
+  const FF_CREDENTIAL_LOCK_REASON =
+    "Locked while DIBS ownership is active or unverified. Tap for the current reason.";
+  const TORN_CREDENTIAL_LOCK_REASON =
+    "Locked while DIBS ownership is active or unresolved. Tap for the current reason.";
+  const PANEL_CONTROL_ROLES = new Set([
+    "key",
+    "torn-key",
+    "key-save",
+    "key-cancel",
+    "torn-key-save",
+    "torn-key-cancel",
+    "sync",
+    "demo",
+    "forget-ff",
+    "forget-torn"
+  ]);
   let ownedPresentationLayer = null;
   let inlinePanelHost = null;
   let presentationRoot = null;
@@ -3661,7 +3691,67 @@
       }
     }
     sourceShadow?.querySelectorAll("[data-role='panel']").forEach(panel => panel.remove());
+    bindPanelControls(panelShadow);
     return panelHost;
+  }
+
+  // One delegated handler on the panel element the script owns, not eight
+  // handlers on eight controls. Torn re-renders the war card the panel is
+  // anchored beside, so anything bound per control at mount is bound to a node
+  // that may be gone by the next tap; the panel element survives, and when it
+  // does not the new one is bound here the moment it is installed. Keyed on the
+  // panel node itself, so the same handler is never installed twice.
+  function bindPanelControls(panelShadow) {
+    const panel = panelShadow?.querySelector("[data-role='panel']");
+    if (!(panel instanceof HTMLElement) || boundPanelNodes.has(panel)) return;
+    boundPanelNodes.add(panel);
+    const byRole = role => panelShadow.querySelector(`[data-role='${role}']`);
+    const warRoom = byRole("war-room");
+    const ffTerms = byRole("ff-terms");
+    const ffPrivacy = byRole("ff-privacy");
+    const createKey = byRole("create-key");
+    if (warRoom instanceof HTMLAnchorElement) warRoom.href = SCRIPT.ffscouterWarRoomUrl;
+    if (ffTerms instanceof HTMLAnchorElement) ffTerms.href = SCRIPT.ffscouterTermsUrl;
+    if (ffPrivacy instanceof HTMLAnchorElement) ffPrivacy.href = SCRIPT.ffscouterPrivacyUrl;
+    if (createKey instanceof HTMLAnchorElement) createKey.href = SCRIPT.tornCustomKeyUrl;
+    panel.addEventListener("click", event => {
+      const control = event.composedPath()
+        .find(node => node instanceof HTMLElement && PANEL_CONTROL_ROLES.has(node.dataset?.role || ""));
+      if (!(control instanceof HTMLElement)) return;
+      handlePanelControl(control.dataset.role, event);
+    });
+  }
+
+  function handlePanelControl(role, event) {
+    // Every action below re-checks its own lock on entry and refuses there.
+    // This switch routes the tap; it never decides whether the action is
+    // allowed, so a control that is only marked aria-disabled cannot reach
+    // anything the disabled property used to prevent.
+    switch (role) {
+      case "key": beginFfCredentialEdit(); return;
+      case "torn-key": beginTornCredentialEdit(); return;
+      case "key-cancel": closeFfCredentialEditor(); return;
+      case "torn-key-cancel": closeTornCredentialEditor(); return;
+      case "key-save": void runFfCredentialMutation(saveSharedKeyFromEditor); return;
+      case "torn-key-save": void runTornCredentialMutation(saveTornKeyFromEditor); return;
+      case "forget-ff": void runFfCredentialMutation(forgetSharedKey); return;
+      case "forget-torn": void runTornCredentialMutation(forgetTornKey); return;
+      case "sync":
+        event.preventDefault(); registerTrustedInteraction();
+        if (sharedApiKey) { void fetchSharedClaims(); void fetchFairFightStats({ force: true }); }
+        if (effectiveTornApiKey()) void fetchTornStatuses({ force: true });
+        scanWarRows();
+        return;
+      case "demo":
+        // Powerless on the owner's own war by owner decision: the control is
+        // kept disabled there, so this never runs, and it sends nothing anywhere.
+        if (!viewOnlyMode()) { demoMode = false; updatePanel(); return; }
+        demoMode = !demoMode;
+        scanWarRows();
+        updatePanel();
+        return;
+      default:
+    }
   }
 
   function ensurePresentationLayer() {
@@ -3744,12 +3834,20 @@
         [data-state='syncing'] .dot,[data-state='writing'] .dot { background:#38bdf8; }
         [data-state='error'] .dot,[data-state='offline'] .dot,[data-state='unknown'] .dot,[data-state='ended'] .dot { background:#ef4444; }
         .status { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#cbd5e1; font:700 7.7px/1.2 system-ui,sans-serif; }
-        .controls { display:flex; align-items:center; flex-wrap:wrap; gap:2px; margin-top:5px; }
         button,a { border:0; padding:0; background:none; color:#94a3b8; font:700 8.2px/1.2 system-ui,sans-serif; text-decoration:none; cursor:pointer; }
         button:hover,a:hover { color:#fff; text-decoration:underline; }
         button:disabled { opacity:.4; cursor:default; text-decoration:none; }
         button[data-role='dibs']:hover { text-decoration:none; }
-        .sep { color:#667386; font:700 8px/1 system-ui,sans-serif; }
+        /* A phone finger is about 8mm wide. Eight 9.8px text links on one line
+           is not a control row, it is a row nobody can hit. 44px minimum per
+           target, wrapped, with a pressed state so a tap that lands is
+           visible even when the action it triggers is refused. */
+        .controls { display:grid; grid-template-columns:repeat(auto-fit,minmax(100px,1fr)); gap:6px; margin-top:7px; }
+        .controls > button,.controls > a { display:flex; align-items:center; justify-content:center; min-height:44px; padding:6px 7px; border:1px solid rgba(100,116,139,.45); border-radius:8px; background:rgba(2,6,23,.5); color:#cbd5e1; font:700 9.5px/1.15 system-ui,sans-serif; text-align:center; white-space:normal; overflow-wrap:anywhere; touch-action:manipulation; -webkit-tap-highlight-color:transparent; }
+        .controls > button:hover,.controls > a:hover { color:#fff; text-decoration:none; border-color:rgba(148,163,184,.8); }
+        .controls > button:active,.controls > a:active { background:rgba(56,189,248,.22); border-color:#38bdf8; color:#f8fafc; }
+        .controls > [aria-disabled='true'] { color:#8494a8; border-style:dashed; border-color:rgba(100,116,139,.5); background:rgba(2,6,23,.3); }
+        .controls > button:disabled { opacity:.4; cursor:default; }
         .editor { display:none; align-items:center; gap:5px; margin-top:5px; }
         .editor.open { display:flex; }
         .editor input { min-width:0; flex:1 1 180px; height:28px; box-sizing:border-box; border:1px solid #64748b; border-radius:5px; background:#111827; color:#f8fafc; padding:4px 7px; font:700 10px/1 system-ui,sans-serif; outline:none; }
@@ -3769,13 +3867,13 @@
           <div class="status-item" data-role="rw-item"><span class="dot"></span><span class="status" data-role="rw-status">DIBS: checking RW…</span></div>
         </div>
         <div class="controls">
-          <button type="button" data-role="key">FFScouter key</button><span class="sep">·</span>
-          <button type="button" data-role="torn-key">Torn key</button><span class="sep">·</span>
-          <a data-role="create-key" target="_blank" rel="noopener noreferrer">Create custom API key</a><span class="sep">·</span>
-          <button type="button" data-role="sync">Sync</button><span class="sep">·</span>
-          <button type="button" data-role="demo">Demo</button><span class="sep">·</span>
-          <a data-role="war-room" target="_blank" rel="noopener noreferrer">War Room</a><span class="sep">·</span>
-          <button type="button" data-role="forget-ff">Forget FF key</button><span class="sep">·</span>
+          <button type="button" data-role="key">FFScouter key</button>
+          <button type="button" data-role="torn-key">Torn key</button>
+          <a data-role="create-key" target="_blank" rel="noopener noreferrer">Create custom API key</a>
+          <button type="button" data-role="sync">Sync</button>
+          <button type="button" data-role="demo">Demo</button>
+          <a data-role="war-room" target="_blank" rel="noopener noreferrer">War Room</a>
+          <button type="button" data-role="forget-ff">Forget FF key</button>
           <button type="button" data-role="forget-torn">Forget Torn key</button>
         </div>
         <div class="editor" data-role="key-editor"><input data-role="key-input" type="text" maxlength="16" autocomplete="off" placeholder="16-character FFScouter key"><button type="button" data-role="key-save">Save</button><button type="button" data-role="key-cancel">Cancel</button></div>
@@ -3790,35 +3888,7 @@
       </div>
     `;
 
-    const panelHost = ensureInlinePanel(shadow);
-    const byRole = role => presentationShadow()?.querySelector(`[data-role='${role}']`);
-    if (panelHost instanceof HTMLElement && !boundPanelHosts.has(panelHost)) {
-      boundPanelHosts.add(panelHost);
-      byRole("war-room").href = SCRIPT.ffscouterWarRoomUrl;
-      byRole("ff-terms").href = SCRIPT.ffscouterTermsUrl;
-      byRole("ff-privacy").href = SCRIPT.ffscouterPrivacyUrl;
-      byRole("create-key").href = SCRIPT.tornCustomKeyUrl;
-      byRole("key")?.addEventListener("click", () => { beginFfCredentialEdit(); });
-      byRole("torn-key")?.addEventListener("click", () => { beginTornCredentialEdit(); });
-      byRole("key-cancel")?.addEventListener("click", () => byRole("key-editor")?.classList.remove("open"));
-      byRole("torn-key-cancel")?.addEventListener("click", () => byRole("torn-key-editor")?.classList.remove("open"));
-      byRole("key-save")?.addEventListener("click", () => void runFfCredentialMutation(saveSharedKeyFromEditor));
-      byRole("torn-key-save")?.addEventListener("click", () => void runTornCredentialMutation(saveTornKeyFromEditor));
-      byRole("sync")?.addEventListener("click", event => {
-        event.preventDefault(); registerTrustedInteraction();
-        if (sharedApiKey) { void fetchSharedClaims(); void fetchFairFightStats({ force: true }); }
-        if (effectiveTornApiKey()) void fetchTornStatuses({ force: true });
-        scanWarRows();
-      });
-      byRole("demo")?.addEventListener("click", () => {
-        if (!viewOnlyMode()) { demoMode = false; updatePanel(); return; }
-        demoMode = !demoMode;
-        scanWarRows();
-        updatePanel();
-      });
-      byRole("forget-ff")?.addEventListener("click", () => void runFfCredentialMutation(forgetSharedKey));
-      byRole("forget-torn")?.addEventListener("click", () => void runTornCredentialMutation(forgetTornKey));
-    }
+    ensureInlinePanel(shadow);
     startPresentationResizeObserver();
     startPresentationIntersectionObserver();
     updatePanel();
@@ -4599,6 +4669,26 @@
     return `${minutes}m ${seconds}s`;
   }
 
+  // "Nothing to do" stays a disabled button: no key stored, or a key Torn PDA
+  // manages itself. The label already says so and there is nothing to explain.
+  //
+  // "Locked right now" is different, and it is what the owner met on 2026-09-12:
+  // a disabled button dispatches no click at all, so the reason each action
+  // already carries could never be shown. Marked aria-disabled instead, the tap
+  // arrives, the action refuses on its own entry check exactly as before, and
+  // the panel says why. The lock itself is unchanged.
+  function setPanelControlState(element, { unavailable = false, locked = false, reason = "" } = {}) {
+    if (!(element instanceof HTMLElement)) return;
+    element.disabled = unavailable;
+    if (locked && !unavailable) {
+      element.setAttribute("aria-disabled", "true");
+      element.title = reason;
+      return;
+    }
+    element.removeAttribute("aria-disabled");
+    if (!unavailable) element.title = "";
+  }
+
   function updatePanel() {
     const shadow = presentationShadow();
     if (!shadow) return;
@@ -4650,10 +4740,16 @@
     if (ffExternalLock) $("key-editor")?.classList.remove("open");
     if ($("key")) {
       $("key").textContent = sharedApiKey ? "Change FF key" : "Set FFScouter key";
-      $("key").disabled = ffExternalLock || ffChangeBusy;
+      setPanelControlState($("key"), {
+        locked: ffExternalLock || ffChangeBusy,
+        reason: FF_CREDENTIAL_LOCK_REASON
+      });
     }
-    if ($("forget-ff")) $("forget-ff").disabled =
-      !sharedApiKey || ffCredentialForgetLockActive() || ffChangeBusy;
+    setPanelControlState($("forget-ff"), {
+      unavailable: !sharedApiKey,
+      locked: ffCredentialForgetLockActive() || ffChangeBusy,
+      reason: FF_CREDENTIAL_LOCK_REASON
+    });
     if ($("key-input")) $("key-input").disabled = ffExternalLock || ffChangeBusy;
     if ($("key-save")) $("key-save").disabled = ffExternalLock || ffChangeBusy;
     if ($("key-cancel")) $("key-cancel").disabled = ffChangeBusy;
@@ -4661,14 +4757,22 @@
     const tornChangeBusy = tornCredentialMutationInProgress;
     if (tornExternalLock) $("torn-key-editor")?.classList.remove("open");
     if ($("torn-key")) {
-      if (injectedPdaTornApiKey()) { $("torn-key").textContent = "Torn key: PDA"; $("torn-key").disabled = true; }
-      else {
+      if (injectedPdaTornApiKey()) {
+        $("torn-key").textContent = "Torn key: PDA";
+        setPanelControlState($("torn-key"), { unavailable: true });
+      } else {
         $("torn-key").textContent = storedTornApiKey ? "Change Torn key" : "Set Torn key";
-        $("torn-key").disabled = tornExternalLock || tornChangeBusy;
+        setPanelControlState($("torn-key"), {
+          locked: tornExternalLock || tornChangeBusy,
+          reason: TORN_CREDENTIAL_LOCK_REASON
+        });
       }
     }
-    if ($("forget-torn")) $("forget-torn").disabled =
-      !!injectedPdaTornApiKey() || !storedTornApiKey || tornCredentialForgetLockActive() || tornChangeBusy;
+    setPanelControlState($("forget-torn"), {
+      unavailable: !!injectedPdaTornApiKey() || !storedTornApiKey,
+      locked: tornCredentialForgetLockActive() || tornChangeBusy,
+      reason: TORN_CREDENTIAL_LOCK_REASON
+    });
     if ($("torn-key-input")) $("torn-key-input").disabled = tornExternalLock || tornChangeBusy;
     if ($("torn-key-save")) $("torn-key-save").disabled = tornExternalLock || tornChangeBusy;
     if ($("torn-key-cancel")) $("torn-key-cancel").disabled = tornChangeBusy;
