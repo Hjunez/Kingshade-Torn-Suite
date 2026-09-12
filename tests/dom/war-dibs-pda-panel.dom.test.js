@@ -29,7 +29,7 @@ import { readRepositoryFile } from '../../test-support/repository.js';
 
 const OWN_WAR_ROUTE = 'https://www.torn.com/factions.php?step=your&type=1#/war/rank';
 const VIEW_WAR_ROUTE = 'https://www.torn.com/factions.php?step=profile&ID=222#/war/rank';
-const INSTANCE_KEY = '__ksTornWarDibsPdaV15168Test';
+const INSTANCE_KEY = '__ksTornWarDibsPdaV15169Test';
 
 /** jsdom does no layout; the script refuses to mount on a surface it measures as invisible. */
 function stubLayoutAsRendered() {
@@ -53,6 +53,7 @@ function stubLayoutAsRendered() {
 function warCardHtml() {
   return `
     <main class="faction-war">
+      <div class="war-section-header" data-test-torn-header>Ranked War</div>
       <div class="war-card" data-warid="34567">
         <div class="war-head">
           <a href="/factions.php?step=profile&ID=111">Kingshade</a>
@@ -73,6 +74,22 @@ function warCardHtml() {
         </section>
       </div>
     </main>`;
+}
+
+/**
+ * Torn folds its own Ranked War section from a handler on the container the war
+ * card sits in. The panel is a sibling of that card, so this is the ancestor
+ * every tap in the panel used to reach. Modelled, not copied from Torn: what is
+ * pinned here is that KS taps stop before it and Torn's own taps still reach it.
+ */
+function installTornCollapseHandler() {
+  const container = document.querySelector('main.faction-war');
+  if (!container) throw new Error('war container is missing');
+  const collapses = { count: 0 };
+  container.addEventListener('click', () => {
+    collapses.count += 1;
+  });
+  return collapses;
 }
 
 /** @param {string} route */
@@ -228,6 +245,66 @@ describe('War Dibs PDA panel control row', () => {
     expect(demo.disabled).toBe(true);
     tap('demo');
     expect(control('demo').textContent).toBe('Demo');
+  });
+
+  it('never lets a tap in the panel reach Torn own collapse handler', async () => {
+    await mountPdaWarDibs(OWN_WAR_ROUTE);
+    const collapses = installTornCollapseHandler();
+
+    tap('key');
+    tap('sync');
+    tap('war-room');
+    tap('forget-ff');
+
+    expect(collapses.count).toBe(0);
+    // And the tap still did its own work rather than being swallowed.
+    expect(control('status').textContent).toContain('key change locked');
+  });
+
+  it('stops the pointer and touch events a collapse handler may listen for', async () => {
+    await mountPdaWarDibs(OWN_WAR_ROUTE);
+    const container = document.querySelector('main.faction-war');
+    if (!container) throw new Error('war container is missing');
+    /** @type {string[]} */
+    const seen = [];
+    for (const name of [
+      'pointerdown',
+      'pointerup',
+      'mousedown',
+      'mouseup',
+      'touchstart',
+      'touchend',
+    ]) {
+      container.addEventListener(name, (event) => seen.push(event.type));
+    }
+
+    const button = control('key');
+    for (const name of [
+      'pointerdown',
+      'touchstart',
+      'mousedown',
+      'mouseup',
+      'touchend',
+      'pointerup',
+    ]) {
+      button.dispatchEvent(new window.Event(name, { bubbles: true, composed: true }));
+    }
+
+    expect(seen).toEqual([]);
+  });
+
+  it('leaves Torn own collapse working outside the panel', async () => {
+    await mountPdaWarDibs(OWN_WAR_ROUTE);
+    const collapses = installTornCollapseHandler();
+
+    const header = document.querySelector('[data-test-torn-header]');
+    expect(header).not.toBeNull();
+    header?.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+    expect(collapses.count).toBe(1);
+
+    const row = document.querySelector('li.enemy');
+    row?.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+    expect(collapses.count).toBe(2);
   });
 
   it('declares a phone-sized touch target for every control in the row', async () => {

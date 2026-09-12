@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KS Torn War Dibs PDA
 // @namespace    kingshade.torn
-// @version      1.5.168
+// @version      1.5.169
 // @description  Roster-local PDA presentation with v1.5.145 authority and shared-claim safety.
 // @author       Kingshade
 // @match        https://www.torn.com/factions.php*
@@ -60,6 +60,22 @@
  * text links sharing one line. One delegated click handler on the panel
  * replaces eight per-control handlers, so the row keeps its tap path when
  * Torn re-renders the war card underneath it.
+ * 1.5.169: a tap in the panel no longer folds Torn's own Ranked War section.
+ * MEASURED 2026-09-12 from the owner's PDA reading on 1.5.168: "wherever you
+ * press, the RW roster list just closes", panel and roster together, and both
+ * back "directly" on the next tap. The panel is a sibling of the war card by
+ * owner decision (2026-09-03), so it sits inside the section Torn collapses,
+ * and a click inside an open shadow root keeps bubbling out through the host
+ * and up into Torn's tree. Every tap therefore reached Torn's collapse handler.
+ * The DIBS button has had this guard since it moved onto Torn's Status cell
+ * (handleDibsClick); the panel never got it. Propagation is now stopped on the
+ * panel host, which is KS's own element. No Torn node is touched, nothing calls
+ * preventDefault, touchmove is left alone so the page still scrolls, and Torn's
+ * own collapse still works everywhere outside the panel.
+ * The blur-to-unmount theory raised for 1.5.169 is withdrawn, on the owner's
+ * evidence: an unmounted panel has to be rebuilt and that reads as delayed,
+ * and blur does not explain Torn's own roster folding. The lifecycle is
+ * deliberately untouched here.
  */
 
 (() => {
@@ -67,8 +83,8 @@
 
   const SCRIPT = Object.freeze({
     name: "KS Torn War Dibs",
-    version: "1.5.168",
-    instanceKey: "__ksTornWarDibsPdaV15168Test",
+    version: "1.5.169",
+    instanceKey: "__ksTornWarDibsPdaV15169Test",
     layerId: "ks-twd-pda-layer",
     rowHostPrefix: "ks-twd-pda-row-",
     panelId: "ks-twd-pda-panel",
@@ -3450,6 +3466,15 @@
     "Locked while DIBS ownership is active or unverified. Tap for the current reason.";
   const TORN_CREDENTIAL_LOCK_REASON =
     "Locked while DIBS ownership is active or unresolved. Tap for the current reason.";
+  const PANEL_ISOLATED_EVENTS = Object.freeze([
+    "pointerdown",
+    "pointerup",
+    "mousedown",
+    "mouseup",
+    "click",
+    "touchstart",
+    "touchend"
+  ]);
   const PANEL_CONTROL_ROLES = new Set([
     "key",
     "torn-key",
@@ -3676,6 +3701,7 @@
       ownedPanelHosts.add(panelHost);
       inlinePanelHost = panelHost;
       panelHost.attachShadow({ mode: "open" });
+      isolatePanelHostInteraction(panelHost);
     }
     if (panelHost.parentElement !== anchor.parentElement || panelHost.nextElementSibling !== anchor) {
       anchor.before(panelHost);
@@ -3693,6 +3719,32 @@
     sourceShadow?.querySelectorAll("[data-role='panel']").forEach(panel => panel.remove());
     bindPanelControls(panelShadow);
     return panelHost;
+  }
+
+  // Torn's own collapse handler sits on an ancestor of the war card, and the
+  // panel is a sibling of that card by owner decision (2026-09-03), so it lives
+  // inside the section Torn folds. A click inside an open shadow root does not
+  // stop at the host: it keeps bubbling out, retargeted to the host, and up
+  // into Torn's tree. Every tap in the panel therefore reached that handler and
+  // folded the whole section -- Torn's roster list and the panel with it, both
+  // back the instant the next tap unfolded it.
+  //
+  // The DIBS button has carried exactly this guard since it moved onto Torn's
+  // own Status cell (handleDibsClick). The panel never got it.
+  //
+  // Stopped on the panel host, which is KS's own element: no Torn node is
+  // touched, so Torn's collapse still works on its own header and anywhere
+  // outside the panel. touchmove is deliberately absent, so a finger that
+  // starts on the panel still scrolls the page, and nothing here calls
+  // preventDefault.
+  function isolatePanelHostInteraction(panelHost) {
+    for (const eventName of PANEL_ISOLATED_EVENTS) {
+      panelHost.addEventListener(eventName, stopPanelInteractionPropagation, { passive: true });
+    }
+  }
+
+  function stopPanelInteractionPropagation(event) {
+    event.stopPropagation();
   }
 
   // One delegated handler on the panel element the script owns, not eight
