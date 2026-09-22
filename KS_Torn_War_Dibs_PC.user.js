@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         KS Torn War Dibs PC
 // @namespace    kingshade.torn
-// @version      1.0.40
+// @version      1.1.3
 // @downloadURL  https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs_PC.user.js
 // @updateURL    https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs_PC.user.js
-// @description  PC TEST: DIBS as a native roster column beside Torn's Attack cell; FFScouter's FF/Est column preserved.
+// @description  PC TEST: DIBS as a native roster column beside Torn's Attack cell; FF and Est from FFScouter's get-stats API. War Stuff Enhanced is detected and shown read-only; it never blocks.
 // @author       Kingshade
 // @match        https://www.torn.com/factions.php*
 // @match        https://torn.com/factions.php*
@@ -16,6 +16,82 @@
 // ==/UserScript==
 
 /*
+ * KS Torn War Dibs PC v1.1.3 TEST -- CANDIDATE
+ *
+ * Identity, storage lineage and distribution change only. The decision core --
+ * clock, hospital arithmetic, RW phase, classify, shared-claim normalisation,
+ * claim/release, unreadable entries, the Torn and FFScouter transport -- is
+ * character-identical to v0.1.0. What changed:
+ *
+ *   1. @name reverts to "KS Torn War Dibs PC", the same name v1.0.40 already
+ *      ships under. Tampermonkey matches installed scripts on @name +
+ *      @namespace, so this is what makes the update to installed 1.0.40
+ *      clients automatic instead of a second parallel client.
+ *   2. @version is 1.1.3, higher than 1.0.40.
+ *   3. @downloadURL and @updateURL are added, both pointing at the address
+ *      installed 1.0.40 clients already poll:
+ *      https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs_PC.user.js
+ *   4. Storage lineage reads from v1.0.40's names, not v0.1.0's, so an
+ *      installed member's saved Torn key, FFScouter key and own claim survive
+ *      the update: ks_torn_war_dibs_pc_native_own_claim_v1,
+ *      ks_torn_war_dibs_pc_native_panel_minimized_v1,
+ *      ks_torn_war_dibs_pc_native_ff_change_journal_v1, IndexedDB
+ *      KSTornWarDibsPcNativeSecure, cipher IDs pcNativeSharedApiCipherV1,
+ *      pcNativeSharedApiCipherRollbackV1 and pcNativeTornApiCipherV1 (the
+ *      last is not named in the storage lineage request but is required for
+ *      the same reason: it is where 1.0.40 keeps the encrypted Torn API key,
+ *      verified against the 1.0.40 file).
+ *   5. A one-time migration copies v0.1.0's own "wse" storage into the
+ *      names above whenever the target name is still empty. It never
+ *      overwrites an existing entry and never deletes the wse entries. This
+ *      only matters on a machine that ran v0.1.0, i.e. the owner's own.
+ *   6. instanceKey is a new value, __ksTornWarDibsPcV110, distinct from both
+ *      v0.1.0's and v1.0.40's.
+ *   7. The WSE gate still never blocks; warStuffEnhancedGate() still returns
+ *      false. Detection and the panel line are unchanged.
+ *   8. The @description and panel brand no longer name this a WSE variant.
+ *      It is the universal PC script; WSE is one thing it happens to detect.
+ *
+ * Never run this script at the same time as v1.0.40 or v0.1.0 WSE PC.
+ *
+ * ---------------------------------------------------------------------------
+ * v0.1.0 lineage notes follow. Where they describe this script as a WSE
+ * coexistence variant, v1.1.3 above supersedes that framing; the mechanism
+ * itself (WSE detected, never gated) is unchanged.
+ *
+ * KS Torn War Dibs WSE PC v0.1.0 TEST -- CANDIDATE
+ *
+ * A copy of KS Torn War Dibs PC v1.0.40 QUEUE_NOTICE_TEST with exactly the
+ * changes needed to coexist with Torn War Stuff Enhanced 2.1 on the same
+ * Ranked War roster. The decision core -- clock, hospital arithmetic, RW
+ * phase, classify, shared-claim normalisation, claim/release, unreadable
+ * entries, the Torn and FFScouter transport -- is character-identical to
+ * v1.0.40. What changed:
+ *
+ *   A. The WSE gate never blocks. WSE presence is still detected and shown
+ *      as a panel line: "WSE: detected" / "WSE: not detected".
+ *   B. The Status cell belongs to WSE. KS no longer hides Torn's Status
+ *      column and no longer renders its own status cell. The hospital
+ *      countdown is in the DIBS cell, as it already was.
+ *   C. FF and Est come from FFScouter's get-stats API, ported from PDA
+ *      v1.5.167, instead of FF Scouter V2's row attributes. One batched
+ *      request, refreshed at most once a minute, allowed in VIEW as well.
+ *   D. The FFScouter Sort/filter warning is gone. The panel FF line reports
+ *      the get-stats fetch instead.
+ *   E. DIBS sorting is permanently off: WSE re-sorts ul.members-list on
+ *      every childList change and would undo it at once.
+ *   F. The row observer no longer watches FF Scouter V2's row attributes.
+ *   G. KS never inserts a node as a direct child of ul.members-list.
+ *   H. The disclosure text names the get-stats request and WSE.
+ *
+ * Own storage namespace ("wse"): the Torn key and the FFScouter key are
+ * entered once more in this script. Never run this script and v1.0.40 at
+ * the same time.
+ *
+ * ---------------------------------------------------------------------------
+ * v1.0.40 lineage notes follow. Where they describe FF Scouter V2's row
+ * attributes or the WSE block, v0.1.0 above supersedes them.
+ *
  * KS Torn War Dibs PC v1.0.20 COUNTDOWN TEST -- CANDIDATE
  * v1.0.19 was verified in real PC runtime: the native column mounted, no row
  * wrapped, Score was swapped for DIBS, and FFScouter's column, sorting, filter
@@ -227,8 +303,8 @@
  * actually carry a KS cell, and the KS cell takes exactly the width that frees.
  *
  * FFScouter keeps its own FF/Est cell, header, sorting and filtering. This
- * script never hides, rewrites or duplicates FFScouter's column, and reads FF
- * from the data-ff-value attribute FFScouter already writes on the row.
+ * script never hides, rewrites or duplicates FFScouter's column. (v0.1.0: FF
+ * and Est come from FFScouter's get-stats API; see the note at the top.)
  *
  * Removed from the v1.0.13 presentation path: elementFromPoint hit sampling,
  * per-row rect measurement, per-row and per-attack-cell ResizeObserver targets
@@ -250,14 +326,12 @@
 
   const SCRIPT = Object.freeze({
     name: "KS Torn War Dibs PC",
-    version: "1.0.40",
-    instanceKey: "__ksTornWarDibsPcNativeV140",
-    rowHostPrefix: "ks-twd-pc-native-row-v139-",
-    statusCellPrefix: "ks-twd-pc-native-status-v139-",
-    rosterStyleId: "ks-twd-pc-native-roster-style-v139",
-    wseWarningId: "ks-twd-pc-native-wse-warning-v139",
-    panelId: "ks-twd-pc-native-panel",
-    layerId: "ks-twd-pc-native-layer",
+    version: "1.1.3",
+    instanceKey: "__ksTornWarDibsPcV113",
+    rowHostPrefix: "ks-twd-wse-row-v010-",
+    rosterStyleId: "ks-twd-wse-roster-style-v010",
+    panelId: "ks-twd-wse-panel",
+    layerId: "ks-twd-wse-layer",
     ownClaimStorageKey: "ks_torn_war_dibs_pc_native_own_claim_v1",
     panelMinimizedStorageKey: "ks_torn_war_dibs_pc_native_panel_minimized_v1",
     secureVaultDbName: "KSTornWarDibsPcNativeSecure",
@@ -281,6 +355,13 @@
     gateSeconds: 120,
     minFairFight: 2.0,
     maxFairFight: 5.0,
+    fairFightRefreshMs: 60000,
+    fairFightMaxAgeMs: 360000,
+    fairFightErrorBackoffMs: 60000,
+    fairFightTransportRecoveryMs: 1800,
+    fairFightInitialRequestTimeoutMs: 6000,
+    fairFightInitialTransportRetryAttempts: 1,
+    fairFightMaxTargets: 205,
     tornStatusPollMs: 10000,
     tornStatusMaxAgeMs: 30000,
     opponentMembersMaxAgeMs: 30000,
@@ -348,8 +429,22 @@
     unclaim: "/api/v1/hit-calling/unclaim"
   });
 
+  const STATS_API = Object.freeze({ getStats: "/api/v1/get-stats" });
+
   if (window[SCRIPT.instanceKey]) return;
   window[SCRIPT.instanceKey] = true;
+
+  const LEGACY_WSE = Object.freeze({
+    ownClaimStorageKey: "ks_torn_war_dibs_wse_own_claim_v1",
+    panelMinimizedStorageKey: "ks_torn_war_dibs_wse_panel_minimized_v1",
+    sharedApiChangeJournalKey: "ks_torn_war_dibs_wse_ff_change_journal_v1",
+    secureVaultDbName: "KSTornWarDibsWseSecure",
+    secureVaultCryptoKeyId: "sharedApiCryptoKey",
+    secureVaultCipherId: "wseSharedApiCipherV1",
+    tornApiCipherId: "wseTornApiCipherV1"
+  });
+
+  migrateLegacyWseLocalStorage();
 
   let destroyed = false;
   let runtimeActive = false;
@@ -393,6 +488,14 @@
   let sharedRequestSerial = 0;
   let ffCredentialChangeState = FF_CREDENTIAL_STATE.IDLE;
   let ffCredentialChangeSerial = 0;
+  let fairFightStats = new Map();
+  let fairFightSyncing = false;
+  let fairFightRequestSerial = 0;
+  let fairFightLastFetchAt = 0;
+  let fairFightBackoffUntil = 0;
+  let fairFightEverSucceeded = false;
+  let fairFightRetryTimer = null;
+  let fairFightStatus = { state: "idle", message: "FF: waiting…" };
   let tornStatusSyncing = false;
   let tornStatusRequestSerial = 0;
   let tornStatusBackoffUntil = 0;
@@ -1004,6 +1107,85 @@
   const deleteSecureTornApiKey = () => deleteCipher(SCRIPT.tornApiCipherId);
 
   // ---------------------------------------------------------------------------
+  // One-time storage migration from v0.1.0's own "wse" identity. Never
+  // overwrites an existing entry under the names above and never deletes the
+  // wse entries. Idempotent by construction: every guard below is "target
+  // name still empty AND wse name present", which is false after the first
+  // successful copy, so running this on every boot is harmless.
+  // ---------------------------------------------------------------------------
+
+  function migrateLegacyWseLocalStorageValue(newKey, oldKey) {
+    try {
+      if (localStorage.getItem(newKey) !== null) return;
+      const oldValue = localStorage.getItem(oldKey);
+      if (oldValue === null) return;
+      localStorage.setItem(newKey, oldValue);
+    } catch {}
+  }
+
+  function migrateLegacyWseLocalStorage() {
+    migrateLegacyWseLocalStorageValue(SCRIPT.ownClaimStorageKey, LEGACY_WSE.ownClaimStorageKey);
+    migrateLegacyWseLocalStorageValue(SCRIPT.panelMinimizedStorageKey, LEGACY_WSE.panelMinimizedStorageKey);
+    migrateLegacyWseLocalStorageValue(SCRIPT.sharedApiChangeJournalKey, LEGACY_WSE.sharedApiChangeJournalKey);
+  }
+
+  async function legacyWseDatabaseExists() {
+    try {
+      if (typeof indexedDB.databases !== "function") return false;
+      const names = await indexedDB.databases();
+      return names.some(entry => entry?.name === LEGACY_WSE.secureVaultDbName);
+    } catch { return false; }
+  }
+
+  // Opens the legacy wse vault for reading only. If the database does not
+  // already exist this must fail rather than create it -- legacyWseDatabaseExists
+  // is checked by the caller first, and onupgradeneeded aborts as a second guard.
+  function openLegacyWseVault() {
+    return new Promise((resolve, reject) => {
+      if (!("indexedDB" in window) || !window.crypto?.subtle) return reject(new Error("Secure browser storage unavailable"));
+      const request = indexedDB.open(LEGACY_WSE.secureVaultDbName, 1);
+      request.onupgradeneeded = event => { if (event.oldVersion === 0) request.transaction?.abort(); };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error || new Error("Secure storage open failed"));
+      request.onblocked = () => reject(new Error("Secure storage upgrade blocked"));
+    });
+  }
+
+  async function loadLegacyWseCipher(id, validator) {
+    let db;
+    try { db = await openLegacyWseVault(); } catch { return ""; }
+    try {
+      const payload = await vaultGet(db, id);
+      const key = await vaultGet(db, LEGACY_WSE.secureVaultCryptoKeyId);
+      if (!payload || payload.v !== 1 || !Array.isArray(payload.iv) || !payload.ciphertext) return "";
+      if (typeof CryptoKey === "undefined" || !(key instanceof CryptoKey)) return "";
+      const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv: new Uint8Array(payload.iv) }, key, payload.ciphertext);
+      return validator(new TextDecoder().decode(plaintext));
+    } catch { return ""; } finally { db.close(); }
+  }
+
+  // Decrypts under the wse identity's own vault key and re-encrypts under this
+  // script's own vault via the existing save functions -- never copies raw
+  // ciphertext, since the two identities use different IndexedDB-scoped keys.
+  async function migrateLegacyWseVaultKeys() {
+    if (!(await legacyWseDatabaseExists())) return;
+    try {
+      const existingFfKey = await loadSecureApiKey();
+      if (!existingFfKey) {
+        const legacyFfKey = await loadLegacyWseCipher(LEGACY_WSE.secureVaultCipherId, validateFfscouterKey);
+        if (legacyFfKey) await saveSecureApiKey(legacyFfKey);
+      }
+    } catch {}
+    try {
+      const existingTornKey = await loadSecureTornApiKey();
+      if (!existingTornKey) {
+        const legacyTornKey = await loadLegacyWseCipher(LEGACY_WSE.tornApiCipherId, validateTornApiKey);
+        if (legacyTornKey) await saveSecureTornApiKey(legacyTornKey);
+      }
+    } catch {}
+  }
+
+  // ---------------------------------------------------------------------------
   // Network transport / explicit allowlists
   // ---------------------------------------------------------------------------
 
@@ -1022,10 +1204,13 @@
   }
 
   // VIEW mode allowlist. Fail closed: anything that is not exactly the members
-  // endpoint for a faction rendered on the current page is refused.
+  // endpoint for a faction rendered on the current page is refused. v0.1.0 adds
+  // exactly one more permitted request, FFScouter's get-stats: it only reads FF
+  // and battle-stat estimates and touches no claim. Hit Calling stays refused.
   function isViewModePermittedRequest(rawUrl) {
     try {
       const url = new URL(String(rawUrl || ""));
+      if (url.origin === SCRIPT.ffscouterOrigin && url.pathname === STATS_API.getStats) return true;
       if (url.origin !== SCRIPT.tornApiOrigin) return false;
       return viewPermittedFactionIds().some(id => url.pathname === `/v2/faction/${id}/members`);
     } catch {
@@ -1104,6 +1289,30 @@
       if (!isCurrent()) return lastResult;
     }
     return lastResult;
+  }
+
+  async function fairFightStatsRequest(targetIds, { initial = false, isCurrent = () => true, apiKey = sharedApiKey } = {}) {
+    const ids = [...new Set(targetIds.map(String).filter(validTargetId))]
+      .sort((a, b) => Number(a) - Number(b))
+      .slice(0, CONFIG.fairFightMaxTargets);
+    if (!ids.length) return { ok: true, status: 200, body: { stats: [] } };
+    const requestApiKey = validateFfscouterKey(apiKey);
+    if (!requestApiKey) return { ok: false, status: 0, body: { error: "FFScouter key required" } };
+    const url = new URL(STATS_API.getStats, SCRIPT.ffscouterOrigin);
+    url.searchParams.set("key", requestApiKey);
+    url.searchParams.set("targets", ids.join(","));
+    const maxAttempts = initial ? CONFIG.fairFightInitialTransportRetryAttempts : CONFIG.sharedTransportRetryAttempts;
+    const requestTimeout = initial ? CONFIG.fairFightInitialRequestTimeoutMs : CONFIG.requestTimeoutMs;
+    let result = null;
+    for (let attempt = 0; attempt <= maxAttempts; attempt += 1) {
+      if (!isCurrent()) return result;
+      result = await gmXhr({ method: "GET", url: url.toString(), headers: { Accept: "application/json" }, timeout: requestTimeout });
+      if (!isCurrent()) return result;
+      if (result.ok || result.status !== 0 || attempt >= maxAttempts) break;
+      await wait(CONFIG.sharedTransportRetryDelayMs * (attempt + 1));
+      if (!isCurrent()) return result;
+    }
+    return { ...result, body: parseJsonSafe(result?.responseText) };
   }
 
   async function tornApiRequest(path, key, { cacheBust = false } = {}) {
@@ -1350,6 +1559,7 @@
       reconcileOwnClaimFromShared();
       scanWarRows();
       updatePanel();
+      void fetchFairFightStats();
       return true;
     } catch (error) {
       if (isCurrentRequest()) {
@@ -1633,16 +1843,22 @@
   }
 
   // ---------------------------------------------------------------------------
-  // FF / Est is owned by FFScouter; read only its live row dataset.
+  // FF / Est come from FFScouter's get-stats API (fairFightStats below). The
+  // row is only used to find the target id; nothing is read from FF Scouter
+  // V2's row attributes and this script does not require it on the page.
   // ---------------------------------------------------------------------------
 
-  function readRowFairFight(row) {
+  // decisionForBinding passes binding.row (the li), the presentation path
+  // passes the binding itself. Both resolve to the same bound target id.
+  function rowTargetIdForStats(row) {
+    if (validTargetId(row?.targetId)) return String(Number(row.targetId));
     const li = row?.li instanceof HTMLElement ? row.li : row instanceof HTMLElement ? row : null;
-    if (!(li instanceof HTMLElement)) return null;
-    const raw = li.getAttribute("data-ff-value");
-    if (raw === null || !raw.trim()) return null;
-    const value = Number(raw);
-    return Number.isFinite(value) && value > 0 ? value : null;
+    const binding = li ? rowBindings.get(li) : null;
+    return validTargetId(binding?.targetId) ? String(Number(binding.targetId)) : "";
+  }
+
+  function readRowFairFight(row) {
+    return fairFightForTarget(rowTargetIdForStats(row));
   }
 
   // The freshest status we have for a target, from whichever batch applies.
@@ -1685,14 +1901,8 @@
     return state ? { label: state, tone: "other" } : null;
   }
 
-  // FFScouter writes this next to data-ff-value. Read only, never written back.
   function readRowBattleStatsEstimate(row) {
-    const li = row?.li instanceof HTMLElement ? row.li : row instanceof HTMLElement ? row : null;
-    if (!(li instanceof HTMLElement)) return null;
-    const raw = li.getAttribute("data-est-value");
-    if (raw === null || !raw.trim()) return null;
-    const value = Number(raw);
-    return Number.isFinite(value) && value > 0 ? value : null;
+    return scoutStatsForTarget(rowTargetIdForStats(row))?.bsEstimate ?? null;
   }
 
   function formatBattleStats(value) {
@@ -1704,25 +1914,11 @@
     return String(Math.round(number));
   }
 
-  // FFScouter's own display mode, from the attribute it sets on the war block:
-  // fair_fight, battle_stats or none.
-  function ffscouterColumnDisplay() {
-    const scope = mountedRosterRoot?.isConnected ? mountedRosterRoot : document;
-    const holder = scope.querySelector?.("[data-ffscouter-col-display]") ||
-      document.querySelector("[data-ffscouter-col-display]");
-    return normalizeText(holder?.getAttribute("data-ffscouter-col-display")).toLowerCase();
-  }
-
-  // Show what FFScouter's column is not showing. When it shows FF we add the
-  // estimate; when it shows the estimate we add FF; otherwise FF, because that
-  // is the value the DIBS gate acts on.
+  // There is no FFScouter column to complement here. The cell always shows FF,
+  // the value the DIBS gate acts on, and nothing at all when FF is missing.
   function complementaryRowValue(binding) {
     const fairFight = readRowFairFight(binding);
-    const estimate = readRowBattleStatsEstimate(binding);
-    const ffText = Number.isFinite(fairFight) ? `FF${Number(fairFight).toFixed(1)}` : "";
-    const estText = formatBattleStats(estimate);
-    if (ffscouterColumnDisplay() === "fair_fight" && estText) return estText;
-    return ffText || estText;
+    return Number.isFinite(fairFight) ? `FF${Number(fairFight).toFixed(1)}` : "";
   }
 
   function rowValueTooltip(binding) {
@@ -1732,6 +1928,160 @@
     if (Number.isFinite(fairFight)) parts.push(`Fair Fight ${Number(fairFight).toFixed(2)}`);
     if (Number.isFinite(estimate)) parts.push(`Est ${formatBattleStats(estimate)}`);
     return parts.join(" \u00b7 ");
+  }
+
+  // ---------------------------------------------------------------------------
+  // FF / Est stats from FFScouter's get-stats API. Ported from PDA v1.5.167;
+  // the only edits are the roster-presence check (canonicalRankedWarSurface),
+  // the target source (rowBindings) and the three panel status lines.
+  // ---------------------------------------------------------------------------
+
+  function normalizeFairFightStats(payload, targetIds) {
+    const fetchedAt = nowMs();
+    const requested = [...new Set(targetIds.map(id => Number(id)).filter(id => Number.isInteger(id) && id > 0))];
+    const requestedSet = new Set(requested);
+    const result = new Map();
+
+    const rows = Array.isArray(payload) ? payload
+      : Array.isArray(payload?.stats) ? payload.stats
+      : Array.isArray(payload?.data) ? payload.data
+      : Array.isArray(payload?.results) ? payload.results
+      : [];
+
+    for (const item of rows) {
+      const playerId = Number(item?.player_id);
+      if (!Number.isInteger(playerId) || playerId <= 0 || !requestedSet.has(playerId)) continue;
+
+      const fairFight = Number(item?.fair_fight);
+      const estimate = Number(item?.bs_estimate);
+      const complete = Number.isFinite(fairFight) && fairFight > 0 &&
+        Number.isFinite(estimate) && estimate > 0 &&
+        Boolean(normalizeText(item?.bs_estimate_human));
+
+      if (!complete) {
+        result.set(playerId, { noData: true, playerId, fairFight: null, bsEstimate: null, bsEstimateHuman: "", fetchedAt });
+        continue;
+      }
+
+      result.set(playerId, {
+        noData: false,
+        playerId,
+        fairFight,
+        bsEstimate: estimate,
+        bsEstimateHuman: normalizeText(item.bs_estimate_human),
+        fetchedAt
+      });
+    }
+
+    for (const playerId of requested) {
+      if (!result.has(playerId)) {
+        result.set(playerId, { noData: true, playerId, fairFight: null, bsEstimate: null, bsEstimateHuman: "", fetchedAt });
+      }
+    }
+    return result;
+  }
+
+  function scoutStatsForTarget(targetId) {
+    const playerId = Number(targetId);
+    if (!Number.isInteger(playerId) || playerId <= 0) return null;
+    const entry = fairFightStats.get(playerId);
+    if (!entry || !Number.isFinite(entry.fetchedAt) || nowMs() - entry.fetchedAt > CONFIG.fairFightMaxAgeMs) return null;
+    return entry.noData ? null : entry;
+  }
+
+  function fairFightForTarget(targetId) {
+    const entry = scoutStatsForTarget(targetId);
+    return Number.isFinite(entry?.fairFight) ? Number(entry.fairFight) : null;
+  }
+
+  function scheduleFairFightRecoveryRetry() {
+    if (fairFightRetryTimer !== null || !sharedApiKey) return;
+    const generation = runtimeGeneration;
+    fairFightRetryTimer = window.setTimeout(() => {
+      fairFightRetryTimer = null;
+      if (generation === runtimeGeneration && runtimeActive && isRuntimeEligible() && bridgeMounted && isWarPanelPresent() && sharedApiKey) void fetchFairFightStats({ force: true });
+    }, CONFIG.fairFightTransportRecoveryMs);
+  }
+
+  function knownOpponentTargetIds() {
+    const ids = new Set();
+    if (opponentMembersState.factionId === opponentFactionId) {
+      for (const id of opponentMembersState.members.keys()) {
+        if (validTargetId(id)) ids.add(String(Number(id)));
+      }
+    }
+    for (const binding of rowBindings.values()) {
+      if (validTargetId(binding?.targetId)) ids.add(String(Number(binding.targetId)));
+    }
+    return [...ids]
+      .sort((a, b) => Number(a) - Number(b))
+      .slice(0, CONFIG.fairFightMaxTargets);
+  }
+
+  async function fetchFairFightStats({ force = false, missingOnly = false } = {}) {
+    if (!runtimeActive || !isRuntimeEligible() || !bridgeMounted || !isWarPanelPresent()) return false;
+    if (ffCredentialChangeBusy() || !sharedApiKey || fairFightSyncing || nowMs() < fairFightBackoffUntil) return false;
+    if (!force && fairFightLastFetchAt > 0 && nowMs() - fairFightLastFetchAt < CONFIG.fairFightRefreshMs) return false;
+    const knownTargetIds = knownOpponentTargetIds();
+    const targetIds = missingOnly
+      ? knownTargetIds.filter(id => !fairFightStats.has(Number(id)))
+      : knownTargetIds;
+    if (!targetIds.length) return false;
+    const generation = runtimeGeneration;
+    const requestKey = sharedApiKey;
+    const requestRoot = canonicalRankedWarSurface()?.root || null;
+    const requestSerial = ++fairFightRequestSerial;
+    const isCurrentRequest = () => (
+      generation === runtimeGeneration &&
+      requestSerial === fairFightRequestSerial &&
+      requestKey === sharedApiKey &&
+      requestRoot === (canonicalRankedWarSurface()?.root || null) &&
+      runtimeActive &&
+      isRuntimeEligible() &&
+      bridgeMounted &&
+      isWarPanelPresent()
+    );
+    fairFightSyncing = true;
+    setFairFightStatus("syncing", "FF: syncing…");
+    try {
+      const initial = !fairFightEverSucceeded;
+      const result = await fairFightStatsRequest(targetIds, { initial, isCurrent: isCurrentRequest, apiKey: requestKey });
+      if (!isCurrentRequest() || !result) return false;
+      if (!result.ok) {
+        if (result.status === 429) fairFightBackoffUntil = nowMs() + CONFIG.fairFightErrorBackoffMs;
+        if (result.status === 0) scheduleFairFightRecoveryRetry();
+        throw new Error(normalizeText(result?.body?.error) || `HTTP ${result.status}`);
+      }
+      const fetchedStats = normalizeFairFightStats(result.body, targetIds);
+      fairFightStats = missingOnly
+        ? new Map([...fairFightStats, ...fetchedStats])
+        : fetchedStats;
+      fairFightLastFetchAt = nowMs();
+      fairFightBackoffUntil = 0;
+      fairFightEverSucceeded = true;
+      if (fairFightRetryTimer !== null) { window.clearTimeout(fairFightRetryTimer); fairFightRetryTimer = null; }
+      const usableCount = [...fetchedStats.values()].filter(entry => !entry.noData).length;
+      setFairFightStatus("online", `FF: ${usableCount} of ${targetIds.length} targets`);
+      scanWarRows();
+      return true;
+    } catch (error) {
+      if (isCurrentRequest()) {
+        if (!missingOnly) {
+          fairFightStats = new Map();
+          fairFightLastFetchAt = 0;
+        }
+        setFairFightStatus("offline", `FF: offline · ${normalizeText(error?.message) || "request failed"}`);
+        scanWarRows();
+      }
+      return false;
+    } finally {
+      if (requestSerial === fairFightRequestSerial && requestKey === sharedApiKey) fairFightSyncing = false;
+    }
+  }
+
+  function setFairFightStatus(state, message) {
+    fairFightStatus = { state: String(state || "unknown"), message: normalizeText(message) || "FF: unknown" };
+    updatePanel();
   }
 
   // ---------------------------------------------------------------------------
@@ -2031,6 +2381,7 @@
         : "";
       setTornStatusState(membersReady ? "ready" : "error", `Torn: own RW ${rwLabel}${memberLabel}`, memberCount);
       updateBoundControls();
+      if (membersReady) void fetchFairFightStats();
       return true;
     } catch (error) {
       if (isCurrentRequest()) {
@@ -2137,6 +2488,7 @@
         `Torn: VIEW ${merged.size} members / ${fetched.length} factions`,
         merged.size
       );
+      void fetchFairFightStats();
       return true;
     } catch {
       return false;
@@ -2280,22 +2632,39 @@
     return style.display !== "none" && style.visibility !== "hidden";
   }
 
+  // ONE MAIN CHANGE (v1.1.3): this function asks the browser once instead of
+  // once per ancestor.
+  //
+  // Measured, not assumed. A ten-second Chrome performance recording taken by
+  // the owner on a live 195-row ranked war roster, with all three scripts
+  // running, attributes 3869 ms of CPU to this userscript -- against 80 ms for
+  // War Stuff Enhanced and 33 ms for FF Scouter. 1983 ms of ours, more than
+  // half, was inside this one function.
+  //
+  // The old shape walked from the element to the document root and called
+  // getComputedStyle on every ancestor. Reading a computed style forces Chrome
+  // to flush style and layout synchronously, so the cost was one forced layout
+  // per ancestor per candidate per call -- and the call sites run on every DOM
+  // mutation on the page. Every faction chat message is a DOM mutation, which
+  // is why the chat rendered in slow motion while this script did work that had
+  // nothing to do with the chat.
+  //
+  // getClientRects() already answers the question the ancestor walk was asking:
+  // an element under a display:none ancestor, or detached, has no boxes at all.
+  // visibility is inherited, so a hidden ancestor shows up in the element's own
+  // computed visibility. What is no longer detected: an ancestor with opacity 0
+  // or aria-hidden that is otherwise laid out normally. Neither has ever been
+  // observed on Torn's war card, and the trade is one forced layout instead of
+  // one per level of the tree.
   function isRenderedRouteSurfaceElement(element) {
     if (!(element instanceof HTMLElement) || !element.isConnected) return false;
-    for (let current = element; current instanceof HTMLElement; current = current.parentElement) {
-      if (current.hidden || current.getAttribute("aria-hidden") === "true") return false;
-      const style = getComputedStyle(current);
-      const opacity = Number.parseFloat(style.opacity || "1");
-      if (
-        style.display === "none" ||
-        style.visibility === "hidden" ||
-        style.visibility === "collapse" ||
-        style.pointerEvents === "none" ||
-        (Number.isFinite(opacity) && opacity <= 0)
-      ) return false;
-    }
-    const rect = element.getBoundingClientRect();
-    return element.getClientRects().length > 0 && rect.width > 0 && rect.height > 0;
+    if (element.hidden || element.getAttribute("aria-hidden") === "true") return false;
+    const rects = element.getClientRects();
+    if (rects.length === 0) return false;
+    const rect = rects[0];
+    if (!(rect.width > 0 && rect.height > 0)) return false;
+    const style = getComputedStyle(element);
+    return style.visibility !== "hidden" && style.visibility !== "collapse";
   }
 
   function cardFactionIds(card) {
@@ -3102,7 +3471,6 @@
     const binding = rowBindings.get(row);
     if (!binding) return false;
     rowBindings.delete(row);
-    binding.statusCell?.remove();
     binding.host.remove();
     return true;
   }
@@ -3191,14 +3559,10 @@
   let rosterHeaderOffsetPx = 0;
   let rosterHeaderCell = null;
 
-  let warStuffEnhancedBlocked = false;
-  let wseWarningHost = null;
-
   const DIBS_SORT = Object.freeze({ OFF: "off", ASC: "asc", DESC: "desc" });
   const DIBS_SORT_ARROW = Object.freeze({ off: "", asc: " \u25B2", desc: " \u25BC" });
   let dibsSortMode = DIBS_SORT.OFF;
   let dibsSortSignature = "";
-  let ffscouterInterference = { sortActive: false, hiddenRows: 0 };
 
   function clampPx(value, min, max, fallback) {
     const number = Number(value);
@@ -3325,30 +3689,6 @@
       :is(li, div):has(> [data-ks-twd-header="dibs"]) > :is(${scoreCells}) {
         display: none !important;
       }
-      :is(li, div):has(> [data-ks-twd-cell="status"][data-live="true"]) > :is(.status, [class*="status__"]) {
-        display: none !important;
-      }
-      [data-ks-twd-cell="status"] {
-        float: left !important;
-        box-sizing: border-box !important;
-        width: ${rosterStatusWidthPx || 50}px !important;
-        height: ${rosterColumnHeightPx}px !important;
-        margin: 0 !important;
-        padding: 0 2px !important;
-        display: none !important;
-        align-items: center !important;
-        justify-content: center !important;
-        overflow: hidden !important;
-        white-space: nowrap !important;
-        text-overflow: ellipsis !important;
-        font: 700 11px/1.2 Arial, sans-serif !important;
-        color: #cbd5e1 !important;
-      }
-      [data-ks-twd-cell="status"][data-live="true"] { display: flex !important; }
-      [data-ks-twd-cell="status"][data-tone="hospital"] { color: #fb7185 !important; }
-      [data-ks-twd-cell="status"][data-tone="okay"] { color: #62c370 !important; }
-      [data-ks-twd-cell="status"][data-tone="travel"] { color: #38bdf8 !important; }
-      [data-ks-twd-cell="status"][data-tone="jail"] { color: #fbbf24 !important; }
       [data-ks-twd-cell="dibs"],
       [data-ks-twd-header="dibs"] {
         float: left !important;
@@ -3368,7 +3708,7 @@
       }
       ${memberRule}
       [data-ks-twd-header="dibs"] {
-        cursor: pointer !important;
+        cursor: default !important;
         user-select: none !important;
         display: flex !important;
         align-items: center !important;
@@ -3441,36 +3781,11 @@
       cell.className = "left";
       cell.dataset.ksTwdHeader = "dibs";
       cell.textContent = "DIBS";
-      cell.setAttribute("role", "button");
-      cell.tabIndex = 0;
-      cell.addEventListener("click", event => {
-        event.preventDefault();
-        event.stopPropagation();
-        registerTrustedInteraction(event);
-        cycleDibsSort();
-      });
-      cell.addEventListener("keydown", event => {
-        if (event.key !== "Enter" && event.key !== " ") return;
-        event.preventDefault();
-        registerTrustedInteraction(event);
-        cycleDibsSort();
-      });
       rosterHeaderCell = cell;
     }
     if (cell.nextElementSibling !== attackHeader) header.insertBefore(cell, attackHeader);
     updateSortHeaderLabel();
     return cell;
-  }
-
-  // Seconds until this target can be hit. Not in hospital sorts first because it
-  // is available now; an unknown time sorts last.
-  function rowSortSeconds(binding) {
-    if (!binding) return Number.POSITIVE_INFINITY;
-    const hospital =
-      (viewOnlyMode() ? viewHospitalForTarget(binding.targetId) : null) ||
-      computeHospitalSeconds(binding);
-    if (!hospital?.isHospital) return -1;
-    return Number.isFinite(hospital.seconds) ? hospital.seconds : Number.POSITIVE_INFINITY;
   }
 
   // DOM order, not Map insertion order. The signature has to describe what the
@@ -3488,95 +3803,15 @@
       .join(",");
   }
 
-  // Reordering is a single user action. It is never scheduled, never repeated
-  // and never undone by this script, so it cannot get into a tug of war with
-  // FFScouter's own sort. Whoever moved the rows last is simply the current
-  // order.
-  function applyDibsSort() {
-    if (dibsSortMode === DIBS_SORT.OFF) return false;
-    const rows = orderedBoundRows();
-    if (rows.length < 2) return false;
-    const parent = rows[0].parentElement;
-    if (!(parent instanceof HTMLElement) || rows.some(row => row.parentElement !== parent)) return false;
-
-    const direction = dibsSortMode === DIBS_SORT.ASC ? 1 : -1;
-    const keyed = rows.map((row, index) => ({ row, index, value: rowSortSeconds(rowBindings.get(row)) }));
-    keyed.sort((left, right) => {
-      const leftUnknown = !Number.isFinite(left.value);
-      const rightUnknown = !Number.isFinite(right.value);
-      if (leftUnknown !== rightUnknown) return leftUnknown ? 1 : -1;
-      if (!leftUnknown && left.value !== right.value) return (left.value - right.value) * direction;
-      return left.index - right.index;
-    });
-
-    for (const entry of keyed) {
-      const extras = [];
-      let next = entry.row.nextElementSibling;
-      while (next instanceof HTMLElement && !next.matches("li.enemy, li.your")) {
-        extras.push(next);
-        next = next.nextElementSibling;
-      }
-      parent.append(entry.row);
-      for (const extra of extras) parent.append(extra);
-    }
-    dibsSortSignature = rosterOrderSignature();
-    return true;
-  }
-
+  // Sorting is locked OFF in this script: WSE re-sorts ul.members-list on every
+  // childList change and would undo a KS sort at once. The header is a plain
+  // label -- no arrow, no click, no title.
   function updateSortHeaderLabel() {
     const cell = rosterHeaderCell;
     if (!(cell instanceof HTMLElement)) return;
     const text = `DIBS${DIBS_SORT_ARROW[dibsSortMode] || ""}`;
     if (cell.textContent !== text) cell.textContent = text;
-    const sortHelp = {
-      off: "Sort by time left: click for shortest first",
-      asc: "Shortest time left first. Click for longest first",
-      desc: "Longest time left first. Click to turn sorting off"
-    }[dibsSortMode] || "";
-    setTitleIfChanged(cell, ffscouterInterference.sortActive
-      ? `${sortHelp}. FFScouter Sort is ON and will undo this within seconds. Set FFScouter to Sort: Default.`
-      : sortHelp);
-  }
-
-  function cycleDibsSort() {
-    dibsSortMode =
-      dibsSortMode === DIBS_SORT.OFF ? DIBS_SORT.ASC :
-      dibsSortMode === DIBS_SORT.ASC ? DIBS_SORT.DESC :
-      DIBS_SORT.OFF;
-    if (dibsSortMode === DIBS_SORT.OFF) dibsSortSignature = "";
-    else applyDibsSort();
-    updateSortHeaderLabel();
-  }
-
-  // FFScouter owns the roster's order and visibility whenever its own Sort or
-  // filters are on: its sort pass re-runs on every class change in the roster
-  // and undoes ours (owner, 2026-09-02), and its filters hide a row the moment
-  // a released target stops matching (owner video, 2026-09-03). KS does not
-  // fight that and never touches FFScouter's state. It reads two marks that
-  // FFScouter itself writes on the page being viewed, and says so in the panel
-  // and on the DIBS header, so nobody has to guess in the middle of a war.
-  function detectFfscouterInterference(root) {
-    const scope = root instanceof HTMLElement ? root : mountedRosterRoot;
-    if (!(scope instanceof HTMLElement)) return;
-    const sortActive = Boolean(
-      scope.querySelector('[data-ffscouter-active-filter="true"], .ffscouter-header[data-ffscouter-sort]') ||
-      scope.closest('[data-ffscouter-active-filter="true"]')
-    );
-    const hiddenRows = scope.querySelectorAll("li.enemy[data-ffscouter-hidden]").length;
-    if (sortActive === ffscouterInterference.sortActive && hiddenRows === ffscouterInterference.hiddenRows) return;
-    ffscouterInterference = { sortActive, hiddenRows };
-    updateSortHeaderLabel();
-    updatePanel();
-  }
-
-  function ffscouterInterferenceText() {
-    const { sortActive, hiddenRows } = ffscouterInterference;
-    if (sortActive && hiddenRows > 0) {
-      return `FFScouter: Sort ON + filter hides ${hiddenRows} row${hiddenRows === 1 ? "" : "s"}. DIBS sort will be undone and released targets vanish. Set Sort: Default and untick the filters.`;
-    }
-    if (sortActive) return "FFScouter: Sort ON. It re-sorts the roster and undoes DIBS sort. Set FFScouter to Sort: Default.";
-    if (hiddenRows > 0) return `FFScouter: filter hides ${hiddenRows} row${hiddenRows === 1 ? "" : "s"}. A target can vanish the moment it is released. Untick FFScouter's filters.`;
-    return "FFScouter: Sort Default, no filter.";
+    setTitleIfChanged(cell, "");
   }
 
   // A sort we did not perform means our arrow no longer describes the roster.
@@ -3605,100 +3840,11 @@
     ].join(",")));
   }
 
-  function removeWseWarning() {
-    wseWarningHost?.remove();
-    wseWarningHost = null;
-    document.getElementById(SCRIPT.wseWarningId)?.remove();
-  }
-
-  function showWseWarning() {
-    const anchor = resolvePanelAnchor();
-    if (!anchor) return null;
-    let host = wseWarningHost;
-    if (!(host instanceof HTMLElement) || !host.isConnected) {
-      removeWseWarning();
-      host = document.createElement("div");
-      host.id = SCRIPT.wseWarningId;
-      host.dataset.ksTwdPanel = "1";
-      Object.assign(host.style, {
-        display: "block",
-        position: "static",
-        width: "100%",
-        boxSizing: "border-box",
-        margin: "8px 0"
-      });
-      const shadow = host.attachShadow({ mode: "open" });
-      shadow.innerHTML = `
-        <style>
-          .warning {
-            box-sizing: border-box; width: 100%; padding: 10px 12px;
-            border: 1px solid #92400e; border-radius: 8px;
-            background: rgba(69, 26, 3, .96); color: #fde68a;
-            font: 700 12px/1.45 system-ui, sans-serif;
-          }
-          .warning strong { color: #fff7ed; }
-        </style>
-        <div class="warning" role="alert">
-          <strong>KS Torn War Dibs is blocked.</strong>
-          War Stuff Enhanced is unsupported. Disable War Stuff Enhanced, then reload Torn to use KS War Dibs.
-          Removing its markers is not enough &mdash; a clean reload is required.
-        </div>
-      `;
-      wseWarningHost = host;
-    }
-    if (anchor.before !== host && (host.parentElement !== anchor.parent || host.nextSibling !== anchor.before)) {
-      anchor.parent.insertBefore(host, anchor.before);
-    }
-    return host;
-  }
-
-  // Fail closed and sticky. The latch is module scope, so it survives every
-  // route change and remount and is cleared only by a full page load.
+  // v0.1.0: War Stuff Enhanced is a coexistence partner, not a blocker. Its
+  // presence is still read by isWarStuffEnhancedPresent() and reported on the
+  // panel, but nothing is gated on it. The three call sites stay in place.
   function warStuffEnhancedGate() {
-    if (!warStuffEnhancedBlocked && !isWarStuffEnhancedPresent()) return false;
-    warStuffEnhancedBlocked = true;
-    dibsSortMode = DIBS_SORT.OFF;
-    dibsSortSignature = "";
-    removeAllRowPresentations();
-    removeRosterHeaderCell();
-    document.getElementById(SCRIPT.rosterStyleId)?.remove();
-    document.getElementById(SCRIPT.panelId)?.remove();
-    showWseWarning();
-    return true;
-  }
-
-  function ensureStatusCell(binding) {
-    const row = binding?.row;
-    const host = binding?.host;
-    if (!(row instanceof HTMLElement) || !(host instanceof HTMLElement)) return null;
-    let cell = binding.statusCell;
-    if (!(cell instanceof HTMLElement) || !cell.isConnected || cell.parentElement !== row) {
-      cell = document.createElement("div");
-      cell.id = SCRIPT.statusCellPrefix + binding.targetId;
-      cell.className = "left";
-      cell.dataset.ksTwdCell = "status";
-      cell.dataset.live = "false";
-      binding.statusCell = cell;
-    }
-    if (cell.nextElementSibling !== host) row.insertBefore(cell, host);
-    return cell;
-  }
-
-  // Renders Torn's own status word from the API batch. While data-live is false
-  // the cell is invisible and Torn's column stays on screen, so a missing key or
-  // a stale batch can never leave the roster without a status.
-  function renderStatusCell(binding) {
-    const cell = ensureStatusCell(binding);
-    if (!(cell instanceof HTMLElement)) return;
-    const status = freshApiStatusForTarget(binding.targetId);
-    const presentation = status ? statusPresentation(status) : null;
-    const live = Boolean(presentation);
-    const nextLive = live ? "true" : "false";
-    if (cell.dataset.live !== nextLive) cell.dataset.live = nextLive;
-    const text = live ? presentation.label : "";
-    if (cell.textContent !== text) cell.textContent = text;
-    const tone = live ? presentation.tone : "";
-    if (cell.dataset.tone !== tone) cell.dataset.tone = tone;
+    return false;
   }
 
   function updateModeBadge() {
@@ -4027,7 +4173,6 @@
       const decision = decisionForBinding(binding);
       if (!decision) continue;
       updateDibsControl(binding, decision, sharedClaimForTarget(binding.targetId));
-      renderStatusCell(binding);
     }
   }
 
@@ -4072,7 +4217,6 @@
 
     const decision = decisionForBinding(binding);
     if (decision) updateDibsControl(binding, decision, sharedClaimForTarget(binding.targetId));
-    if (binding) renderStatusCell(binding);
     return binding;
   }
 
@@ -4107,7 +4251,6 @@
     retireMissingRowBindings();
     ensureRosterHeaderCell(root);
     reconcileSortIndicator();
-    detectFfscouterInterference(root);
     updateModeBadge();
     if (viewOnlyMode()) {
       // Shared claims are unreachable in VIEW, so say that instead of leaving
@@ -4193,7 +4336,6 @@
   }
 
   function ensurePanel() {
-    if (warStuffEnhancedBlocked) return null;
     if (!isWarPanelPresent()) return null;
     let host = document.getElementById(SCRIPT.panelId);
     if (host instanceof HTMLElement && ownedPanelHosts.has(host)) {
@@ -4227,9 +4369,7 @@
         .brand { font:850 13px/1.25 system-ui,sans-serif; color:#f8fafc; }
         .version { font:750 10px/1.25 system-ui,sans-serif; color:#8fa0b4; }
         .top-actions { display:flex; align-items:center; justify-content:flex-end; gap:5px; }
-        .compact-brand,.compact-status,.compact-ff { display:none; }
-        .compact-ff { color:#fca5a5; font:800 11px/1.25 system-ui,sans-serif; white-space:nowrap; }
-        .compact-ff[hidden] { display:none !important; }
+        .compact-brand,.compact-status { display:none; }
         .compact-brand { color:#f8fafc; font:850 12px/1.25 system-ui,sans-serif; white-space:nowrap; }
         .compact-status { min-width:0; align-items:center; gap:5px; color:#cbd5e1; font:800 11px/1.25 system-ui,sans-serif; white-space:nowrap; }
         .panel-toggle { flex:0 0 auto; padding:4px 9px; border:1px solid rgba(148,163,184,.45); border-radius:5px; color:#dbe5f1; font:750 10px/1.25 system-ui,sans-serif; text-decoration:none !important; }
@@ -4267,16 +4407,16 @@
         :host([data-ks-twd-panel-minimized='true']) .api-policy { display:none; }
         :host([data-ks-twd-panel-minimized='true']) .compact-brand,
         :host([data-ks-twd-panel-minimized='true']) .compact-status { display:flex; }
-        :host([data-ks-twd-panel-minimized='true']) .compact-ff:not([hidden]) { display:inline; }
         @media (max-width:520px) { .status-grid { grid-template-columns:1fr; } .panel { padding-left:8px; padding-right:8px; } }
       </style>
       <div class="panel">
-        <div class="top"><span class="brand">KS Torn War Dibs PC</span><span class="compact-brand" data-role="compact-brand">KS DIBS PC</span><span class="compact-status" data-role="compact-status"><span class="dot"></span><span data-role="compact-status-text">WAIT</span></span><span class="compact-ff" data-role="compact-ff" hidden>FFScouter!</span><span class="top-actions"><span class="version">v${SCRIPT.version} TEST</span><button class="panel-toggle" type="button" data-role="panel-toggle" aria-expanded="true">Minimize</button></span></div>
+        <div class="top"><span class="brand">KS Torn War Dibs PC</span><span class="compact-brand" data-role="compact-brand">KS DIBS PC</span><span class="compact-status" data-role="compact-status"><span class="dot"></span><span data-role="compact-status-text">WAIT</span></span><span class="top-actions"><span class="version">v${SCRIPT.version} TEST</span><button class="panel-toggle" type="button" data-role="panel-toggle" aria-expanded="true">Minimize</button></span></div>
         <div class="status-grid">
           <div class="status-item" data-role="shared-item"><span class="dot"></span><span class="status" data-role="status">Shared: loading…</span></div>
           <div class="status-item" data-role="torn-item"><span class="dot"></span><span class="status" data-role="torn-status">Torn: loading…</span></div>
           <div class="status-item" data-role="rw-item"><span class="dot"></span><span class="status" data-role="rw-status">DIBS: checking RW…</span></div>
-          <div class="status-item" data-role="ff-item"><span class="dot"></span><span class="status" data-role="ff-status">FFScouter: checking…</span></div>
+          <div class="status-item" data-role="ff-item"><span class="dot"></span><span class="status" data-role="ff-status">FF: waiting…</span></div>
+          <div class="status-item" data-role="wse-item"><span class="dot"></span><span class="status" data-role="wse-status">WSE: checking…</span></div>
         </div>
         <div class="controls">
           <button type="button" data-role="key">FFScouter key</button><span class="sep">·</span>
@@ -4294,8 +4434,10 @@
         <div class="api-policy">
           <strong>Torn API key:</strong> stored only locally, encrypted in this browser; sent only to api.torn.com. Purpose: key-owner identity, own-faction Ranked War state, one opponent-members status batch while the roster is visible, and one final target basic check immediately before DIBS. Required selections: faction → members,wars and user → basic.
           <br>
-          <strong>FFScouter key/integration:</strong> key stored only locally, encrypted in this browser; sent only to FFScouter for shared Hit Calling claims, claim and release. FF and Est are read from FFScouter's existing visible row data and are never fetched or rewritten by this script.
+          <strong>FFScouter key/integration:</strong> key stored only locally, encrypted in this browser; sent only to FFScouter for shared Hit Calling claims, claim and release, and to FFScouter's get-stats endpoint for Fair Fight and battle-stat estimates of the opponent roster (one batched request, refreshed at most once a minute).
           <a data-role="ff-terms" target="_blank" rel="noopener noreferrer">FFScouter terms/data policy</a> · <a data-role="ff-privacy" target="_blank" rel="noopener noreferrer">Privacy</a>.
+          <br>
+          <strong>War Stuff Enhanced:</strong> detected read-only. This script never writes to, hides or moves anything War Stuff Enhanced renders.
         </div>
       </div>
     `;
@@ -4313,7 +4455,7 @@
     byRole("sync")?.addEventListener("click", event => {
       event.preventDefault(); registerTrustedInteraction(event);
       refreshCurrentWarSurface({ structural: true });
-      if (sharedApiKey) void fetchSharedClaims();
+      if (sharedApiKey) { void fetchSharedClaims(); void fetchFairFightStats({ force: true }); }
       if (effectiveTornApiKey()) void fetchTornStatuses({ force: true });
       scanWarRows();
     });
@@ -4378,14 +4520,17 @@
       setTitleIfChanged($("rw-status"), rwState.phase === RW_PHASE.LIVE ? "Own-faction /wars confirms this Ranked War is live" : "DIBS remains locked until own-faction /wars confirms LIVE");
     }
     if ($("status")) { $("status").textContent = sharedStatus.message; setTitleIfChanged($("status"), sharedStatus.message); }
-    const ffInterfering = ffscouterInterference.sortActive || ffscouterInterference.hiddenRows > 0;
-    const ffText = ffscouterInterferenceText();
-    if ($("ff-item")) $("ff-item").dataset.state = ffInterfering ? "error" : "online";
+    if ($("ff-item")) $("ff-item").dataset.state = fairFightStatus.state;
     if ($("ff-status")) {
-      if ($("ff-status").textContent !== ffText) $("ff-status").textContent = ffText;
-      setTitleIfChanged($("ff-status"), ffText);
+      if ($("ff-status").textContent !== fairFightStatus.message) $("ff-status").textContent = fairFightStatus.message;
+      setTitleIfChanged($("ff-status"), fairFightStatus.message);
     }
-    if ($("compact-ff")) $("compact-ff").hidden = !ffInterfering;
+    // Read only. Nothing is gated on WSE; the line just says whether it is here.
+    const wseText = isWarStuffEnhancedPresent() ? "WSE: detected" : "WSE: not detected";
+    if ($("wse-status")) {
+      if ($("wse-status").textContent !== wseText) $("wse-status").textContent = wseText;
+      setTitleIfChanged($("wse-status"), "War Stuff Enhanced is read-only for this script: nothing it renders is written to, hidden or moved.");
+    }
     if ($("torn-status")) { $("torn-status").textContent = tornStatusState.message; setTitleIfChanged($("torn-status"), tornStatusState.message); }
     const ffExternalLock = ffCredentialExternalLockActive();
     const ffChangeBusy = ffCredentialChangeBusy();
@@ -4471,11 +4616,17 @@
     sharedClaims = new Map(); sharedClaimsUnreadable = new Set();
     sharedBackoffUntil = 0;
     sharedTransportFailureStreak = 0;
+    fairFightStats = new Map();
+    fairFightLastFetchAt = 0;
+    fairFightEverSucceeded = false;
     ffCredentialChangeState = FF_CREDENTIAL_STATE.IDLE;
     if (input instanceof HTMLInputElement && input.isConnected) input.value = "";
     setSharedStatus("ready", "Shared: key saved securely · syncing…", 0);
     updateBoundControls();
-    if (runtimeActive && isRuntimeEligible()) void fetchSharedClaims();
+    if (runtimeActive && isRuntimeEligible()) {
+      void fetchSharedClaims();
+      void fetchFairFightStats({ force: true });
+    }
   }
 
   async function saveTornKeyFromEditor() {
@@ -4562,6 +4713,8 @@
     }
     ffCredentialChangeState = FF_CREDENTIAL_STATE.IDLE;
     sharedApiKey = ""; sharedClaims = new Map(); sharedClaimsUnreadable = new Set(); sharedBackoffUntil = 0;
+    fairFightStats = new Map(); fairFightLastFetchAt = 0; fairFightEverSucceeded = false;
+    setFairFightStatus("key-required", "FF: key required");
     setSharedStatus("key-required", "Shared: key required", 0); updateBoundControls();
   }
 
@@ -4586,6 +4739,7 @@
   }
 
   async function initializeApiKeyStorage() {
+    await migrateLegacyWseVaultKeys();
     let vaultFailed = false;
     try { [sharedApiKey, storedTornApiKey] = await Promise.all([loadSecureApiKey(), loadSecureTornApiKey()]); }
     catch { sharedApiKey = ""; storedTornApiKey = ""; vaultFailed = true; }
@@ -4593,11 +4747,12 @@
     apiKeyStorageReady = true;
 
     if (sharedApiKey) setSharedStatus("ready", "Shared: saved key loaded", 0); else setSharedStatus(vaultFailed ? "error" : "key-required", vaultFailed ? "Shared: secure storage unavailable" : "Shared: key required", 0);
+    setFairFightStatus(sharedApiKey ? "idle" : "key-required", sharedApiKey ? "FF: waiting…" : "FF: key required");
     if (effectiveTornApiKey()) setTornStatusState("ready", injectedPdaTornApiKey() ? "Torn: PDA key loaded" : "Torn: saved key loaded", 0); else setTornStatusState(vaultFailed ? "error" : "key-required", vaultFailed ? "Torn: secure storage unavailable" : "Torn: API key required", 0);
     updatePanel();
 
     if (runtimeActive) {
-      if (sharedApiKey) void fetchSharedClaims();
+      if (sharedApiKey) { void fetchSharedClaims(); void fetchFairFightStats({ force: true }); }
       if (effectiveTornApiKey()) {
         void fetchTornStatuses({ force: true });
       }
@@ -4675,9 +4830,6 @@
       else {
         for (const row of rows) reconcileWarRow(row);
         retireMissingRowBindings();
-        // A row being hidden is an attribute change on the row itself, which
-        // never reaches the full scan; the mark still has to be noticed.
-        detectFfscouterInterference(mountedRosterRoot);
       }
     });
   }
@@ -4718,8 +4870,6 @@
         "data-user2id",
         "data-faction-id",
         "data-until",
-        "data-ff-value",
-        "data-est-value",
         "data-ff-filter-box",
         "data-mode",
         "data-ffscouter-active-filter",
@@ -4817,11 +4967,20 @@
   function startRouteObserver() {
     if (!isRuntimeContextEligible() || routeObserver || !(document.body instanceof HTMLElement)) return;
     routeObserver = new MutationObserver(queueRouteReconcile);
+    // characterData is deliberately absent. Measured 2026-09-13 in the owner's
+    // Chrome: with only this script enabled the faction chat rendered in slow
+    // motion while the Torn window had focus, and recovered the instant it lost
+    // focus -- the point where queueRouteReconcile's own guard stops the work.
+    // Every character typed anywhere on the page produced a characterData
+    // record here, and mutationTouchesRouteSurface ran closest() and
+    // querySelector() on each one before discarding it.
+    // Nothing is lost: the only text-reading branch in that filter is guarded by
+    // record.type !== "childList", so characterData records could never reach
+    // it. Route changes still arrive as childList and attribute records.
     routeObserver.observe(document.body, {
       attributes: true,
       attributeFilter: ["aria-hidden", "class", "data-warid", "hidden", "href", "style"],
       childList: true,
-      characterData: true,
       subtree: true
     });
   }
@@ -4884,13 +5043,13 @@
     if (sharedPollTimer !== null) window.clearInterval(sharedPollTimer);
     if (tornStatusTimer !== null) window.clearTimeout(tornStatusTimer);
     if (routeHeartbeatTimer !== null) window.clearInterval(routeHeartbeatTimer);
-    displayTickTimer = sharedPollTimer = null;
+    if (fairFightRetryTimer !== null) window.clearTimeout(fairFightRetryTimer);
+    displayTickTimer = sharedPollTimer = fairFightRetryTimer = null;
     tornStatusTimer = routeHeartbeatTimer = null;
   }
 
   function removeOwnUi() {
     cancelPresentationLayout();
-    removeWseWarning();
     removeAllRowPresentations();
     removeRosterHeaderCell();
     document.getElementById(SCRIPT.rosterStyleId)?.remove();
@@ -5008,6 +5167,10 @@
     tornStatusSyncing = false;
     ownWarsRequestSerial += 1;
     sharedClaims = new Map(); sharedClaimsUnreadable = new Set();
+    fairFightRequestSerial += 1;
+    fairFightSyncing = false;
+    fairFightStats = new Map();
+    fairFightLastFetchAt = 0;
     ownWarsState = emptyOwnWarsState();
     opponentMembersState = { factionId: "", members: new Map(), fetchedAt: 0 };
     currentWarSurface = null;
@@ -5036,7 +5199,7 @@
     startRuntimeTimers();
 
     if (apiKeyStorageReady) {
-      if (sharedApiKey) void fetchSharedClaims();
+      if (sharedApiKey) { void fetchSharedClaims(); void fetchFairFightStats({ force: true }); }
       if (effectiveTornApiKey()) {
         void fetchTornStatuses({ force: true });
       }
