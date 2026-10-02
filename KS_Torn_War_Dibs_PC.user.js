@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KS Torn War Dibs PC
 // @namespace    kingshade.torn
-// @version      1.1.6
+// @version      1.1.7
 // @downloadURL  https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs_PC.user.js
 // @updateURL    https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_War_Dibs_PC.user.js
 // @description  PC TEST: DIBS as a native roster column beside Torn's Attack cell; FF and Est from FFScouter's get-stats API. War Stuff Enhanced is detected and shown read-only; it never blocks.
@@ -16,6 +16,16 @@
 // ==/UserScript==
 
 /*
+ * KS Torn War Dibs PC v1.1.7 TEST
+ *
+ * ONE MAIN CHANGE: one failed FFScouter read no longer wipes every FF value.
+ * Each value keeps its own 6 min validity (fairFightMaxAgeMs) and is dropped
+ * by scoutStatsForTarget() when it gets older, so a 502/429/network error no
+ * longer turns every claimable row UNKNOWN until the next good read. A key
+ * change or suspend still clears everything, as before. Same fix as PDA
+ * 1.5.185.
+ *
+ * ---------------------------------------------------------------------------
  * KS Torn War Dibs PC v1.1.6 TEST
  *
  * ONE MAIN CHANGE: optional fresh opponent life reads allow Fair Fight up to
@@ -350,8 +360,8 @@
 
   const SCRIPT = Object.freeze({
     name: "KS Torn War Dibs PC",
-    version: "1.1.6",
-    instanceKey: "__ksTornWarDibsPcV116",
+    version: "1.1.7",
+    instanceKey: "__ksTornWarDibsPcV117",
     rowHostPrefix: "ks-twd-wse-row-v010-",
     rosterStyleId: "ks-twd-wse-roster-style-v010",
     panelId: "ks-twd-wse-panel",
@@ -2312,10 +2322,9 @@
       return true;
     } catch (error) {
       if (isCurrentRequest()) {
-        if (!missingOnly) {
-          fairFightStats = new Map();
-          fairFightLastFetchAt = 0;
-        }
+        // Keep the values we have; each one expires on its own after
+        // fairFightMaxAgeMs. Retry on the next timer tick.
+        if (!missingOnly) fairFightLastFetchAt = 0;
         setFairFightStatus("offline", `FF: offline · ${normalizeText(error?.message) || "request failed"}`);
         scanWarRows();
       }
