@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         KS War Tools for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.8.7
-// @downloadURL  https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_War_Tools_Torn_PDA.user.js
-// @updateURL    https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_War_Tools_Torn_PDA.user.js
+// @version      0.8.8
+// @downloadURL  https://raw.githubusercontent.com/Hjunez/kingshade-leader-tools/main/KS_War_Tools_Torn_PDA.user.js
+// @updateURL    https://raw.githubusercontent.com/Hjunez/kingshade-leader-tools/main/KS_War_Tools_Torn_PDA.user.js
 // @description  Kingshade Suite War Tools for Torn PDA.
 // @author       Kingshade
 // @match        https://www.torn.com/factions.php*
@@ -11,6 +11,8 @@
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==
+//
+// 0.8.8: ONE MAIN CHANGE: updates now come from kingshade-leader-tools instead of Kingshade-Torn-Suite (@downloadURL and @updateURL). Nothing else changed.
 //
 // Companion-script design:
 // - Kingshade Scout Core owns FF/EST data and faction status polling.
@@ -26,7 +28,7 @@
         name: "Kingshade Suite",
         component: "War Tools",
         toolbarLabel: "Suite Status",
-        version: "0.8.7",
+        version: "0.8.8",
         instanceKey: "__ksWarToolsActive",
         sharedCoreKey: "__kingshadeScoutCore",
         sharedStorageKey: "kingshade-scout:status-core",

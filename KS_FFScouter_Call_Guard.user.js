@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         KS FFScouter Call Guard
 // @namespace    https://kingshade.tools/
-// @version      1.1.4
-// @downloadURL  https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_FFScouter_Call_Guard.user.js
-// @updateURL    https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_FFScouter_Call_Guard.user.js
+// @version      1.1.5
+// @downloadURL  https://raw.githubusercontent.com/Hjunez/kingshade-leader-tools/main/KS_FFScouter_Call_Guard.user.js
+// @updateURL    https://raw.githubusercontent.com/Hjunez/kingshade-leader-tools/main/KS_FFScouter_Call_Guard.user.js
 // @description  FFScouter War Room shared DIBS using official Hit Calling claim/release API; first queue position wins.
 // @author       Kingshade
 // @match        https://ffscouter.com/*
@@ -13,6 +13,9 @@
 // ==/UserScript==
 
 /*
+ * KS FFScouter Call Guard v1.1.5
+ * ONE MAIN CHANGE: updates now come from kingshade-leader-tools instead of Kingshade-Torn-Suite (@downloadURL and @updateURL). Nothing else changed.
+ *
  * KS FFScouter Call Guard v1.1.4 CANDIDATE
  * Live Hospital ≤2:00 + FF 2.00-5.00. Shared DIBS/TAKEN/RELEASE.
  * Deterministic no-flicker button rendering retained.
@@ -45,7 +48,7 @@
 
   const SCRIPT = Object.freeze({
     name: "KS FFScouter Call Guard",
-    version: "1.1.4",
+    version: "1.1.5",
     status: "CANDIDATE",
     instanceKey: "__ksFFScouterCallGuardV112",
     rowHostPrefix: "ks-ffcg-dibs-v112-",

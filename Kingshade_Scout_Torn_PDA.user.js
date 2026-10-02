@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Kingshade Scout for Torn PDA
 // @namespace    https://kingshade.tools/
-// @version      0.8.7
-// @downloadURL  https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/Kingshade_Scout_Torn_PDA.user.js
-// @updateURL    https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/Kingshade_Scout_Torn_PDA.user.js
+// @version      0.8.8
+// @downloadURL  https://raw.githubusercontent.com/Hjunez/kingshade-leader-tools/main/Kingshade_Scout_Torn_PDA.user.js
+// @updateURL    https://raw.githubusercontent.com/Hjunez/kingshade-leader-tools/main/Kingshade_Scout_Torn_PDA.user.js
 // @description  Kingshade Suite Scout for Torn PDA with FF/EST, faction status and FFScouter flight estimates.
 // @author       Kingshade
 // @match        https://www.torn.com/factions.php*
@@ -12,6 +12,8 @@
 // @grant        GM_xmlhttpRequest
 // @run-at       document-idle
 // ==/UserScript==
+//
+// 0.8.8: ONE MAIN CHANGE: updates now come from kingshade-leader-tools instead of Kingshade-Torn-Suite (@downloadURL and @updateURL). Nothing else changed.
 //
 // API key, data use and privacy disclosure:
 // - Network requests run only while the manually opened Torn page is visible and focused; they pause when hidden or unfocused.
@@ -37,7 +39,7 @@
 
     const NAME = "Kingshade Suite";
     const COMPONENT = "Scout Core";
-    const VERSION = "0.8.7";
+    const VERSION = "0.8.8";
     const API_BASE = "https://ffscouter.com/api/v1";
     const TORN_API_BASE = "https://api.torn.com";
     const PREFIX = "kingshade-scout:";
