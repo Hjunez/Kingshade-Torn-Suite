@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Kingshade's Bootlegging Advisor
 // @namespace    DieselBladeScripts.ARS.Kingshade
-// @version      5.2.14
-// @downloadURL  https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/Kingshades_Bootlegging_Advisor.user.js
-// @updateURL    https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/Kingshades_Bootlegging_Advisor.user.js
+// @version      5.2.15
+// @downloadURL  https://raw.githubusercontent.com/Hjunez/kingshade-leader-tools/main/Kingshades_Bootlegging_Advisor.user.js
+// @updateURL    https://raw.githubusercontent.com/Hjunez/kingshade-leader-tools/main/Kingshades_Bootlegging_Advisor.user.js
 // @description  Premium Bootlegging guidance for Torn PDA with queue balancing, stable rendering and privacy-safe diagnostics.
 // @license      GPL-3.0-or-later
 // @author       DieselBlade [1701621], Hemicopter [2780600], rebuilt for Kingshade
@@ -19,7 +19,9 @@
     'use strict';
 
     /*
-     * Kingshade's Bootlegging Advisor v5.2.14 STRICT VISIBILITY ORACLE (fail-closed)
+     * Kingshade's Bootlegging Advisor v5.2.15 STRICT VISIBILITY ORACLE (fail-closed)
+     *
+     * v5.2.15: ONE MAIN CHANGE: updates now come from kingshade-leader-tools instead of Kingshade-Torn-Suite (@downloadURL and @updateURL). Nothing else changed.
      *
      * v5.2.14 strict visibility oracle:
      * - fixes two confirmed data-safety gaps found by an independent code review of v5.2.13,
@@ -155,7 +157,7 @@
 
     const SCRIPT = Object.freeze({
         name: "Kingshade's Bootlegging Advisor",
-        version: '5.2.14',
+        version: '5.2.15',
         globalKey: '__ksBootleggingAssistantClean',
         mainHostId: 'ksba-v5211-main-host',
         portalHostId: 'ksba-v5211-portal-host',

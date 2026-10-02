@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         KS Torn Hustling Advisor PC
 // @namespace    DieselBladeScripts.ARS.Kingshade
-// @version      0.1.5
-// @downloadURL  https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_Hustling_Advisor_PC.user.js
-// @updateURL    https://raw.githubusercontent.com/Hjunez/Kingshade-Torn-Suite/main/KS_Torn_Hustling_Advisor_PC.user.js
+// @version      0.1.7
+// @downloadURL  https://raw.githubusercontent.com/Hjunez/kingshade-leader-tools/main/KS_Torn_Hustling_Advisor_PC.user.js
+// @updateURL    https://raw.githubusercontent.com/Hjunez/kingshade-leader-tools/main/KS_Torn_Hustling_Advisor_PC.user.js
 // @description  Read-only Hustling next-action advisor for Torn on PC. Reads only the Hustling view you have open and shows exactly one recommended manual action, its nerve cost and the warnings that follow from visible data. It never clicks, submits, navigates, stores, exports or sends anything, and it makes no network or API calls.
 // @license      GPL-3.0-or-later
 // @author       Kingshade
@@ -19,10 +19,84 @@
     'use strict';
 
     /*
-     * KS Torn Hustling Advisor PC v0.1.5 — STATUS: CANDIDATE
+     * KS Torn Hustling Advisor PC v0.1.7 — STATUS: CANDIDATE
      *
      * ---------------------------------------------------------------------
      * CHANGELOG
+     *
+     * 0.1.7
+     *
+     *   CHANGED
+     *     - ONE MAIN CHANGE: updates now come from kingshade-leader-tools instead of Kingshade-Torn-Suite (@downloadURL and @updateURL). Nothing else changed.
+     *
+     * 0.1.6
+     *
+     *   FIXED
+     *     - Nothing. No defect was reported against 0.1.5 and none was looked for.
+     *
+     *   ADDED
+     *     - ATTENTION_FLOOR = 40, the lower bound of the same community attention
+     *       band ATTENTION_THRESHOLD already implements (prior art file, section
+     *       2.5). Two independent sources — Emforu's in-depth guide and
+     *       torn-intel's guide — describe Lose until attention clears 60, then Win
+     *       until it falls back to around 40, then Lose again. Only the upper
+     *       bound existed before this release, so the advisor returned to LOSE
+     *       the moment a single Win halved attention back under 60 — the
+     *       community rhythm never ran past one Win per cycle.
+     *     - A small phase memory, `phase`, holding 'BUILD' or 'HARVEST'. Attention
+     *       45 means "not yet" on the way up from a Lose and "keep going" on the
+     *       way down from a Win, so the two bounds cannot be told apart without
+     *       remembering which side of the cycle the advisor is on. It is a plain
+     *       variable in this file's own module scope — no localStorage, no
+     *       sessionStorage, no cookie, no GM_setValue, nothing that survives a
+     *       page reload. It starts at 'BUILD' when the script is first evaluated,
+     *       resets to 'BUILD' again whenever the panel (re)mounts and whenever
+     *       there is no betting audience member, and is otherwise read or written
+     *       only inside decideOnActiveBet — never by a warning, the cash check,
+     *       the ranking or the panel — and it is never rendered.
+     *     - Two new recommendation lines in decideOnActiveBet for the HARVEST
+     *       phase: "Attention N is still above the 40 community floor. Keep
+     *       winning while the audience holds." and "Attention N has fallen below
+     *       the 40 community floor. Lose rebuilds the audience before the next
+     *       win."
+     *
+     *   CHANGED
+     *     - decideOnActiveBet's dual-enabled branch (both Win and Lose available,
+     *       attention readable) now compares the lowest bettor's attention against
+     *       ATTENTION_THRESHOLD while in BUILD and against ATTENTION_FLOOR while
+     *       in HARVEST, instead of always against ATTENTION_THRESHOLD. The other
+     *       three branches in that function — Win-only enabled, Lose-only
+     *       enabled, and unreadable attention — are byte-for-byte unchanged and
+     *       never touch `phase`.
+     *     - The footer now reads "Attention thresholds 60 and 40 are a community
+     *       heuristic." in place of the single-threshold sentence.
+     *     - RETRACTED: the ATTENTION_THRESHOLD comment's earlier claim that the
+     *       cycle "emerges on its own" from a single threshold, with no phase
+     *       memory needed. That held only in the absence of a lower bound; with
+     *       ATTENTION_FLOOR in play the phase has to be remembered after all.
+     *       A companion claim in the status file, that this change would be "a
+     *       constant and a branch", is retracted for the same reason — it is a
+     *       constant, a small fixed phase and four branches.
+     *
+     *   KNOWN ISSUES
+     *     - Every 0.1.5 known issue below still stands. In particular, the
+     *       doubling model behind CASH_WARNING_RATIO's "About N more losses"
+     *       wording is still a rough estimate, not a model — unchanged by this
+     *       release.
+     *     - The audience-summary parsing bug is measured but deliberately NOT
+     *       fixed here. Torn now writes an inserted clause —
+     *       "N people, M bets including K favorite(s), $X in total" — which
+     *       parseAudienceSummary's pattern does not match, so the panel prints a
+     *       false "could not be read" warning. It never changes a recommendation
+     *       or a number, since summary.bets/totalBet/confidence are not read
+     *       anywhere in this file and memberCount already falls back to the
+     *       counted members. It belongs to v0.1.7 so this release keeps its one
+     *       change.
+     *
+     *   VERIFICATION
+     *     - NOT runtime-verified yet. Status stays CANDIDATE until the owner has
+     *       run it on a live Hustling page and watched a Win land while HARVEST
+     *       holds attention above 40, and a Lose follow once it falls below 40.
      *
      * 0.1.5
      *
@@ -348,7 +422,7 @@
      * file — no Hustling capture from PDA exists, so its DOM would be guesswork.
      */
 
-    const VERSION = '0.1.5';
+    const VERSION = '0.1.7';
     const STATUS = 'CANDIDATE';
     const MODE = 'MAX CE + CS';
     const INSTANCE_KEY = '__ksTornHustlingAdvisorV010A1';
@@ -361,23 +435,35 @@
      * ------------------------------------------------------------------ */
 
     /**
-     * Upper bound of the community attention band. COMMUNITY HEURISTIC — Torn has
-     * never published an optimal attention line, and this must never be presented
-     * as a verified one.
+     * Upper bound of the community attention band — the line that ends a BUILD
+     * phase and starts a HARVEST phase (see `phase` and decideOnActiveBet below).
+     * COMMUNITY HEURISTIC — Torn has never published an optimal attention line,
+     * and this must never be presented as a verified one.
      *
-     * Two independent sources give the same pair of numbers, not a single line:
+     * Two independent sources give the same pair of numbers, not a single line
+     * (prior art file, section 2.5):
      *   - Emforu's Torn-hosted in-depth Hustling guide: "Lose until someone's
      *     attention is maxed or overall attention is over 60% / Win until
      *     attention is around 40%, then lose."
      *   - torn-intel's Hustling guide: the same 60 up / 40 down pair, arrived at
      *     independently.
      *
-     * Only the upper bound is implemented here. Because a Win lowers attention and
-     * a Lose raises it, comparing against 60 alone already produces the cycle
-     * without the script remembering which phase it is in — so it still keeps no
-     * state and still stores nothing. The lower bound of 40 is not implemented.
+     * RETRACTED (v0.1.6): earlier versions of this comment claimed that comparing
+     * against 60 alone already produces the cycle on its own, with the script
+     * needing no memory of which phase it is in. That held only while the lower
+     * bound below was not implemented. With ATTENTION_FLOOR in play, attention 45
+     * means something different on the way up from a Lose than on the way down
+     * from a Win, so the phase has to be remembered after all — see `phase`.
      */
     const ATTENTION_THRESHOLD = 60;
+
+    /**
+     * Lower bound of the community attention band — the line that ends a HARVEST
+     * phase and sends the cycle back to BUILD (see `phase` and decideOnActiveBet
+     * below). COMMUNITY HEURISTIC, same standing and the same two independent
+     * sources as ATTENTION_THRESHOLD above (prior art file, section 2.5).
+     */
+    const ATTENTION_FLOOR = 40;
 
     /**
      * Warn once a row's live bet is this share of the player's cash, or more.
@@ -818,6 +904,24 @@
      * Layer 3 — decision engine (pure: no DOM, no network, no storage)
      * ------------------------------------------------------------------ */
 
+    /**
+     * BUILD/HARVEST phase memory for the community attention rhythm (see
+     * ATTENTION_THRESHOLD and ATTENTION_FLOOR above). A single module-scope
+     * variable — not localStorage, not sessionStorage, not a cookie, not
+     * GM_setValue, nothing that survives a page reload.
+     *
+     * Starts at 'BUILD'. Reset to 'BUILD' in two places only: mount() below,
+     * covering boot, SPA-navigation back onto the Hustling page and the panel
+     * remounting; and decide() below, whenever there is no betting audience
+     * member, so a fresh audience never inherits a stale phase. Otherwise it is
+     * read and written only inside decideOnActiveBet, the one place it is allowed
+     * to affect anything, and only the choice between Win and Lose. It never
+     * reaches a warning, the cash check, the ranking or any other branch, and it
+     * is never printed in the panel — the owner reads what to do and why, never
+     * which internal state produced it.
+     */
+    let phase = 'BUILD';
+
     function recommendation(action, target, nerve, reason, confidence, warnings, blockedReason) {
         return {
             action,
@@ -979,6 +1083,14 @@
 
         const warnings = collectWarnings(state, threshold);
 
+        /* A fresh audience must never inherit a stale phase (HARD REQUIREMENT
+         * 5.3). This runs on every call, ahead of every branch below, because
+         * "no betting audience member" is a fact about the table, not about
+         * which action ends up recommended. */
+        if (!state.audience.members.some((member) => member.betting)) {
+            phase = 'BUILD';
+        }
+
         /** Every action this version is allowed to point at, paired with its row. */
         const available = [];
         for (const row of state.rows) {
@@ -1011,7 +1123,7 @@
             );
         }
 
-        const chosen = chooseFeasibleAction(state, available, threshold, warnings);
+        const chosen = chooseFeasibleAction(state, available, threshold, ATTENTION_FLOOR, warnings);
 
         /* An out-of-reach bet means the board is not the one this mode optimises for,
          * so whatever is still feasible is advised with one step less confidence. */
@@ -1027,15 +1139,16 @@
      * @param {object} state
      * @param {{row: object, action: object}[]} available
      * @param {number} threshold
+     * @param {number} floor
      * @param {string[]} warnings
      */
-    function chooseFeasibleAction(state, available, threshold, warnings) {
+    function chooseFeasibleAction(state, available, threshold, floor, warnings) {
         const betRows = state.rows.filter((row) => row.hasActiveBet && !row.locked);
         /* A bet that can still be acted on outranks one Torn has blocked. */
         const betRow =
             betRows.find((row) => !row.betBlocked) ?? (betRows.length > 0 ? betRows[0] : undefined);
         if (betRow) {
-            const resolved = decideOnActiveBet(betRow, state, threshold, warnings);
+            const resolved = decideOnActiveBet(betRow, state, threshold, floor, warnings);
             if (resolved) return resolved;
         }
 
@@ -1100,7 +1213,7 @@
         );
     }
 
-    function decideOnActiveBet(betRow, state, threshold, warnings) {
+    function decideOnActiveBet(betRow, state, threshold, floor, warnings) {
         const win = betRow.actions.find((action) => action.kind === 'WIN' && !action.disabled);
         const lose = betRow.actions.find((action) => action.kind === 'LOSE' && !action.disabled);
         if (!win && !lose) return null;
@@ -1150,7 +1263,28 @@
         }
 
         const lowest = Math.min.apply(null, attentions);
-        if (lowest < threshold) {
+
+        /*
+         * The community rhythm (v0.1.6): build the audience up past
+         * ATTENTION_THRESHOLD with Lose, then harvest it down to ATTENTION_FLOOR
+         * with Win, then rebuild. Attention 45 means "not yet" while building up
+         * from a Lose and "keep going" while harvesting down from a Win, so which
+         * comparison applies depends on `phase` — the one place in this function,
+         * and in this file, that phase is allowed to change the outcome.
+         */
+        if (phase === 'BUILD') {
+            if (lowest >= threshold) {
+                phase = 'HARVEST';
+                return recommendation(
+                    'WIN',
+                    betRow.name,
+                    win.nerve,
+                    `Attention ${lowest} on the betting audience is at or above the ${threshold} community threshold.`,
+                    'medium',
+                    warnings,
+                    null,
+                );
+            }
             return recommendation(
                 'LOSE',
                 betRow.name,
@@ -1162,11 +1296,24 @@
             );
         }
 
+        if (lowest >= floor) {
+            return recommendation(
+                'WIN',
+                betRow.name,
+                win.nerve,
+                `Attention ${lowest} is still above the ${floor} community floor. Keep winning while the audience holds.`,
+                'medium',
+                warnings,
+                null,
+            );
+        }
+
+        phase = 'BUILD';
         return recommendation(
-            'WIN',
+            'LOSE',
             betRow.name,
-            win.nerve,
-            `Attention ${lowest} on the betting audience is at or above the ${threshold} community threshold.`,
+            lose.nerve,
+            `Attention ${lowest} has fallen below the ${floor} community floor. Lose rebuilds the audience before the next win.`,
             'medium',
             warnings,
             null,
@@ -1512,7 +1659,7 @@
         foot.textContent =
             `Read-only. No network, no API key, no storage — you perform every action yourself. ` +
             `Ranking tie-break is a community CS-per-nerve estimate, not Torn-verified. ` +
-            `Attention threshold ${ATTENTION_THRESHOLD} is a community heuristic. Exact CE per action is unknown and is never shown.`;
+            `Attention thresholds ${ATTENTION_THRESHOLD} and ${ATTENTION_FLOOR} are a community heuristic. Exact CE per action is unknown and is never shown.`;
         nodes.push(foot);
 
         panel.body.replaceChildren.apply(panel.body, nodes);
@@ -1606,6 +1753,11 @@
     }
 
     function mount() {
+        /* Boot, SPA-navigation back onto the Hustling page and the panel
+         * remounting are the three moments HARD REQUIREMENT 5.2 names for
+         * resetting the BUILD/HARVEST phase — discover() only reaches mount()
+         * after root was lost and rediscovered, so this covers all three. */
+        phase = 'BUILD';
         if (!root || !root.parentElement) return;
         if (!panel) panel = buildPanel();
         if (panel.host.parentElement !== root.parentElement || panel.host.nextSibling !== root) {
@@ -1719,6 +1871,7 @@
             destroy,
             internals: Object.freeze({
                 ATTENTION_THRESHOLD,
+                ATTENTION_FLOOR,
                 CASH_WARNING_RATIO,
                 classifyOutcomeClasses,
                 decide,
